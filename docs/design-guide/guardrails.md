@@ -157,24 +157,28 @@ Guardrails should monitor **both** user input and agent output:
 
 ### Dynamic guardrails with session state
 
-For workflows where guardrail strictness should change based on context, you can use session variable substitution in natural language rule prompts. Reference a session variable with `{variable_name}` syntax inside the rule's `prompt` field — the platform replaces it with the variable's current value at evaluation time.
+For workflows where guardrail strictness should change based on context, you can use Jinja session variable substitution in natural language rule prompts. Reference a session variable with double-brace `{{variable_name}}` syntax inside the rule's `prompt` field — the platform replaces it with the variable's current value at evaluation time (note: single-brace `{variable_name}` renders literally when Jinja is active).
 
 This lets a single guardrail adapt its behavior based on conversation state. For example:
 
 ```json
 "llmPolicy": {
-    "prompt": "You are a safety validator.\n\n{guardrail_instruction}",
+    "prompt": "You are a safety validator.\n\n{{guardrail_instruction}}",
     "policyScope": "AGENT_RESPONSE"
 }
 ```
 
-Here, `{guardrail_instruction}` is a session variable. Both callbacks and tools can update its value as the conversation progresses — for example, swapping in stricter criteria after a user authenticates, or relaxing the rule after a tool confirms success. The guardrail itself stays the same; only the injected instruction changes.
+Here, `{{guardrail_instruction}}` is a session variable. Both callbacks and tools can update its value as the conversation progresses — for example, swapping in stricter criteria after a user authenticates, or relaxing the rule after a tool confirms success. The guardrail itself stays the same; only the injected instruction changes.
 
 Common patterns:
 
-- **Phase-based rules** — set `{guardrail_instruction}` to different rule text depending on the conversation phase (e.g., identity verification vs. transaction execution).
+- **Phase-based rules** — set `{{guardrail_instruction}}` to different rule text depending on the conversation phase (e.g., identity verification vs. transaction execution).
 - **Conditional strictness** — a strict confirmation guardrail stays active until a tool returns success, at which point a callback updates the variable to permit confirmation language.
 - **Disable by emptying** — set the variable to an empty string or a permissive instruction to effectively deactivate the rule without removing it.
+
+!!! warning "Latency budget (`llmPolicy` cap) & RE2 regex syntax"
+    - **Latency & count ceiling:** Deterministic `contentFilter` and `llmPromptSecurity` guardrails add ~0–1 ms, whereas each `llmPolicy` rule invokes an evaluator model (~300 ms) and the platform caps enabled `llmPolicy` guardrails at **10 per app**. Prefer deterministic filters or callbacks whenever possible.
+    - **RE2 quantifier spacing:** Blocklist (`contentFilter`) and DLP custom InfoType regexes use RE2. Never put a space after the comma in repetition quantifiers — write `\d{10,15}`, **never** `\d{10, 15}` (which RE2 treats as a literal string and silently fails to match PII).
 
 ---
 

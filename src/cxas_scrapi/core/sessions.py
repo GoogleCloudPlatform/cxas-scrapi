@@ -51,6 +51,7 @@ from cxas_scrapi.core.audio_transformer import (
     AUDIO_SAMPLE_RATE_HZ,
     AUDIO_SAMPLE_WIDTH,
     AudioTransformer,
+    load_background_noise_segment,
 )
 
 try:
@@ -515,6 +516,7 @@ class BidiSessionHandler:
         self._close_status_code: int | None = None
         self._close_msg: str | None = None
         self._connection_error: BaseException | None = None
+        self._ws_closed = False
         # Set once a self-terminating transfer payload is seen: the session is
         # over, so the socket close that follows is the expected teardown.
         self._self_terminated_transfer = False
@@ -539,12 +541,9 @@ class BidiSessionHandler:
             )
         if AudioSegment and background_noise_file:
             try:
-                # Load and format to 16000Hz, 1ch, 16-bit (sample width 2) PCM
-                segment = AudioSegment.from_file(background_noise_file)
-                segment = (
-                    segment.set_frame_rate(SAMPLE_RATE)
-                    .set_channels(AUDIO_CHANNELS)
-                    .set_sample_width(SAMPLE_WIDTH)
+                # Load or synthesize and format to 16000Hz, 1ch, 16-bit PCM
+                segment = load_background_noise_segment(
+                    background_noise_file, sample_rate=SAMPLE_RATE
                 )
 
                 # Pre-scale the noise to match the target SNR relative to a
@@ -596,9 +595,14 @@ class BidiSessionHandler:
 
             return chunk_segment.raw_data[:chunk_bytes_len]
 
+    def _is_session_aborted(self) -> bool:
+        return self._ws_closed or self._connection_error is not None
+
     def _send_silence(self, num_chunks: int) -> None:
         chunk_duration_ms = 100
         for _ in range(num_chunks):
+            if self._is_session_aborted():
+                break
             noise_chunk = self._get_next_noise_chunk(chunk_duration_ms)
             query_message = types.BidiSessionClientMessage(
                 realtime_input=types.SessionInput(audio=noise_chunk)
@@ -673,6 +677,8 @@ class BidiSessionHandler:
 
             logging.debug("Sending audio chunks for turn %d...", turn_index)
             for i in range(0, len(audio_bytes), AUDIO_CHUNK_SIZE):
+                if self._is_session_aborted():
+                    return
                 chunk = audio_bytes[i : i + AUDIO_CHUNK_SIZE]
 
                 if self.bg_noise_segment is not None:
@@ -715,7 +721,7 @@ class BidiSessionHandler:
                         self.ws_app.send(query_json)
                 time.sleep(CHUNK_DELAY)
 
-            if trailing_silence:
+            if trailing_silence and not self._is_session_aborted():
                 logging.debug(
                     "Sending trailing silence for turn %d to "
                     "trigger endpointing...",
@@ -772,7 +778,12 @@ class BidiSessionHandler:
 
             logging.debug("Waiting for agent to finish turn %d...", turn_index)
             while not self.agent_turn_manager.is_agent_done_talking():
+                if self._is_session_aborted():
+                    break
                 self._send_silence(1)
+
+            if self._is_session_aborted():
+                return
 
             if not self.interactive:
                 self._save_and_increment_agent_audio()
@@ -1062,12 +1073,14 @@ class BidiSessionHandler:
 
             if self.inputs is not None:
                 for idx, input_item in enumerate(self.inputs):
+                    if self._is_session_aborted():
+                        break
                     self._send_single_input(input_item, idx)
             elif self.input_queue is not None:
                 idx = 0
-                while True:
+                while not self._is_session_aborted():
                     input_item = self.input_queue.get()
-                    if input_item is None:
+                    if input_item is None or self._is_session_aborted():
                         logging.debug("Received exit sentinel in input queue.")
                         break
                     self._send_single_input(input_item, idx)
@@ -1077,9 +1090,10 @@ class BidiSessionHandler:
                 self.ws_app.close()
                 return
 
-            logging.debug("All inputs sent and turns completed.")
-            time.sleep(1)  # arbitrary short wait before disconnecting
-            self.ws_app.close()
+            if not self._is_session_aborted():
+                logging.debug("All inputs sent and turns completed.")
+                time.sleep(1)  # arbitrary short wait before disconnecting
+                self.ws_app.close()
 
         except Exception as e:
             logging.debug("Error during send_inputs: %s", e)
@@ -1138,7 +1152,12 @@ class BidiSessionHandler:
                     idx,
                 )
                 while not self.agent_turn_manager.is_agent_done_talking():
+                    if self._is_session_aborted():
+                        break
                     time.sleep(1)
+
+                if self._is_session_aborted():
+                    return
 
                 if not self.interactive:
                     self._save_and_increment_agent_audio()
@@ -1516,6 +1535,8 @@ class BidiSessionHandler:
         logging.debug("WebSocket error: %s", error)
         # Stash connection-level errors
         self._connection_error = error
+        self._ws_closed = True
+        self.agent_turn_manager.mark_turn_completed()
         if self.response_queue is not None:
             if self._self_terminated_transfer:
                 # A self-terminating transfer already ended the session; the
@@ -1545,6 +1566,8 @@ class BidiSessionHandler:
         # Stash close status to verify clean closure
         self._close_status_code = close_status_code
         self._close_msg = close_msg
+        self._ws_closed = True
+        self.agent_turn_manager.mark_turn_completed()
         if self.response_queue is not None:
             self.response_queue.put(
                 {
@@ -1593,6 +1616,8 @@ class BidiSessionHandler:
                     f"bidi run timed out after {_BIDI_RUN_TIMEOUT_S}s "
                     "(no end-of-turn or close)"
                 )
+            self._ws_closed = True
+            self.agent_turn_manager.mark_turn_completed()
             with contextlib.suppress(Exception):
                 self.ws_app.close()
             wst.join(timeout=5)
@@ -1652,6 +1677,8 @@ class BidiInteractiveSession:
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
+        burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         skip_playback_wait: bool = True,
         voice_config: dict[str, Any] | None = None,
     ) -> None:
@@ -1661,6 +1688,8 @@ class BidiInteractiveSession:
         self.capture_agent_audio = capture_agent_audio
         self.background_noise_file = background_noise_file
         self.bg_noise_snr = bg_noise_snr
+        self.burst_noise_files = burst_noise_files
+        self.burst_noise_snr = burst_noise_snr
         self.voice_config = voice_config
 
         self.input_queue = queue.Queue()
@@ -1733,6 +1762,9 @@ class BidiInteractiveSession:
                 credentials=self.sessions_client.creds,
                 project_id=self.sessions_client.project_id,
                 background_noise_file=self.background_noise_file,
+                bg_noise_snr=self.bg_noise_snr,
+                burst_noise_files=self.burst_noise_files,
+                burst_noise_snr=self.burst_noise_snr,
                 voice_config=current_voice_config,
             )
             if not input_data.get("audio_bytes"):
@@ -2252,6 +2284,8 @@ class Sessions(Common):
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
         bg_noise_snr: float = 15.0,
+        burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         use_tool_fakes: bool = True,
         skip_playback_wait: bool = True,
         voice_config: dict[str, Any] | None = None,
@@ -2296,6 +2330,8 @@ class Sessions(Common):
             capture_agent_audio=capture_agent_audio,
             background_noise_file=background_noise_file,
             bg_noise_snr=bg_noise_snr,
+            burst_noise_files=burst_noise_files,
+            burst_noise_snr=burst_noise_snr,
             skip_playback_wait=skip_playback_wait,
             voice_config=voice_config,
         )
@@ -2331,7 +2367,9 @@ class Sessions(Common):
         turn_num: int | None = None,
         capture_agent_audio: bool = False,
         background_noise_file: str | None = None,
+        bg_noise_snr: float = 15.0,
         burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float = 5.0,
         voice_config: dict[str, Any] | None = None,
         skip_playback_wait: bool = False,
     ) -> typing.Any:
@@ -2523,7 +2561,9 @@ class Sessions(Common):
                             credentials=self.creds,
                             project_id=self.project_id,
                             background_noise_file=background_noise_file,
+                            bg_noise_snr=bg_noise_snr,
                             burst_noise_files=burst_noise_files,
+                            burst_noise_snr=burst_noise_snr,
                             voice_config=current_voice_config,
                         )
                     )
@@ -2547,6 +2587,7 @@ class Sessions(Common):
                     turn_num=turn_num,
                     capture_agent_audio=capture_agent_audio,
                     background_noise_file=background_noise_file,
+                    bg_noise_snr=bg_noise_snr,
                     skip_playback_wait=skip_playback_wait,
                 )
             elif inputs:
@@ -2556,6 +2597,7 @@ class Sessions(Common):
                     turn_num=turn_num,
                     capture_agent_audio=capture_agent_audio,
                     background_noise_file=background_noise_file,
+                    bg_noise_snr=bg_noise_snr,
                     skip_playback_wait=skip_playback_wait,
                 )
             else:

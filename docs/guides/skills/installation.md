@@ -78,8 +78,8 @@ After running `cxas init`, create `gecx-config.json` in your project root with y
   "location": "us",
   "app_name": "My Support Agent",
   "deployed_app_id": null,
-  "model": "gemini-3.1-flash-live",
-  "modality": "text"
+  "model": "gemini-composite-v2",
+  "modality": "audio"
 }
 ```
 
@@ -90,8 +90,8 @@ After running `cxas init`, create `gecx-config.json` in your project root with y
 | `gcp_project_id` | Yes | Your Google Cloud project ID |
 | `location` | Yes | CX Agent Studio location (e.g., `us`) |
 | `app_name` | Yes | The display name of your app |
-| `deployed_app_id` | No | Full resource name of the deployment to use for simulations (`null` for new apps) |
-| `model` | No | Gemini model for simulation evals (default: `gemini-3-flash` for text, `gemini-3.1-flash-live` for audio) |
+| `deployed_app_id` | No | Short resource ID of the deployed app (`null` for new apps) |
+| `model` | No | Agent model (default: `gemini-composite-v2` for both audio and text) |
 | `modality` | No | `text` or `audio` (default: `text`) |
 
 The `deployed_app_id` is set after the first push. Skills use it for Local Simulations and Turn Evals, which require a live deployment.

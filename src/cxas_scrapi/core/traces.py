@@ -65,7 +65,10 @@ from cxas_scrapi.utils.tracing.audio_drift import (
     flag_drift,
     join_spans,
 )
-from cxas_scrapi.utils.tracing.audio_metrics import measure_call
+from cxas_scrapi.utils.tracing.audio_metrics import (
+    measure_call,
+    try_render_join_steps,
+)
 from cxas_scrapi.utils.tracing.audio_transcription import (
     DEFAULT_TRANSCRIPTION_MODEL,
     AudioTranscriber,
@@ -77,6 +80,7 @@ from cxas_scrapi.utils.tracing.cloud_logging import CloudLogsClient
 from cxas_scrapi.utils.tracing.trace_config import TraceConfig
 
 logger = logging.getLogger(__name__)
+
 
 REPROCESSED_TRANSCRIPTS_SCHEMA = [
     bigquery.SchemaField("conversation_id", "STRING", mode="REQUIRED"),
@@ -1322,12 +1326,13 @@ class Traces(Common):
     ) -> dict[str, Any]:
         """Per-turn voice-drift flags for one conversation.
 
-        Combines four signal families (see `utils.tracing.audio_drift`):
+        Combines five signal families (see `utils.tracing.audio_drift`):
         the platform's own TTS spans (cached vs fresh clips -> vintage
         SEAMs), the numeric loudness track (adjacent-turn steps -> LOUD),
-        the transcript's syllable budget vs the audio (TRUNC), and pitch
+        the transcript's syllable budget vs the audio (TRUNC), pitch
         seams inside a turn (MIDTURN for an apparent speaker change,
-        MIDDRIFT for audible drift).
+        MIDDRIFT for audible drift), and the voice stepping up louder and
+        higher where a turn's next rendered part starts (JUMP).
 
         Needs the optional dependencies:
         `pip install "cxas-scrapi[audio-metrics]"`, plus
@@ -1384,6 +1389,10 @@ class Traces(Common):
                     "n_syl": t.get("n_syl"),
                     "seams": t.get("seams", []),
                     "agent_text": " | ".join(agent_text.get(conv_turn, [])),
+                    "agent_parts": agent_text.get(conv_turn, []),
+                    "joins": try_render_join_steps(
+                        t.get("path"), agent_text.get(conv_turn, [])
+                    ),
                     "user_text": " | ".join(user_text.get(conv_turn, [])),
                 }
             )

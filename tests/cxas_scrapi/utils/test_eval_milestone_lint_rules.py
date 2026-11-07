@@ -164,3 +164,126 @@ def test_e013_unknown_keys_emit_warnings_with_suggestions(
     assert any("session_parameter" in r.message for r in warnings)
     assert any("sucess_criteria" in r.message for r in warnings)
     assert any("success_criteria" in r.fix_suggestion for r in warnings)
+
+
+def test_e013_allows_prd_id_and_severity_keys(tmp_path: Path) -> None:
+    """E013 allows prd_id and severity metadata keys read by sim runner."""
+    sim_path = tmp_path / "evals" / "simulations" / "runner_meta.yaml"
+    sim_path.parent.mkdir(parents=True)
+    content = yaml.safe_dump(
+        {
+            "evals": [
+                {
+                    "name": "runner_case",
+                    "tags": ["P0"],
+                    "prd_id": "PRD-101",
+                    "severity": "critical",
+                    "steps": [
+                        {
+                            "goal": "Check status",
+                            "success_criteria": "Status provided",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    sim_path.write_text(content)
+
+    results = SimulationEvalStructure().check(
+        sim_path, content, _make_context(tmp_path)
+    )
+    assert results == []
+
+
+def test_e013_skips_foundry_scenarios_yaml(tmp_path: Path) -> None:
+    """E013 skips task-based foundry evals/scenarios/scenarios.yaml files."""
+    scen_path = tmp_path / "evals" / "scenarios" / "scenarios.yaml"
+    scen_path.parent.mkdir(parents=True)
+    content = yaml.safe_dump(
+        {
+            "meta": {"tools": {"get_balance": "projects/p/tools/t1"}},
+            "evals": [
+                {
+                    "name": "balance_scenario",
+                    "task": "Ask for balance",
+                    "max_turns": 6,
+                    "expect_tools": ["get_balance"],
+                    "prd_id": "PRD-1",
+                    "severity": "high",
+                }
+            ],
+        }
+    )
+    scen_path.write_text(content)
+
+    results = SimulationEvalStructure().check(
+        scen_path, content, _make_context(tmp_path)
+    )
+    assert results == []
+
+
+def test_e013_skips_platform_scenario_milestones_dict(tmp_path: Path) -> None:
+    """E013 skips exported single-scenario milestone dicts (push-eval input)."""
+    ms_path = tmp_path / "evals" / "simulations" / "exported_milestone.yaml"
+    ms_path.parent.mkdir(parents=True)
+    content = yaml.safe_dump(
+        {
+            "display_name": "Order Status Milestone Eval",
+            "tags": ["P0"],
+            "scenario": {
+                "session_parameters": {"order_id": "ORD-12345"},
+                "milestones": [
+                    {
+                        "goal": "Ask about order ORD-12345",
+                        "successCriteria": "Agent provides shipping status",
+                    }
+                ],
+            },
+        }
+    )
+    ms_path.write_text(content)
+
+    results = SimulationEvalStructure().check(
+        ms_path, content, _make_context(tmp_path)
+    )
+    assert results == []
+
+
+def test_e013_flags_empty_evals_non_dict_item_missing_name_and_criteria_only(
+    tmp_path: Path,
+) -> None:
+    """E013 flags empty evals, non-dict items, missing name, and criteria-only."""
+    empty_path = tmp_path / "evals" / "simulations" / "empty.yaml"
+    empty_path.parent.mkdir(parents=True)
+    empty_content = yaml.safe_dump({"evals": []})
+    empty_path.write_text(empty_content)
+
+    empty_res = SimulationEvalStructure().check(
+        empty_path, empty_content, _make_context(tmp_path)
+    )
+    assert len(empty_res) == 1
+    assert "must not be empty" in empty_res[0].message
+
+    bad_path = tmp_path / "evals" / "simulations" / "malformed_items.yaml"
+    bad_content = yaml.safe_dump(
+        {
+            "evals": [
+                "just a string",
+                {"steps": [{"success_criteria": "Only criteria without goal"}]},
+            ]
+        }
+    )
+    bad_path.write_text(bad_content)
+
+    bad_res = SimulationEvalStructure().check(
+        bad_path, bad_content, _make_context(tmp_path)
+    )
+    errors = [r for r in bad_res if r.severity == Severity.ERROR]
+    assert len(errors) == 3
+    assert any("item #1 must be a mapping" in r.message for r in errors)
+    assert any("missing required 'name'" in r.message for r in errors)
+    assert any(
+        "must define 'goal' (with 'success_criteria')" in r.message
+        for r in errors
+    )

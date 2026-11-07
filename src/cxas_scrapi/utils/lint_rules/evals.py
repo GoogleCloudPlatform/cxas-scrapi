@@ -669,10 +669,10 @@ class SimulationEvalStructure(Rule):
     """Validates simulation / CXAS 2.0 Milestone evaluation YAML structure.
 
     Grounded in CES MilestoneYamlTranslator and SimulationEvals:
-    - Each evaluation entry must define a non-empty ``steps`` list.
-    - Each step must define at least one of ``goal``, ``success_criteria``,
-      ``static_utterance``, or ``event`` (and if ``event`` is a mapping, it
-      must specify ``event`` or ``name``).
+    - Each evaluation entry must define a ``name`` and non-empty ``steps`` list.
+    - Each step must define at least one of ``goal``, ``static_utterance``, or
+      ``event`` (and if ``event`` is a mapping, it must specify ``event`` or
+      ``name``).
     - ``inject_variables`` is only supported on the first step (step 1).
     - Unknown keys on eval items or steps emit a warning with typo suggestions.
     """
@@ -680,8 +680,8 @@ class SimulationEvalStructure(Rule):
     id = "E013"
     name = "eval-simulation-structure"
     description = (
-        "Simulation/milestone eval must define valid steps, step actions, "
-        "first-step-only inject_variables, and known keys"
+        "Simulation/milestone eval must define name, valid steps, step "
+        "actions, first-step-only inject_variables, and known keys"
     )
     default_severity = Severity.ERROR
 
@@ -731,6 +731,8 @@ class SimulationEvalStructure(Rule):
             "target_tool",
             "user_ask_summary",
             "legacy_dfcx_lineage",
+            "prd_id",
+            "severity",
             "description",
             "notes",
         }
@@ -783,6 +785,20 @@ class SimulationEvalStructure(Rule):
             )
         return results
 
+    @staticmethod
+    def _is_task_scenario_manifest(file_path: Path, data: typing.Any) -> bool:
+        """Return True for task-based CES scenario YAMLs (e.g. foundry)."""
+        if not isinstance(data, dict) or not isinstance(
+            data.get("evals"), list
+        ):
+            return False
+        eval_dicts = [ev for ev in data["evals"] if isinstance(ev, dict)]
+        if any("steps" in ev for ev in eval_dicts):
+            return False
+        if "scenarios" in file_path.parts or "meta" in data:
+            return True
+        return bool(eval_dicts) and all("task" in ev for ev in eval_dicts)
+
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
@@ -800,6 +816,8 @@ class SimulationEvalStructure(Rule):
         from cxas_scrapi.utils.eval_utils import EvalUtils  # noqa: PLC0415
 
         is_sim_path = _is_simulation(file_path)
+        if not is_sim_path and self._is_task_scenario_manifest(file_path, data):
+            return []
         is_milestone = EvalUtils.is_milestone_eval_data(data)
         if not is_sim_path and not is_milestone:
             return []
@@ -814,7 +832,14 @@ class SimulationEvalStructure(Rule):
                 evals_list = data["evals"]
             elif "steps" in data:
                 evals_list = [data]
-            elif self._NON_MILESTONE_MANIFEST_KEYS & data.keys():
+            elif (
+                self._NON_MILESTONE_MANIFEST_KEYS & data.keys()
+                or isinstance(data.get("milestones"), list)
+                or (
+                    isinstance(data.get("scenario"), dict)
+                    and isinstance(data["scenario"].get("milestones"), list)
+                )
+            ):
                 return []
             else:
                 return [
@@ -830,10 +855,44 @@ class SimulationEvalStructure(Rule):
         else:
             return []
 
+        if not evals_list:
+            return [
+                self.make_result(
+                    file=rel,
+                    message=(
+                        "Simulation/milestone eval 'evals' list must not "
+                        "be empty"
+                    ),
+                    fix="Add at least one simulation test case under 'evals:'",
+                )
+            ]
+
         for idx, ev in enumerate(evals_list, start=1):
             if not isinstance(ev, dict):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Simulation eval item #{idx} must be a mapping"
+                        ),
+                        fix=(
+                            "Replace the item with a mapping containing "
+                            "'name' and 'steps'"
+                        ),
+                    )
+                )
                 continue
             name = str(ev.get("name") or f"item #{idx}")
+            if not str(ev.get("name") or "").strip():
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Simulation eval {name} is missing required 'name'"
+                        ),
+                        fix="Add a unique 'name:' to the eval",
+                    )
+                )
             results.extend(
                 self._unknown_key_warnings(
                     rel, ev, self._EVAL_KEYS, f"simulation eval '{name}'"
@@ -885,13 +944,6 @@ class SimulationEvalStructure(Rule):
                 )
 
                 has_goal = bool(str(step.get("goal") or "").strip())
-                has_criteria = bool(
-                    str(
-                        step.get("success_criteria")
-                        or step.get("successCriteria")
-                        or ""
-                    ).strip()
-                )
                 has_static = bool(
                     str(
                         step.get("static_utterance")
@@ -905,7 +957,7 @@ class SimulationEvalStructure(Rule):
                     or isinstance(event_val, dict)
                 )
 
-                if not (has_goal or has_criteria or has_static or has_event):
+                if not (has_goal or has_static or has_event):
                     results.append(
                         self.make_result(
                             file=rel,

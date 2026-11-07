@@ -9,12 +9,28 @@ The GECX sandbox auto-provides these globals. Do NOT import them. Use ONLY the m
 **Creating Parts** -- always use factory methods, never raw constructors:
 
 ```python
-# Text
+# Text (NOTE: Part.from_text takes ONLY `text: str` -- NEVER pass `partial=True`!)
 Part.from_text(text="Hello, how can I help?")
 
-# Tool/function call
-Part.from_function_call(name="end_session", args={"session_escalated": True})
+# Customized speech / DTMF / barge-in control (ideal for greetings & legal disclaimers)
+Part.from_customized_response(
+    content="Hi, thanks for calling Acme Support. How can I help you today?",
+    disable_barge_in=False,
+)
+
+# Terminal session end / escalation (keyword-only `reason` and `escalated` -- NOT `session_escalated`!)
+Part.from_end_session(reason="user_requested_human", escalated=True)
+Part.from_end_session(reason="resolved", escalated=False)
+
+# Deterministic sub-agent transfer (uses directory/resource name)
+Part.from_agent_transfer(agent="billing_agent")
+
+# Tool/function call (target Python tool MUST have `-> dict` return annotation!)
 Part.from_function_call(name="lookup_benefits", args={"member_id": "H123", "plan_id": "PLN-001"})
+
+# Pre-recorded GCS audio or JSON UI payload
+Part.from_audio(audio_uri="gs://my-bucket/hold.wav", cancellable=False, interruptable=True)
+Part.from_json(data='{"card": "summary"}')
 ```
 
 **Reading Parts:**
@@ -53,15 +69,25 @@ LlmResponse.from_parts(parts=[
 ])
 
 # 2. Tool Delegation with Audio Filler (Runs tool, feeds toolResponse to LLM, triggers LLM reasoning):
+# IMPORTANT: Do NOT pass partial=True to Part.from_text, and NEVER set response.partial = True
+# when parts contains a function_call (silently drops the tool call!) or inline audio tags.
 LlmResponse.from_parts(parts=[
-    Part.from_text(text="Let me look that up for you.", partial=True),
+    Part.from_text(text="Let me look that up for you."),
     Part.from_function_call(name="lookup_account", args={"id": "123"}),
+])
+
+# 3. Silent Close on a Caller Turn (e.g., after Two-Part Reply already spoke the answer):
+# MUST return Part.from_text(text="") -- NEVER return parts=[] on a caller turn!
+LlmResponse.from_parts(parts=[
+    Part.from_text(text=""),
 ])
 ```
 
 **LLM Lifecycle Decision Matrix:**
-- **Text-Only Parts (`Part.from_text`)**: CXAS sends speech to user and closes bot turn. **LLM is bypassed.**
-- **FunctionCall Parts (`Part.from_function_call`)**: CXAS executes tool and feeds `toolResponse` back to LLM. **LLM is invoked.**
+- **Text-Only Parts (`Part.from_text` / `Part.from_customized_response`)**: CXAS sends speech to user and closes bot turn. **LLM is bypassed.**
+- **FunctionCall Parts (`Part.from_function_call`)**: CXAS executes tool (target Python tool MUST have `-> dict` return annotation) and feeds `toolResponse` back to LLM. **LLM is invoked.**
+- **Never combine `response.partial = True` with `function_call` or inline tags**: Setting `response.partial = True` alongside `Part.from_function_call` silently drops the tool call; combining it with `<warm>` / `<prosody ...>` tags reads tag names aloud and clips audio at ~1.9 s.
+- **Never return `parts=[]` on a caller turn**: Erases the caller turn and leaves voice sessions permanently deaf (`parts=[]` is valid **only** on `<context>no user activity detected...</context>` inactivity ticks).
 - **Gotcha (`EMPTY_RESPONSE`)**: If you need to speak a prompt deterministically and wait for user speech, do NOT return a `FunctionCall` part in the same response. Execute the tool synchronously via `tools.<tool_name>()` in Python and return only `Part.from_text(...)`.
 
 **Reading responses** (in after_model callbacks):
@@ -106,11 +132,13 @@ for event in reversed(callback_context.events):
 
 ```python
 for part in callback_context.get_last_user_input():
-    if part.text == "<event>session start</event>":
-        # First model call -- return greeting
+    if (part.text_or_transcript() or "") == "<event>session start</event>":
+        return LlmResponse.from_parts(parts=[
+            Part.from_text(text="Hi, thanks for calling Acme Support. How can I help you today?"),
+        ])
 ```
 
-### Detect silence / no-input
+### Detect silence / no-input (audio-safe)
 
 ```python
 import re
@@ -118,9 +146,8 @@ import re
 def is_user_inactive(contents: list) -> bool:
     pattern = r"<context>no user activity detected for \d+ seconds\.</context>"
     return len(contents) > 1 and any(
-        re.search(pattern, p.text, re.IGNORECASE)
+        re.search(pattern, p.text_or_transcript() or "", re.IGNORECASE)
         for p in contents[-1].parts
-        if p.text
     )
 ```
 
@@ -145,7 +172,8 @@ has_end_session = any(
 
 ## Session State
 
-- All values are **strings** -- GECX state only supports string values
-- Booleans: use `"true"` / `"false"`, check with `str(state.get("flag", "false")).lower() == "true"`
-- Counters: use `str(int(state.get("counter", "0")) + 1)`
-- Access via `callback_context.state` in callbacks, `context.state` in tools
+- Declare all variables in `app.json` under `variableDeclarations` (keep total ≤95 variables and total serialized state <256 KB)
+- Supported schema types: `OBJECT`, `ARRAY`, `STRING`, `BOOLEAN`, `INTEGER`, `NUMBER` (always use `STRING` for IDs/ZIPs -- `NUMBER` deserializes integers to floats like `12345.0`)
+- Booleans: coerce defensively (`str(state.get("flag", "false")).lower() == "true"` -- `"false"` is truthy in Python!)
+- Dates: sandbox runs in UTC -- read `callback_context.state.get("current_date")` for the app's configured timezone date
+- Access via `callback_context.state` in callbacks, `context.state` in tools (do NOT set `state["key"] = None`, which deletes keys or fails schema checks; reset to typed empty defaults like `""`, `False`, `{}`)

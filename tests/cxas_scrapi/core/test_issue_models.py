@@ -38,7 +38,7 @@ def test_create_topic_model_for_app(
     mock_resp_create.status_code = 200
     mock_resp_create.json.return_value = {
         "name": "projects/p/locations/l/issueModels/im1",
-        "displayName": "Topic Model Bella Notte",
+        "displayName": "Topic Model Sample App",
     }
 
     mock_resp_deploy = MagicMock()
@@ -51,8 +51,8 @@ def test_create_topic_model_for_app(
 
     client = IssueModels(project_id="p", location="l")
     model = client.create_topic_model_for_app(
-        display_name="Topic Model Bella Notte",
-        app_name="bella_notte",
+        display_name="Topic Model Sample App",
+        app_name="sample_app",
         deploy=True,
     )
 
@@ -62,9 +62,9 @@ def test_create_topic_model_for_app(
     create_call = mock_request.call_args_list[0][1]
     assert create_call["method"] == "POST"
     assert "issueModels" in create_call["url"]
-    assert create_call["json"]["displayName"] == "Topic Model Bella Notte"
+    assert create_call["json"]["displayName"] == "Topic Model Sample App"
     filter_val = create_call["json"]["inputDataConfig"]["filter"]
-    assert filter_val == 'labels.cxas_app="bella_notte"'
+    assert filter_val == 'labels.cxas_app="sample_app"'
 
     deploy_call = mock_request.call_args_list[1][1]
     assert deploy_call["method"] == "POST"

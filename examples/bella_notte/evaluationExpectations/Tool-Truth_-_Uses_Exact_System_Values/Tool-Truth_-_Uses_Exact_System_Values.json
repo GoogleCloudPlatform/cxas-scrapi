@@ -1,8 +1,0 @@
-{
-  "name": "e35db40b-44f7-46b1-a627-0a629bba22b7",
-  "displayName": "Tool-Truth - Uses Exact System Values",
-  "llmCriteria": {
-    "prompt": "Evaluate whether the agent faithfully relays key system-provided values: available times (e.g. '6:00 PM, 7:30 PM') and confirmation numbers (e.g. 'BN-1234'). The agent MUST include the exact times and confirmation number from the system. Natural formatting of other values is fine — for example, saying '4 guests' instead of '4.0', or 'June 25th' instead of '2026-06-25', is acceptable because the underlying value is the same. PASS if available times and confirmation numbers are relayed exactly. FAIL only if the agent fabricates times, omits available time options, or makes up a confirmation number."
-  },
-  "tags": ["slot-machine", "tool-truth"]
-}

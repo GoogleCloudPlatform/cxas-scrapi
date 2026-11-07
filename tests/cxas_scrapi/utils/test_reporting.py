@@ -13,15 +13,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import datetime
+import html.parser
 import importlib.util
 import inspect
+import io
 import json
+import math
 import os
 import re
+import struct
 import sys
 import typing
-from unittest.mock import ANY, mock_open, patch
+import wave
+from unittest.mock import ANY, MagicMock, mock_open, patch
 
 import pandas as pd
 import pytest
@@ -29,6 +35,7 @@ import pytest
 from cxas_scrapi.evals import runner as evals_runner
 from cxas_scrapi.evals.simulation_evals import SimulationEvals
 from cxas_scrapi.prompts import naturalness_prompts
+from cxas_scrapi.utils import reporting as enricher
 from cxas_scrapi.utils.eval_utils import (
     COMBINED_REPORT_FILENAME,
     COMBINED_REPORT_JSON_FILENAME,
@@ -409,6 +416,90 @@ def test_generate_combined_html_report(tmp_path: typing.Any) -> None:
         assert "test_sim" in content
         assert "test_tool" in content
         assert "test_callback" in content
+
+
+def test_generate_combined_html_report_renders_tool_expectations(
+    tmp_path: typing.Any,
+) -> None:
+    output_path = os.path.join(tmp_path, "report_tool_exp.html")
+    sim_results = [
+        {
+            "name": "test_sim_tools",
+            "passed": True,
+            "run": 1,
+            "duration_s": 2.0,
+            "goals": "1/1",
+            "expectations": "2/2",
+            "turns": 1,
+            "session_id": "sess_tool",
+            "session_parameters": {},
+            "step_details": [],
+            "expectation_details": [
+                {
+                    "expectation": "Agent greets caller",
+                    "status": "Met",
+                    "justification": "Greeting present.",
+                },
+                {
+                    "expectation": "[tool] lookup_account is called",
+                    "status": "Met",
+                    "justification": "lookup_account was called 1 time(s)",
+                },
+            ],
+            "detailed_trace": ["User: hi", "Agent Text: hello"],
+        }
+    ]
+
+    generate_combined_html_report(
+        golden_results=[],
+        sim_results=sim_results,
+        tool_results=[],
+        callback_results=[],
+        output_path=output_path,
+        app_name="projects/test-proj/locations/global/apps/test-app",
+    )
+
+    assert os.path.exists(output_path)
+    with open(output_path, encoding="utf-8") as f:
+        content = f.read()
+        assert "tool-expectation" in content
+        assert "badge-tool" in content
+        assert "[tool]" in content
+        assert "lookup_account is called" in content
+
+
+def test_generate_combined_html_report_renders_background_noise(
+    tmp_path: typing.Any,
+) -> None:
+    output_path = os.path.join(tmp_path, "report_noise.html")
+    sim_results = [
+        {
+            "name": "sim_noise",
+            "run": 1,
+            "passed": True,
+            "turns": 1,
+        }
+    ]
+    generate_combined_html_report(
+        golden_results=[],
+        sim_results=sim_results,
+        tool_results=[],
+        callback_results=[],
+        output_path=output_path,
+        app_name="projects/test-proj/locations/global/apps/test-app",
+        bg_noise_file="call_center",
+        bg_noise_snr=12.0,
+    )
+    assert os.path.exists(output_path)
+    with open(output_path) as f:
+        content = f.read()
+        assert "BG: call_center (MEDIUM &middot; 12.0 dB SNR)" in content
+        assert (
+            "Continuous preset/file <code>call_center</code> at <b>MEDIUM</b> (12.0 dB SNR)"
+            in content
+        )
+        assert "Background Noise Injection:" in content
+        assert "toggleBgNoiseSample" not in content
 
 
 def test_generate_combined_html_report_renders_naturalness(
@@ -1221,7 +1312,9 @@ def test_run_all_evals_dict_based_simulations(
         eval_model=None,
         modality="text",
         background_noise_file=None,
+        bg_noise_snr=None,
         burst_noise_files=None,
+        burst_noise_snr=None,
         use_tool_fakes=False,
         skip_playback_wait=False,
         single_bidi_stream=False,
@@ -1379,6 +1472,27 @@ evals:
         ]
 
 
+def test_load_sim_test_cases_preserves_tool_expectations() -> None:
+    yaml_data = """
+evals:
+  - name: sim1
+    session_params:
+      user_id: "12345"
+    tool_expectations:
+      - type: tool_output
+        tool: lookup_account
+        result: {status: "found"}
+"""
+    with patch("builtins.open", mock_open(read_data=yaml_data)):
+        cases = _load_sim_test_cases("dummy.yaml")
+
+        assert len(cases) == 1
+        assert "tool_expectations" in cases[0]
+        assert len(cases[0]["tool_expectations"]) == 1
+        assert cases[0]["tool_expectations"][0]["tool"] == "lookup_account"
+        assert "tool_expectations" not in cases[0].get("session_params", {})
+
+
 def test_load_sim_test_cases_without_common_naturalness() -> None:
     """Existing sim files must not grow a naturalness key."""
     yaml_data = """
@@ -1418,6 +1532,33 @@ evals:
     }
     # An explicit false opts a single eval out of the file-wide metric.
     assert cases[2]["naturalness_metric"] is False
+
+
+def test_load_sim_test_cases_merges_common_background_noise() -> None:
+    yaml_data = """
+common_background_noise:
+  preset: cafe
+  snr: 10.0
+evals:
+  - name: inherits
+  - name: overrides
+    background_noise:
+      preset: call_center
+      snr: 12.0
+  - name: opts_out
+    background_noise: false
+"""
+    with patch("builtins.open", mock_open(read_data=yaml_data)):
+        cases = _load_sim_test_cases("dummy.yaml")
+
+    assert len(cases) == 3
+    assert cases[0]["background_noise"] == {"preset": "cafe", "snr": 10.0}
+    assert cases[1]["background_noise"] == {
+        "preset": "call_center",
+        "snr": 12.0,
+    }
+    assert cases[2]["background_noise"] is False
+    assert cases[2]["config"]["background_noise"] is False
 
 
 def test_generate_combined_report_from_dir_timestamped(
@@ -2514,6 +2655,9 @@ def test_audio_conversations_section_and_drawer(tmp_path: typing.Any) -> None:
         "Extended silence detected"
         in gld_checks["no_long_pauses"]["justification"]
     )
+    assert "audio_src" in rows["conv-0"]
+    assert "audio_src" in rows["conv-1"]
+    assert "Full Conversation" in comb_html
 
     # 2. Standalone simulation report
     out_sim = tmp_path / "sim_convs.html"
@@ -3049,6 +3193,60 @@ def test_audio_analysis_acoustic_metrics_and_drift_aggregation(
     assert "audio_truncation" in html_text
 
 
+def test_voice_jumps_are_a_top_line_metric(tmp_path: typing.Any) -> None:
+    jump = {
+        "part": 2,
+        "t_s": 6.3,
+        "pause_s": 0.4,
+        "d_st": 7.8,
+        "d_db": 7.7,
+        "jump": True,
+    }
+    smooth = dict(jump, d_st=1.7, d_db=8.5, jump=False)
+
+    def run(name: str, joins: list, flags: list) -> dict:
+        return {
+            "name": name,
+            "run": 1,
+            "passed": True,
+            "modality": "audio",
+            "audio_metrics": {
+                "call": {"lufs_mean": -21.0, "max_adj_dlufs": 1.0, "flags": []},
+                "turns": [],
+            },
+            "audio_drift": {
+                "rows": [
+                    {"turn": 1, "flags": flags, "joins": joins, "dur_s": 6.0},
+                ],
+            },
+        }
+
+    runs = [
+        run("sim_jump", [jump], ["JUMP"]),
+        run("sim_smooth_join", [smooth], []),
+        run("sim_one_part", [], []),
+    ]
+    suite_audio = _aggregate_suite_audio_analysis(
+        sim_results=runs, golden_results=[]
+    )
+    ac_sum = suite_audio["acoustic_summary"]
+    assert ac_sum["join_runs"] == 2
+    assert ac_sum["jump_runs"] == 1
+    assert ac_sum["jump_turns"] == 1
+    assert ac_sum["jump_free_pct"] == 50
+    # a voice jump is an acoustic defect: the jump run isn't clean
+    assert ac_sum["clean_runs"] == 2
+    rows = {r["eval_name"]: r for r in suite_audio["run_rows"]}
+    assert "voice_jump" in rows["sim_jump"]["issue_keys"]
+    assert "voice_jump" not in rows["sim_smooth_join"]["issue_keys"]
+
+    out_html = tmp_path / "voice_jumps.html"
+    generate_combined_html_report(sim_results=runs, output_path=str(out_html))
+    html_text = out_html.read_text(encoding="utf-8")
+    assert 'id="ov-tile-voice-jump"' in html_text
+    assert "1 / 2 runs jump-free" in html_text
+
+
 def test_audio_analysis_barge_in_eval_fields(tmp_path: typing.Any) -> None:
     run = {
         "name": "sim_barge_in_evaluation",
@@ -3542,3 +3740,772 @@ def test_write_eval_stamp_and_github_step_summary_and_publish_bundle(
     assert "### sims-text" in md_text
     assert "**1 / 1 cases passed**" in md_text
     assert "Open HTML Report" in md_text
+
+
+def test_aggregate_suite_audio_auto_measures_when_agent_wavs_exist(
+    tmp_path: typing.Any,
+) -> None:
+    session_id = "test-session-123"
+    wav_file = tmp_path / f"turn_0_agent_{session_id}.wav"
+
+    with wave.open(str(wav_file), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(b"\x00\x00" * 16000)  # 1s silence
+
+    sim_results = [
+        {
+            "name": "auto_measure_sim",
+            "session_id": session_id,
+            "agent_audio_paths": {0: str(wav_file)},
+            "runs": [
+                {
+                    "run": 1,
+                    "passed": True,
+                    "session_id": session_id,
+                    "agent_audio_paths": {0: str(wav_file)},
+                }
+            ],
+        }
+    ]
+
+    fake_call = {
+        "conversation_id": session_id,
+        "lufs_mean": -18.5,
+        "rate_mean": 3.8,
+        "f0_median_sd_st": 1.2,
+        "max_seam_st": 2.0,
+        "flags": [],
+        "drift_reasons": [],
+    }
+    fake_turns = [
+        {
+            "turn_index": 0,
+            "duration_s": 1.0,
+            "lufs": -18.5,
+            "rate_syl_per_s": 3.8,
+            "f0_median_hz": 180.0,
+            "flags": [],
+        }
+    ]
+    with patch(
+        "cxas_scrapi.utils.tracing.audio_metrics.measure_call",
+        return_value=(fake_call, fake_turns),
+    ):
+        agg = _aggregate_suite_audio_analysis(sim_results=sim_results)
+    assert agg is not None
+    conv_data = json.loads(agg["conv_data_json"])
+    run_entry = conv_data["run_rows"][0]
+    assert run_entry.get("acoustic_measured") is True
+    assert sim_results[0]["runs"][0].get("audio_metrics") is not None
+
+
+def test_load_sim_test_cases_with_common_params_and_background_noise(
+    tmp_path: typing.Any,
+) -> None:
+    yaml_content = """
+common_background_noise: "cafe"
+common_bg_noise_level: "MEDIUM"
+common_params:
+  user_type: "premium"
+  session_timeout: 30
+common_expectations:
+  - "Common expectation 1"
+evals:
+  - name: "case_inherits_common"
+    steps:
+      - goal: "Check status"
+  - name: "case_overrides_level"
+    bg_noise_level: "HIGH"
+    steps:
+      - goal: "Check status"
+  - name: "case_overrides_preset"
+    background_noise: "traffic"
+    steps:
+      - goal: "Check status"
+  - name: "case_opts_out"
+    background_noise: false
+    steps:
+      - goal: "Check status"
+  - name: "case_dict_merge"
+    background_noise:
+      preset: "call_center"
+      level: "LOW"
+    steps:
+      - goal: "Check status"
+"""
+    yaml_file = tmp_path / "sims.yaml"
+    yaml_file.write_text(yaml_content)
+
+    cases = _load_sim_test_cases(str(yaml_file))
+    assert len(cases) == 5
+
+    # Case 0: inherits common
+    c0 = cases[0]
+    assert c0["background_noise"] == "cafe"
+    assert c0["bg_noise_level"] == "MEDIUM"
+    assert c0["session_parameters"]["user_type"] == "premium"
+    assert c0["session_parameters"]["session_timeout"] == 30
+    assert "Common expectation 1" in c0["expectations"]
+
+    # Case 1: overrides level
+    c1 = cases[1]
+    assert c1["background_noise"] == "cafe"
+    assert c1["bg_noise_level"] == "HIGH"
+
+    # Case 2: overrides preset
+    c2 = cases[2]
+    assert c2["background_noise"] == "traffic"
+    assert c2["bg_noise_level"] == "MEDIUM"
+
+    # Case 3: opts out
+    c3 = cases[3]
+    assert c3["background_noise"] is False
+    assert "bg_noise_level" not in c3
+
+    # Case 4: dict merge
+    c4 = cases[4]
+    assert isinstance(c4["background_noise"], dict)
+    assert c4["background_noise"]["preset"] == "call_center"
+    assert c4["background_noise"]["level"] == "LOW"
+
+
+def test_load_sim_test_cases_json_and_exclude_common_expectations(
+    tmp_path: typing.Any,
+) -> None:
+    from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
+        _load_sim_test_cases,
+    )
+
+    json_file = tmp_path / "scenarios.json"
+    json_file.write_text(
+        json.dumps(
+            {
+                "common_session_parameters": {"env": "stage"},
+                "common_expectations": ["No internal tool names"],
+                "test_cases": [
+                    {
+                        "name": "normal_case",
+                        "expectations": ["Greets user"],
+                    },
+                    {
+                        "name": "isolated_case",
+                        "exclude_common_expectations": True,
+                        "expectations": ["Only custom expectation"],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = _load_sim_test_cases(str(json_file))
+    assert len(loaded) == 2
+    assert loaded[0]["expectations"] == [
+        "No internal tool names",
+        "Greets user",
+    ]
+    assert loaded[0]["session_parameters"] == {"env": "stage"}
+    assert loaded[1]["expectations"] == ["Only custom expectation"]
+
+
+def test_write_junit_xml_and_rolling_manifest_and_dry_run(
+    tmp_path: typing.Any,
+) -> None:
+    import xml.etree.ElementTree as ET  # noqa: PLC0415
+
+    from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
+        discover_eval_suite,
+        generate_combined_report_from_dir,
+        publish_eval_report_bundle,
+        render_index_html,
+        summarize_and_gate_evals,
+        write_junit_xml,
+    )
+
+    sim_dir = tmp_path / "sims"
+    sim_dir.mkdir()
+    (sim_dir / "keep_smoke.yaml").write_text(
+        "evals:\n  - name: smoke_1\n    tags: [smoke]\n",
+        encoding="utf-8",
+    )
+    (sim_dir / "skip_regression.json").write_text(
+        json.dumps({"scenarios": [{"name": "reg_1", "tags": ["reg"]}]}),
+        encoding="utf-8",
+    )
+
+    dry_res = discover_eval_suite(
+        simulation_dir=str(sim_dir),
+        include=["sims"],
+        exclude_files=["skip_"],
+        suite_name="smoke-suite",
+    )
+    assert dry_res["dry_run"] is True
+    assert dry_res["sim_cases"] == ["smoke_1"]
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    path_res, gate_dry = generate_combined_report_from_dir(
+        output_dir=str(out_dir),
+        simulation_dir=str(sim_dir),
+        include=["sims"],
+        exclude_files=["skip_"],
+        dry_run=True,
+        return_gate_status=True,
+    )
+    assert path_res == ""
+    assert gate_dry["dry_run"] is True
+    assert gate_dry["sim_cases"] == ["smoke_1"]
+
+    gate_summary = summarize_and_gate_evals(
+        sim_results=[
+            {
+                "name": "smoke_1",
+                "passed": True,
+                "duration_s": 4.2,
+                "goals": "1/1",
+                "expectations": "2/2",
+                "session_id": "sess-1",
+            },
+            {
+                "name": "smoke_2",
+                "passed": False,
+                "duration_s": 5.8,
+                "expectation_details": [
+                    {"expectation": "Must confirm window", "status": "Not Met"}
+                ],
+                "error": "Timeout",
+                "session_id": "sess-2",
+            },
+        ],
+        min_run_passes=1,
+        min_pass_rate=0.9,
+    )
+    junit_path = tmp_path / "junit.xml"
+    write_junit_xml(
+        junit_path=str(junit_path),
+        suite_name="smoke-suite",
+        gate_summary=gate_summary,
+        published_urls={"report_url": "https://example.com/report.html"},
+        testsuite_prefix="custom_evals",
+    )
+    assert junit_path.is_file()
+    root = ET.parse(str(junit_path)).getroot()
+    assert root.attrib["name"] == "custom_evals_smoke-suite"
+    testcases = root.findall("testcase")
+    assert len(testcases) == 3  # 2 scenarios + __suite_pass_rate_gate__
+
+    index_html = render_index_html(
+        [
+            {
+                "timestamp_utc": "2026-10-28T00:00:00Z",
+                "suite": "smoke-suite",
+                "passed_cases": 1,
+                "total_cases": 2,
+                "pass_rate": 0.5,
+                "gate_passed": False,
+                "git_sha": "1234567890abcdef",
+                "run_id": "run-99",
+                "report_url": "https://example.com/report.html",
+                "latest_url": "https://example.com/latest.html",
+                "enriched_report_url": "https://example.com/enriched.html",
+            }
+        ],
+        title="Custom Eval Dashboard",
+    )
+    assert "Custom Eval Dashboard" in index_html
+    assert "Enriched (Audio+VAD)" in index_html
+
+    report_html = out_dir / "combined_report.html"
+    report_html.write_text("<html>base</html>", encoding="utf-8")
+    enriched_html = out_dir / "combined_report_enriched.html"
+    enriched_html.write_text("<html>enriched</html>", encoding="utf-8")
+
+    with patch("cxas_scrapi.utils.reporting.gcs_utils.GCSUtils") as mock_gcs:
+        uploader = mock_gcs.return_value
+        uploader.exists.return_value = True
+        uploader.download_string.return_value = json.dumps(
+            [{"suite": "old-suite", "passed_cases": 1, "total_cases": 1}]
+        )
+        uploader.upload_file.side_effect = lambda uri, _local, **_kw: (
+            f"https://storage.mtls.cloud.google.com/{uri.removeprefix('gs://')}"
+        )
+        urls = publish_eval_report_bundle(
+            output_dir=str(out_dir),
+            report_path=str(report_html),
+            gcs_bundle_uri="gs://my-bucket/evals/run-100",
+            suite_name="smoke-suite",
+            gate_summary=gate_summary,
+            report_title="Custom Eval Dashboard",
+            enriched_report_path=str(enriched_html),
+        )
+    assert "enriched_report_url" in urls
+    assert "latest_enriched_url" in urls
+    assert "manifest_url" in urls
+    assert "index_url" in urls
+    manifest_data = json.loads(
+        (out_dir / "runs_manifest.json").read_text(encoding="utf-8")
+    )
+    assert len(manifest_data) == 2
+    assert manifest_data[0]["suite"] == "smoke-suite"
+    assert manifest_data[1]["suite"] == "old-suite"
+
+
+_SR = 16000
+
+
+def _tone(duration_s: float, amplitude: int = 8000) -> list[int]:
+    n = int(duration_s * _SR)
+    return [
+        int(amplitude * math.sin(2 * math.pi * 440 * i / _SR)) for i in range(n)
+    ]
+
+
+def _silence(duration_s: float) -> list[int]:
+    return [0] * int(duration_s * _SR)
+
+
+def _stereo_wav(left: list[int], right: list[int]) -> bytes:
+    n = max(len(left), len(right))
+    left = left + [0] * (n - len(left))
+    right = right + [0] * (n - len(right))
+    frames = b"".join(
+        struct.pack("<hh", lv, rv) for lv, rv in zip(left, right, strict=True)
+    )
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(_SR)
+        w.writeframes(frames)
+    return buf.getvalue()
+
+
+def _turn_wav(caller_s: float, gap_s: float, agent_s: float) -> bytes:
+    """Caller speaks 0.2s..0.2+caller_s, agent starts after gap_s of silence."""
+    lead = _silence(0.2)
+    caller = lead + _tone(caller_s)
+    agent = _silence(len(caller) / _SR + gap_s) + _tone(agent_s)
+    return _stereo_wav(caller, agent)
+
+
+def _fake_encoder(audio: enricher.PcmAudio) -> enricher.EncodedAudio:
+    del audio
+    return enricher.EncodedAudio(data=b"OggS-fake", mime_type="audio/ogg")
+
+
+def _failing_encoder(audio: enricher.PcmAudio) -> enricher.EncodedAudio:
+    del audio
+    raise RuntimeError("no encoder")
+
+
+class FakeGcs:
+    """In-memory stand-in for GCSUtils."""
+
+    def __init__(self, blobs: dict[str, bytes]) -> None:
+        self.blobs = blobs
+        self.listed_prefixes: list[str] = []
+
+    def list_with_prefix(self, gcs_bucket_uri: str, prefix: str) -> list[str]:
+        self.listed_prefixes.append(prefix)
+        return sorted(
+            uri
+            for uri in self.blobs
+            if uri.startswith(f"{gcs_bucket_uri}/{prefix}")
+        )
+
+    def download_blob(self, gcs_uri: str) -> bytes:
+        return self.blobs[gcs_uri]
+
+
+def _result(
+    name: str = "scenario_a",
+    passed: bool = True,
+    session_id: str = "sess-1",
+    **kw: typing.Any,
+) -> dict[str, typing.Any]:
+    r: dict[str, typing.Any] = {
+        "name": name,
+        "run": 1,
+        "passed": passed,
+        "goals": "1/1",
+        "expectations": "1/1" if passed else "0/1",
+        "turns": 2,
+        "session_id": session_id,
+        "session_parameters": {"dnis": "1010"},
+        "detailed_trace": [
+            "User: Hi there",
+            (
+                "Agent Text: Hello, how can I help?\n"
+                "Tool Call: projects/p/locations/l/apps/a/tools/lookup with args"
+                " {'id': 1}\n"
+                "Tool Response: projects/p/locations/l/apps/a/tools/lookup with"
+                " result {'ok': True}"
+            ),
+            "User: Check my bill",
+            (
+                "Agent Transfer: Transferred to billing_agent\n"
+                "Agent Text: Sure, one moment."
+            ),
+        ],
+        "step_details": [
+            {
+                "goal": "Greet",
+                "success_criteria": "Agent greets",
+                "status": "Completed",
+                "justification": "ok",
+            }
+        ],
+        "expectation_details": [
+            {
+                "expectation": "Agent is polite",
+                "status": "Met" if passed else "Not Met",
+                "justification": "because",
+            }
+        ],
+        "sim_user_voice": "en-US-Chirp3-HD-Kore",
+    }
+    r.update(kw)
+    return r
+
+
+class _Checker(html.parser.HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tags: list[tuple[str, dict[str, str | None]]] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        self.tags.append((tag, dict(attrs)))
+
+
+def test_analyze_turn_measures_dead_air() -> None:
+    audio = enricher.read_wav(_turn_wav(caller_s=1.0, gap_s=1.5, agent_s=0.8))
+
+    info = enricher.analyze_turn(audio)
+
+    assert len(info.caller_spans) == 1
+    assert len(info.agent_spans) == 1
+    assert info.caller_start_s == pytest.approx(0.2, abs=0.03)
+    assert info.caller_end_s == pytest.approx(1.2, abs=0.03)
+    assert info.agent_start_s == pytest.approx(2.7, abs=0.03)
+    assert info.dead_air_s == pytest.approx(1.5, abs=0.05)
+
+
+def test_short_pauses_are_merged() -> None:
+    caller = _tone(0.5) + _silence(0.2) + _tone(0.5)
+    audio = enricher.read_wav(_stereo_wav(caller, _silence(2.0)))
+
+    info = enricher.analyze_turn(audio)
+
+    assert len(info.caller_spans) == 1
+    assert info.agent_spans == []
+    assert info.dead_air_s is None
+
+
+def test_quiet_audio_is_silence() -> None:
+    audio = enricher.read_wav(
+        _stereo_wav(_tone(1.0, amplitude=100), _tone(1.0, amplitude=100))
+    )
+
+    info = enricher.analyze_turn(audio)
+
+    assert info.caller_spans == []
+    assert info.agent_spans == []
+
+
+def test_call_setup() -> None:
+    info = enricher.TurnAudioInfo(
+        duration_s=5.0, caller_end_s=None, agent_start_s=3.25
+    )
+    assert enricher.call_setup_s(info) == 3.25
+    info.caller_end_s = 1.0
+    assert enricher.call_setup_s(info) == 2.25
+
+
+def test_concat_turns_records_chapter_offsets() -> None:
+    t1 = enricher.read_wav(_stereo_wav(_tone(1.0), _silence(1.0)))
+    t2 = enricher.read_wav(_stereo_wav(_tone(0.5), _silence(0.5)))
+
+    full, offsets = enricher.concat_turns({2: t2, 1: t1})
+
+    assert offsets == {1: 0.0, 2: 1.0}
+    assert full is not None
+    assert full.duration_s == pytest.approx(1.5)
+
+
+def test_fallback_downsamples_to_8khz_wav() -> None:
+    audio = enricher.read_wav(_stereo_wav(_tone(1.0), _tone(1.0)))
+
+    encoded = enricher.encode_audio(audio, encoder=_failing_encoder)
+
+    assert encoded.mime_type == "audio/wav"
+    decoded = enricher.read_wav(encoded.data)
+    assert decoded.sample_rate == 8000
+    assert decoded.channels == 2
+    assert decoded.duration_s == pytest.approx(1.0, abs=0.01)
+
+
+def test_opus_encoder_produces_ogg_or_falls_back() -> None:
+    audio = enricher.read_wav(_turn_wav(1.0, 0.5, 1.0))
+
+    encoded = enricher.encode_audio(audio)
+
+    assert encoded.mime_type in ("audio/ogg", "audio/wav")
+    if encoded.mime_type == "audio/ogg":
+        assert encoded.data.startswith(b"OggS")
+        assert len(encoded.data) < len(audio.data) / 5
+
+
+def test_falls_back_to_previous_day() -> None:
+    prefix = "gs://bkt/audio-recording/2026-09-27/sess-1"
+    gcs = FakeGcs(
+        {
+            f"{prefix}/full-session.wav": _turn_wav(0.5, 3.0, 0.5),
+            f"{prefix}/full-session(2).wav": _turn_wav(0.5, 1.0, 0.5),
+            f"{prefix}/user-turn-1.wav": b"ignored",
+            f"{prefix}/METADATA.json": b"{}",
+        }
+    )
+
+    rec = enricher.fetch_session_recording(
+        gcs, "bkt", "sess-1", datetime.date(2026, 9, 28)
+    )
+
+    assert rec is not None
+    assert sorted(rec.turns) == [1, 2]
+    assert rec.gcs_dir == f"{prefix}/"
+    assert gcs.listed_prefixes == [
+        "audio-recording/2026-09-28/sess-1/",
+        "audio-recording/2026-09-27/sess-1/",
+    ]
+
+
+def test_fetch_session_recording_supports_custom_bucket_prefix() -> None:
+    prefix = "gs://bkt/custom-recordings/sess-1"
+    gcs = FakeGcs(
+        {
+            f"{prefix}/full-session.wav": _turn_wav(0.5, 1.0, 0.5),
+        }
+    )
+
+    rec = enricher.fetch_session_recording(
+        gcs, "gs://bkt/custom-recordings", "sess-1", datetime.date(2026, 9, 28)
+    )
+
+    assert rec is not None
+    assert sorted(rec.turns) == [1]
+    assert rec.gcs_dir == f"{prefix}/"
+
+
+def test_missing_recording_returns_none() -> None:
+    gcs = FakeGcs({})
+    assert (
+        enricher.fetch_session_recording(
+            gcs, "bkt", "sess-x", datetime.date(2026, 9, 28)
+        )
+        is None
+    )
+    assert len(gcs.listed_prefixes) == 3
+
+
+def test_unreadable_turn_is_skipped() -> None:
+    prefix = "gs://bkt/audio-recording/2026-09-28/sess-1"
+    gcs = FakeGcs(
+        {
+            f"{prefix}/full-session.wav": b"not a wav",
+            f"{prefix}/full-session(2).wav": _turn_wav(0.5, 1.0, 0.5),
+        }
+    )
+
+    rec = enricher.fetch_session_recording(
+        gcs, "bkt", "sess-1", datetime.date(2026, 9, 28)
+    )
+
+    assert rec is not None
+    assert sorted(rec.turns) == [2]
+
+
+def test_parse_trace_turns() -> None:
+    turns = enricher.parse_trace_turns(_result()["detailed_trace"])
+
+    assert len(turns) == 2
+    assert turns[0].user == "Hi there"
+    assert turns[0].agent == ["Hello, how can I help?"]
+    assert len(turns[0].events) == 1
+    tool = turns[0].events[0]
+    assert (tool.kind, tool.text, tool.tool_input, tool.tool_output) == (
+        "tool",
+        "lookup",
+        "{'id': 1}",
+        "{'ok': True}",
+    )
+    assert turns[1].events[0].kind == "transfer"
+    assert turns[1].agent == ["Sure, one moment."]
+
+
+def _build(
+    results: typing.Sequence[typing.Mapping[str, typing.Any]],
+    blobs: dict[str, bytes],
+    encoder: typing.Callable[
+        [enricher.PcmAudio], enricher.EncodedAudio
+    ] = _fake_encoder,
+) -> str:
+    return enricher.build_enriched_report(
+        results,
+        gcs=FakeGcs(blobs),
+        recordings_bucket="bkt",
+        app_id="projects/p/locations/us/apps/a",
+        sim_user_model="user-model",
+        eval_model="judge-model",
+        modality="audio",
+        run_date=datetime.date(2026, 9, 28),
+        tags_by_name={"scenario_a": ["P0"]},
+        encoder=encoder,
+    )
+
+
+def _assert_parses(page: str) -> list[tuple[str, dict[str, str | None]]]:
+    checker = _Checker()
+    checker.feed(page)
+    checker.close()
+    return checker.tags
+
+
+def test_report_with_audio() -> None:
+    prefix = "gs://bkt/audio-recording/2026-09-28/sess-1"
+    blobs = {
+        f"{prefix}/full-session.wav": _turn_wav(0.5, 3.0, 0.5),
+        f"{prefix}/full-session(2).wav": _turn_wav(0.5, 4.5, 0.5),
+    }
+
+    page = _build([_result()], blobs)
+
+    tags = _assert_parses(page)
+    blobs_html = [a for t, a in tags if t == "script" and a.get("type")]
+    assert len(blobs_html) == 1
+    assert blobs_html[0]["data-mime"] == "audio/ogg"
+    assert base64.b64encode(b"OggS-fake").decode() in page
+    assert "en-US-Chirp3-HD-Kore" in page
+    assert "call setup before greeting" in page
+    assert "dead air 4.50s" in page
+    assert "seekAudio('scenario_a__run1'," in page
+    assert 'class="pill p0"' in page
+    assert "lookup" in page
+    assert "billing_agent" in page
+    assert "1/1 runs · 0 failed" in page
+
+
+def test_report_without_audio_and_with_failures() -> None:
+    results = [
+        _result(passed=False, session_id="missing"),
+        {"name": "broken", "run": 1, "passed": False, "error": "boom"},
+    ]
+
+    page = _build(results, {})
+
+    _assert_parses(page)
+    assert "application/octet-stream" not in page
+    assert "No server-side recording found" in page
+    assert "expectation not met: Agent is polite" in page
+    assert "error: boom" in page
+    assert "Failures (2)" in page
+    assert "0/2 runs · 2 failed" in page
+
+
+def test_encoder_failure_falls_back_to_wav() -> None:
+    prefix = "gs://bkt/audio-recording/2026-09-28/sess-1"
+    blobs = {f"{prefix}/full-session.wav": _turn_wav(0.5, 1.0, 0.5)}
+
+    page = _build([_result()], blobs, encoder=_failing_encoder)
+
+    assert 'data-mime="audio/wav"' in page
+
+
+def test_html_is_escaped() -> None:
+    page = _build([_result(name="<script>x</script>")], {})
+    assert "<script>x</script>" not in page
+    assert "&lt;script&gt;x&lt;/script&gt;" in page
+
+
+def test_non_string_tags_are_rendered() -> None:
+    page = enricher.build_enriched_report(
+        [_result()],
+        gcs=FakeGcs({}),
+        recordings_bucket="bkt",
+        app_id="projects/p/locations/us/apps/a",
+        sim_user_model="user-model",
+        eval_model="judge-model",
+        modality="audio",
+        run_date=datetime.date(2026, 9, 28),
+        tags_by_name={"scenario_a": [247, "P1"]},
+    )
+
+    assert '<span class="pill ">247</span>' in page
+    assert 'class="pill p1"' in page
+
+
+def test_enriched_report_uri() -> None:
+    assert (
+        enricher.enriched_report_uri("gs://b/reports/ci/d/i/sims.html")
+        == "gs://b/reports/ci/d/i/sims_enriched.html"
+    )
+
+
+def test_resolve_recordings_bucket_and_enrich_html_report(
+    tmp_path: typing.Any,
+) -> None:
+    assert (
+        enricher.resolve_recordings_bucket(
+            "projects/p/locations/us/apps/a", "gs://my-bkt/"
+        )
+        == "my-bkt"
+    )
+    mock_traces = MagicMock()
+    mock_traces._get_audio_bucket.return_value = (
+        "gs://auto-discovered-bkt/audio-rec"
+    )
+    with patch("cxas_scrapi.core.traces.Traces", return_value=mock_traces):
+        assert (
+            enricher.resolve_recordings_bucket("projects/p/locations/us/apps/a")
+            == "auto-discovered-bkt/audio-rec"
+        )
+
+    out_file = tmp_path / "report_enriched.html"
+    written = enricher.enrich_html_report(
+        [_result()],
+        output_path=str(out_file),
+        recordings_bucket="bkt",
+        app_id="projects/p/locations/us/apps/a",
+        gcs=FakeGcs({}),
+    )
+    assert written == str(out_file)
+    assert out_file.exists()
+    assert "Enriched Simulation Report" in out_file.read_text(encoding="utf-8")
+
+
+def test_generate_combined_html_report_with_ces_recordings(
+    tmp_path: typing.Any,
+) -> None:
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    prefix = f"gs://bkt/audio-recording/{today}/sess-1"
+    blobs = {
+        f"{prefix}/full-session.wav": _turn_wav(0.5, 3.0, 0.5),
+        f"{prefix}/full-session(2).wav": _turn_wav(0.5, 4.5, 0.5),
+    }
+    out_file = tmp_path / "combined_report.html"
+    generate_combined_html_report(
+        sim_results=[_result()],
+        output_path=str(out_file),
+        app_name="projects/p/locations/us/apps/a",
+        recordings_bucket="bkt",
+        gcs=FakeGcs(blobs),
+        audio_encoder=_fake_encoder,
+    )
+    content = out_file.read_text(encoding="utf-8")
+    assert base64.b64encode(b"OggS-fake").decode() in content
+    assert "setChannel('scenario_a__run1','caller')" in content
+    assert "seekAudio('scenario_a__run1'," in content
+    assert "call setup before greeting" in content
+    assert "dead air 4.50s" in content

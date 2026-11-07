@@ -1,9 +1,0 @@
-{
-  "name": "3d899180-4f22-452b-9a51-b7dd87b53fff",
-  "pythonFunction": {
-    "name": "set_large_party_phone",
-    "pythonCode": "tools/set_large_party_phone/python_function/python_code.py",
-    "description": "Record a contact phone number for a large party reservation. Accepts any reasonable phone format."
-  },
-  "displayName": "set_large_party_phone"
-}

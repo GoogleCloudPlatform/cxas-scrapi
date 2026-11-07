@@ -15,6 +15,12 @@ cxas run --app-name APP
          [--wait]
          [--filter-auto-metrics]
          [--modality text|audio]
+         [--background-noise PRESET_OR_PATH]
+         [--bg-noise-snr SNR_DB|LEVEL]
+         [--bg-noise-level LOW|MEDIUM|HIGH]
+         [--burst-noise BURST_PATH ...]
+         [--burst-noise-snr BURST_SNR_DB|LEVEL]
+         [--burst-noise-level LOW|MEDIUM|HIGH]
 ```
 
 ## Options
@@ -31,6 +37,12 @@ cxas run --app-name APP
 | `--wait` | No | `false` | Block until all triggered evaluations complete and exit with code `0` on pass or `1` on fail. Without this flag the command fires the run and returns immediately. |
 | `--filter-auto-metrics` | No | `false` | When waiting for results, ignore automated LLM metrics (semantic similarity, hallucination) and only assess custom expectations and tool invocation results. Useful when you care about business-logic correctness rather than language quality scores. |
 | `--modality text\|audio` | No | `text` | The modality to use when executing the evaluation. |
+| `--background-noise PRESET` | No | — | Built-in preset name (`cafe`, `call_center`, `traffic`, `cross_talk`, `baby_crying`, `kids_noise`, `dog_barking`, `tv_radio`, `kitchen`, `wind`, `white`, `pink`, `brown`), path to a custom WAV audio file, or shorthand `<preset>:<level>` (e.g., `cafe:HIGH`, `traffic:LOW`). |
+| `--bg-noise-snr SNR_DB\|LEVEL` | No | `15.0` (`MEDIUM`) | Target Signal-to-Noise Ratio (SNR) in dB or categorical level (`LOW` = 20 dB, `MEDIUM` = 12 dB, `HIGH` = 5 dB). Lower dB = louder noise. |
+| `--bg-noise-level LEVEL` | No | — | Categorical background noise level (`LOW`, `MEDIUM`, `HIGH`). Alias for `--bg-noise-snr`. |
+| `--burst-noise PATH ...` | No | — | One or more audio files or burst presets (`dog_barking`, etc.) to inject intermittently. |
+| `--burst-noise-snr SNR_DB\|LEVEL` | No | `5.0` (`HIGH`) | Target Signal-to-Noise Ratio (SNR) in dB or categorical level (`LOW`, `MEDIUM`, `HIGH`) for burst noise. |
+| `--burst-noise-level LEVEL` | No | — | Categorical burst noise level (`LOW`, `MEDIUM`, `HIGH`). Alias for `--burst-noise-snr`. |
 
 *You must provide at least one of `--evaluation-id`, `--display-name-prefix`, `--tags`, or `--eval-type`.
 

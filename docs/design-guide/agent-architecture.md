@@ -36,13 +36,13 @@ A single agent handles the entire conversation. All tools, instructions, and sta
 ### Workspace structure
 
 ```
-bella_notte/
+customer_support/
 ├── gecx-config.json
 ├── cxas_app/
 │   ├── app.json
 │   ├── agents/
-│   │   └── Bella_Notte_Host/
-│   │       ├── Bella_Notte_Host.json
+│   │   └── Support_Agent/
+│   │       ├── Support_Agent.json
 │   │       ├── instruction.txt
 │   │       ├── before_agent_callbacks/
 │   │       │   └── before_agent_callbacks_01/
@@ -51,12 +51,12 @@ bella_notte/
 │   │           └── before_model_callbacks_01/
 │   │               └── python_code.py
 │   ├── tools/
-│   │   ├── set_party_size/
-│   │   │   ├── set_party_size.json
+│   │   ├── lookup_order/
+│   │   │   ├── lookup_order.json
 │   │   │   └── python_function/
 │   │   │       └── python_code.py
-│   │   └── create_reservation/
-│   │       ├── create_reservation.json
+│   │   └── issue_refund/
+│   │       ├── issue_refund.json
 │   │       └── python_function/
 │   │           └── python_code.py
 │   └── evaluations/

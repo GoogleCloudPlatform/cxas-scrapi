@@ -211,7 +211,8 @@ def test_reset_registry() -> None:
 
     # Ensure there are rules registered
     registry = build_registry()
-    assert len(registry.all_rules()) >= 60
+    initial_count = len(registry.all_rules())
+    assert initial_count >= 79  # noqa: PLR2004
 
     # Reset
     reset_registry()
@@ -226,25 +227,21 @@ def test_reset_registry() -> None:
     assert len(registry_after.all_rules()) == 0
 
     # Re-populate for other tests by forcing re-registration
-    # (reload the rule modules so decorators fire again)
+    # (reload all rule submodules so decorators fire again)
     import importlib  # noqa: PLC0415
+    import pkgutil  # noqa: PLC0415
 
-    import cxas_scrapi.utils.lint_rules.callbacks as mod_c  # noqa: PLC0415
-    import cxas_scrapi.utils.lint_rules.config as mod_a  # noqa: PLC0415
-    import cxas_scrapi.utils.lint_rules.evals as mod_e  # noqa: PLC0415
-    import cxas_scrapi.utils.lint_rules.instructions as mod_i  # noqa: PLC0415
-    import cxas_scrapi.utils.lint_rules.schema as mod_v  # noqa: PLC0415
-    import cxas_scrapi.utils.lint_rules.structure as mod_s  # noqa: PLC0415
-    import cxas_scrapi.utils.lint_rules.tools as mod_t  # noqa: PLC0415
-    import cxas_scrapi.utils.lint_rules.variables as mod_var  # noqa: PLC0415
+    import cxas_scrapi.utils.lint_rules as lr_pkg  # noqa: PLC0415
 
-    for mod in [mod_i, mod_c, mod_t, mod_e, mod_a, mod_s, mod_v, mod_var]:
+    for mod_info in pkgutil.iter_modules(lr_pkg.__path__):
+        mod = importlib.import_module(
+            f"cxas_scrapi.utils.lint_rules.{mod_info.name}"
+        )
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    # 65 baseline + 11 cross-surface V100-V104 registrations
-    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012.
-    assert len(registry_restored.all_rules()) >= 79  # noqa: PLR2004
+    assert len(registry_restored.all_rules()) == initial_count
+    assert len(registry_restored.all_rules()) == 99  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -546,9 +543,7 @@ def test_discovery_filtering(tmp_path: typing.Any) -> None:
 def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
-    # 65 baseline + 11 cross-surface V100-V104 registrations
-    # (V100 x3, V101 x2, V102 x2, V103 x3, V104 x1) + A007-A010 + T014 + E012.
-    assert len(all_rules) >= 79  # noqa: PLR2004
+    assert len(all_rules) == 99  # noqa: PLR2004
 
 
 def test_build_context(tmp_path: typing.Any) -> None:

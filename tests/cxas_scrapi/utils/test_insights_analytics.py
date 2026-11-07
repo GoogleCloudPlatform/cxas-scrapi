@@ -97,7 +97,7 @@ def test_aggregate_metrics_and_html_dashboard(
     ]
 
     report = analytics.aggregate_metrics(
-        time_window="24h", app_name="bella_notte", conversations=sample_convs
+        time_window="24h", app_name="sample_app", conversations=sample_convs
     )
 
     kpis = report["kpis"]
