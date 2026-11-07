@@ -22,6 +22,7 @@ so adding a new format only means writing a new render function.
 import datetime
 import html as _html
 import json
+import re
 import typing
 from typing import Any
 
@@ -93,7 +94,7 @@ def _turn_metrics(turn: dict[str, Any], turn_idx: int) -> dict[str, Any]:
         "perceived_latency_ms": _attr(rs, "perceived latency (ms)"),
         "tokens": tokens,
         "spans": spans,
-        "raw_turn": Common.unwrap_struct(turn),
+        "raw_turn": turn,
     }
 
 
@@ -394,6 +395,11 @@ def to_json(
     extras: dict[str, Any] | None = None,
 ) -> str:
     payload = {k: v for k, v in trace.items() if include_raw or k != "raw"}
+    if not include_raw and "turn_metrics" in payload:
+        payload["turn_metrics"] = [
+            {k: v for k, v in m.items() if k != "raw_turn"}
+            for m in payload.get("turn_metrics", [])
+        ]
     if extras:
         payload["extras"] = extras
     return json.dumps(payload, indent=2, default=str, sort_keys=False)
@@ -545,6 +551,7 @@ def to_markdown(
     trace: dict[str, Any],
     console_url: str | None = None,
     extras: dict[str, Any] | None = None,
+    include_raw: bool = False,
 ) -> str:
     md: list[str] = []
     md.append(f"# Conversation `{trace.get('conversation_id')}`\n")
@@ -602,15 +609,16 @@ def to_markdown(
                 md.extend(_span_logs_to_markdown(s))
             md.append("  </details>")
         raw_turn = m.get("raw_turn")
-        if raw_turn is not None:
+        if include_raw and raw_turn is not None:
             raw_json = json.dumps(raw_turn, indent=2, default=str)
+            fence = _md_fence(raw_json)
             md.append("")
             md.append("  <details><summary>Raw turn JSON</summary>")
             md.append("")
-            md.append("  ```json")
+            md.append(f"  {fence}json")
             for line in raw_json.splitlines():
                 md.append(f"  {line}")
-            md.append("  ```")
+            md.append(f"  {fence}")
             md.append("  </details>")
         md.append("")
 
@@ -661,6 +669,12 @@ def _span_to_markdown(s: dict[str, Any]) -> str:
     )
 
 
+def _md_fence(text: str) -> str:
+    """Returns a backtick fence longer than any backtick run in text."""
+    runs = [len(m.group(0)) for m in re.finditer(r"`+", text)]
+    return "`" * max(3, (max(runs) + 1) if runs else 3)
+
+
 def _span_logs_to_markdown(s: dict[str, Any]) -> list[str]:
     """Renders stdout, stderr, logs, or error attached to a span in Markdown."""
     name = s.get("name") or "?"
@@ -668,31 +682,50 @@ def _span_logs_to_markdown(s: dict[str, Any]) -> list[str]:
     prefix = f"{name} `{label}`" if label else name
     lines: list[str] = []
     if s.get("stdout"):
+        out_str = str(s["stdout"])
+        fence = _md_fence(out_str)
         lines.append("")
         lines.append(f"  **{prefix} stdout:**")
-        lines.append("  ```text")
-        for line in str(s["stdout"]).rstrip("\n").splitlines():
+        lines.append(f"  {fence}text")
+        for line in out_str.rstrip("\n").splitlines():
             lines.append(f"  {line}")
-        lines.append("  ```")
+        lines.append(f"  {fence}")
     if s.get("stderr"):
+        err_out_str = str(s["stderr"])
+        fence = _md_fence(err_out_str)
         lines.append("")
         lines.append(f"  **{prefix} stderr:**")
-        lines.append("  ```text")
-        for line in str(s["stderr"]).rstrip("\n").splitlines():
+        lines.append(f"  {fence}text")
+        for line in err_out_str.rstrip("\n").splitlines():
             lines.append(f"  {line}")
-        lines.append("  ```")
+        lines.append(f"  {fence}")
     if s.get("logs"):
         logs_val = s["logs"]
         log_items = logs_val if isinstance(logs_val, list) else [logs_val]
+        joined_logs = "\n".join(str(item) for item in log_items)
+        fence = _md_fence(joined_logs)
         lines.append("")
         lines.append(f"  **{prefix} logs:**")
-        lines.append("  ```text")
-        for item in log_items:
-            lines.append(f"  {item}")
-        lines.append("  ```")
+        lines.append(f"  {fence}text")
+        for line in joined_logs.splitlines():
+            lines.append(f"  {line}")
+        lines.append(f"  {fence}")
     if s.get("error"):
+        err_str = str(s["error"])
         lines.append("")
-        lines.append(f"  **{prefix} error:** `{s['error']}`")
+        if "\n" in err_str:
+            fence = _md_fence(err_str)
+            lines.append(f"  **{prefix} error:**")
+            lines.append(f"  {fence}text")
+            for line in err_str.rstrip("\n").splitlines():
+                lines.append(f"  {line}")
+            lines.append(f"  {fence}")
+        elif "`" in err_str:
+            runs = [len(m.group(0)) for m in re.finditer(r"`+", err_str)]
+            delim = "`" * (max(runs) + 1)
+            lines.append(f"  **{prefix} error:** {delim} {err_str} {delim}")
+        else:
+            lines.append(f"  **{prefix} error:** `{err_str}`")
     return lines
 
 
@@ -734,6 +767,7 @@ def to_html(
     console_url: str | None = None,
     extras: dict[str, Any] | None = None,
     audio_path: str | None = None,
+    include_raw: bool = False,
 ) -> str:
     body: list[str] = []
     title = _html.escape(trace.get("conversation_id") or "conversation")
@@ -800,7 +834,7 @@ def to_html(
                 body.extend(_span_logs_to_html(s))
             body.append("</details>")
         raw_turn = m.get("raw_turn")
-        if raw_turn is not None:
+        if include_raw and raw_turn is not None:
             raw_escaped = _html.escape(
                 json.dumps(raw_turn, indent=2, default=str)
             )

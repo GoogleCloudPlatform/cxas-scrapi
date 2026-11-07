@@ -341,7 +341,10 @@ class Traces(Common):
             )
         if fmt in ("md", "markdown"):
             return trace_report.to_markdown(
-                normalized, console_url=url, extras=extras
+                normalized,
+                console_url=url,
+                extras=extras,
+                include_raw=include_raw,
             )
         if fmt == "text":
             return trace_report.to_text(normalized, extras=extras)
@@ -351,6 +354,7 @@ class Traces(Common):
                 console_url=url,
                 extras=extras,
                 audio_path=audio_local_path,
+                include_raw=include_raw,
             )
         raise ValueError(f"Unknown format: {fmt}")
 

@@ -862,7 +862,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     p_get.add_argument(
         "--include-raw",
         action="store_true",
-        help="Include top-level raw conversation payload in JSON output.",
+        help=(
+            "Include raw conversation and per-turn JSON payloads in JSON, "
+            "Markdown, and HTML output."
+        ),
     )
     p_get.add_argument("--out", help="File path to write the report to.")
     p_get.set_defaults(func=trace_get)

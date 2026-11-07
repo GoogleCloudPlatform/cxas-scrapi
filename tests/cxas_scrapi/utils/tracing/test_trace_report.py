@@ -129,6 +129,7 @@ def test_to_json_excludes_raw_by_default() -> None:
     n = tr.normalize(SAMPLE_DICT)
     out = json.loads(tr.to_json(n))
     assert "raw" not in out
+    assert all("raw_turn" not in m for m in out["turn_metrics"])
     assert out["conversation_id"] == "c1"
 
 
@@ -136,6 +137,7 @@ def test_to_json_with_raw_and_extras() -> None:
     n = tr.normalize(SAMPLE_DICT)
     out = json.loads(tr.to_json(n, include_raw=True, extras={"foo": "bar"}))
     assert "raw" in out
+    assert all("raw_turn" in m for m in out["turn_metrics"])
     assert out["extras"] == {"foo": "bar"}
 
 
@@ -473,7 +475,7 @@ def test_python_tool_and_callback_print_logs_and_raw_turn_json() -> None:
     assert "log: cb_log_entry" in txt
     assert "error: transient warning" in txt
 
-    # Markdown rendering includes span stdout/stderr/logs/error and Raw turn JSON
+    # Markdown omits Raw turn JSON unless include_raw=True
     md = tr.to_markdown(normalized)
     assert "**Callback `BeforeTool` stdout:**" in md
     assert "callback print line 1" in md
@@ -484,21 +486,54 @@ def test_python_tool_and_callback_print_logs_and_raw_turn_json() -> None:
     assert "**Callback `BeforeTool` logs:**" in md
     assert "cb_log_entry" in md
     assert "**Tool `python_lookup` error:** `transient warning`" in md
-    assert "<details><summary>Raw turn JSON</summary>" in md
+    assert "<details><summary>Raw turn JSON</summary>" not in md
+    md_with_raw = tr.to_markdown(normalized, include_raw=True)
+    assert "<details><summary>Raw turn JSON</summary>" in md_with_raw
 
-    # HTML rendering includes span logs and raw-turn details block
+    # HTML omits Raw turn JSON unless include_raw=True
     html = tr.to_html(normalized)
     assert "tool print debug: query=abc" in html
     assert "tool warning on stderr" in html
-    assert "Raw turn JSON" in html
+    assert "Raw turn JSON" not in html
+    html_with_raw = tr.to_html(normalized, include_raw=True)
+    assert "Raw turn JSON" in html_with_raw
 
-    # JSON output includes raw_turn inside turn_metrics by default
-    json_payload = json.loads(tr.to_json(normalized))
+    # JSON omits raw_turn unless include_raw=True
+    json_default = json.loads(tr.to_json(normalized))
+    assert "raw_turn" not in json_default["turn_metrics"][0]
     assert (
-        json_payload["turn_metrics"][0]["raw_turn"]["messages"][0]["role"]
-        == "user"
-    )
-    assert (
-        json_payload["turn_metrics"][0]["spans"][1]["stdout"]
+        json_default["turn_metrics"][0]["spans"][1]["stdout"]
         == "tool print debug: query=abc\n"
     )
+    json_raw = json.loads(tr.to_json(normalized, include_raw=True))
+    assert (
+        json_raw["turn_metrics"][0]["raw_turn"]["messages"][0]["role"] == "user"
+    )
+
+
+def test_span_logs_markdown_fences_backticks_and_multiline_errors() -> None:
+    """Span Markdown logs dynamically expand fences and handle multiline err."""
+    span = {
+        "name": "Tool",
+        "tool": "run_code",
+        "stdout": "a\n```\n# HEADING injected\n",
+        "stderr": "err with ```` four backticks\n",
+        "logs": ["log with ``` triple"],
+        "error": "line 1\n```\nline 2",
+    }
+    rendered = "\n".join(tr._span_logs_to_markdown(span))
+    assert "  ````text\n  a\n  ```\n  # HEADING injected\n  ````" in rendered
+    assert "  `````text\n  err with ```` four backticks\n  `````" in rendered
+    assert "  ````text\n  log with ``` triple\n  ````" in rendered
+    assert (
+        "  **Tool `run_code` error:**\n  ````text\n  line 1\n  ```\n"
+        "  line 2\n  ````" in rendered
+    )
+
+    inline_backtick_span = {
+        "name": "Tool",
+        "tool": "check",
+        "error": "bad `key` value",
+    }
+    inline_rendered = "\n".join(tr._span_logs_to_markdown(inline_backtick_span))
+    assert "**Tool `check` error:** `` bad `key` value ``" in inline_rendered
