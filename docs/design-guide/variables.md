@@ -79,17 +79,23 @@ The solution is to consolidate related state into a single JSON-typed variable.
 
 ---
 
-## Variable types
+## Variable types and platform limits
 
-The CXAS platform supports two variable types: `STRING` and `BOOLEAN`. There is no native integer, number, or list type.
+Declare all session variables in `app.json` under `variableDeclarations`. CXAS supports typed JSON schemas (`OBJECT`, `ARRAY`, `STRING`, `BOOLEAN`, `INTEGER`, `NUMBER`), with two important platform limits:
 
-| Type | Notes |
-|------|-------|
-| `STRING` | All complex state. Use JSON encoding for structured data. |
-| `BOOLEAN` | Simple flags only. Accessed in code as the string `"true"` or `"false"` — not Python `True`/`False`. |
+- **Variable count ceiling:** Keep `variableDeclarations` at or below **95 variables** (hard platform cap is 100; consolidate related fields into `OBJECT`-typed variables).
+- **Session state size ceiling:** Keep total serialized session state well below **256 KB** (store lean decision fields in state, never raw multi-hundred-KB API dumps).
 
-!!! warning "There is no INT or NUMBER type"
-    If you need to store a counter or numeric value, store it as a `STRING` and parse it explicitly. Don't assume `int(context.state.get("counter", "0"))` will always succeed — the value could be an empty string, `None`, or malformed JSON. Parse defensively.
+| Type | Notes & Runtime Traps |
+|------|-----------------------|
+| `OBJECT` | Native dictionary in `context.state` (`{"type": "OBJECT", "properties": {...}}`). Preferred for grouping domain context without manual `json.loads()` string wrapping. Reassign the top-level key (`state["ctx"] = updated_ctx`) after mutating nested fields. |
+| `ARRAY` | Native list in `context.state` (`{"type": "ARRAY", "items": {...}}`). |
+| `STRING` | Text, dates, and **all identifiers / ZIP codes / account numbers**. Always use `STRING` (never `NUMBER`) for IDs and ZIP codes — `NUMBER` deserializes integers as floats (`12345.0`) and strips leading zeros (`"02138"` → `2138.0`). |
+| `BOOLEAN` | Simple flags. Because telephony/SIP headers or tools may pass `"true"`/`"false"` strings, coerce defensively (`str(val).lower() == "true"` — in Python, `bool("false")` is `True`!). |
+| `INTEGER` / `NUMBER` | Arithmetic quantities and counters only (never identifiers). |
+
+!!! warning "Date/time in the Python sandbox"
+    The CXAS Python sandbox runs in UTC. Rather than calling `datetime.now()` directly for business-date logic, read the app's configured timezone date from `context.state.get("current_date")` (and include `{{current_date}}` in `<role>` so the LLM resolves relative dates like "tomorrow" accurately).
 
 ---
 

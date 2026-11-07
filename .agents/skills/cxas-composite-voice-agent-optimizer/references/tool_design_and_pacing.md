@@ -1,12 +1,12 @@
 # Tool Design & Conversational Pacing
 
-This reference defines tool docstring contracts, conversational pacing directives, payload contamination prevention, and execution standards for the dialogue reasoning model in the Gemini Composite V1 architecture.
+This reference defines tool docstring contracts, conversational pacing directives, payload contamination prevention, and execution standards for the dialogue reasoning model in the Gemini Composite v2 architecture.
 
 --------------------------------------------------------------------------------
 
 ## 1. Tool Docstring Engineering
 
-In Gemini Composite V1, tool docstrings serve as explicit prompt instructions for the reasoning model. Because the model operates at low thinking effort to minimize conversational latency, docstrings must provide unambiguous execution contracts for all tools that are visible to the model. Only tools configured in the `agent_name.json` will be visible to the model. And as such will be provided in the prompt to the model.
+In Gemini Composite v2, tool docstrings serve as explicit prompt instructions for the reasoning model. Because the model operates at low thinking effort to minimize conversational latency, docstrings must provide unambiguous execution contracts for all tools that are visible to the model. Only tools configured in the `agent_name.json` will be visible to the model. And as such will be provided in the prompt to the model.
 
 ### Source of Truth & Preservation Rules for Tool Docstrings:
 - **Preserve Existing Documentation:** Never wipe or replace existing function descriptions, parameter explanations, or return signatures. Additive enhancement only.
@@ -63,11 +63,11 @@ In a composite voice architecture, tool execution introduces processing delay be
 
 ### Priority Tiering & Human Approval Policy:
 - **Priority P2 (Lowest Priority - Spoken Conversational Pacing):** Conversational pacing directives (`MISSING_TOOL_CONVERSATIONAL_PACING` / `T014`) are audited at **Priority P2 (Lowest Priority / Advisory)**. Spoken conversational pacing must **ONLY be added for tools explicitly approved by the person executing the skill**. Never automatically or bulk-inject pacing phrases across tools without explicit user confirmation.
-- **Priority P2 (Tool Operational Docstrings):** Missing fundamental docstring contracts (`When to Call:`, `When NOT to Call:`) or parameter specifications on active runtime execution paths represent Priority P1 findings.
+- **Priority P1 / P2 (Tool Operational Docstrings):** Missing fundamental docstring contracts (`When to Call:`, `When NOT to Call:`) or parameter specifications on active runtime execution paths represent Priority P1 findings; refining wordy or ambiguous docstrings is Priority P2 (user-approved).
 
 ### Pacing Rules:
 - **Explicit Approval Required**: Conversational pacing is only added to latency-heavy or backend API tools specifically selected and approved by the developer / user executing the skill.
-- **Pacing Directive with Multiple Phrasing Options**: When approved, active tool docstrings should explicitly direct the model to emit a brief, natural conversational bridge phrase with varied phrasing options *before* invoking the function call (e.g., *"Let me check that for you..."*, *"Just a minute, let me look it up..."*, *"Looking into the schedule for that day..."*) to prevent repetitive responses across turns. Terminal / fast lifecycle tools (e.g. session wrap-up, exit, test mocks) are exempt from `MISSING_TOOL_CONVERSATIONAL_PACING` checks.
+- **Pacing Directive with Multiple Phrasing Options**: When approved, active tool docstrings should explicitly direct the model to emit a brief, natural conversational bridge phrase with varied phrasing options *before* invoking the function call (e.g., *"Let me check that for you..."*, *"Just a minute, let me look it up..."*, *"Looking into the schedule for that day..."*) to prevent repetitive responses across turns. In multilingual agents, instruct the pacing bridge to be spoken *"in the caller's active language"* rather than hardcoding English in the tool docstring. Terminal / fast lifecycle tools (e.g. session wrap-up, exit, test mocks) are exempt from `MISSING_TOOL_CONVERSATIONAL_PACING` checks.
 - **No Premature Claims**: The model must never predict the tool outcome or quote result values in the pacing phrase before the tool has returned its payload.
 
 ### 2.1 Cross-Scope Contradictions & Anti-Looping Prevention (P0 Critical):
@@ -84,7 +84,7 @@ A critical failure mode occurs when agent instructions and tool docstrings impos
   ```
 
 #### Why This Breaks the Agent:
-The agent instruction forbids speaking before receiving the tool response (*"wait for its response and then generate a response"* / *"Never say anything which is not in the tool response"*), whereas the tool docstring mandates speaking a pacing phrase *before* invoking the tool. This direct contradiction creates an impossible operational constraint for Gemini Composite V1, resulting in:
+The agent instruction forbids speaking before receiving the tool response (*"wait for its response and then generate a response"* / *"Never say anything which is not in the tool response"*), whereas the tool docstring mandates speaking a pacing phrase *before* invoking the tool. This direct contradiction creates an impossible operational constraint for Gemini Composite v2, resulting in:
 1. **Model Looping & Hesitation:** The model repeatedly tries and aborts generating tool calls and conversational turns.
 2. **Dead Air / Latency Spikes:** The agent stalls or times out waiting for conflicting internal policies to resolve.
 3. **Safety Fallbacks:** Triggers generic platform fallback messages (*"I'm sorry, I'm having trouble with that right now."*).
@@ -109,15 +109,15 @@ Without explicit boundary instructions, LLMs often quote or parrot raw tool outp
 
 ### Mitigation:
 
-Instruct the agent to formulate search queries in the API's required format, but synthesize all spoken customer responses strictly in the session language (`{{user_language}}`):
+Instruct the agent to formulate search queries in the API's required format, but synthesize all spoken customer responses strictly in the session language (`{user_language}`):
 
 ```xml
 <taskflow>
     <step name="ExecuteLookup">
         <action>
-            1. Formulate search parameters in the backend's expected query format.
+            1. Formulate search queries and structured parameters in the backend's expected format.
             2. Invoke {@TOOL: lookup_tool} with structured query parameters.
-            3. Synthesize the spoken customer response strictly in {{user_language}} using natural conversational voice texture. Do not quote raw backend metadata verbatim.
+            3. Synthesize the spoken customer response strictly in {user_language} using natural conversational voice texture. Do not quote raw backend metadata verbatim.
         </action>
     </step>
 </taskflow>

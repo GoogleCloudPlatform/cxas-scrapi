@@ -39,7 +39,7 @@ If you're designing a new agent from scratch, read these pages in order:
 3. [Tool Design](tool-design.md) — tools are where most production failures originate. Design them defensively.
 4. [Error Handling](error-handling.md) — build recovery paths in from the start rather than adding them after failures surface in testing.
 5. [Variables](variables.md) — understand how session state works before you write callbacks or tools that depend on it.
-6. [Callbacks](callbacks.md) — dynamic prompting and slot-filling patterns that let you build more capable agents without inflating instruction length.
+6. [Callbacks](callbacks.md) — dynamic prompting patterns that let you build more capable agents without inflating instruction length.
 7. [Guardrails](guardrails.md) — layer safety boundaries, content filters, and behavioral rules to keep your agent on-task and compliant.
 
 ---

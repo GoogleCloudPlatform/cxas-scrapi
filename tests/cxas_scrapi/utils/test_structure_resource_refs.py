@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for structure cross-reference lint rules S009-S012."""
+"""Unit tests for structure cross-reference lint rules S010-S013."""
 
 import json
 from pathlib import Path
@@ -245,8 +245,8 @@ def test_s012_toolset_file_references_and_prefix(tmp_path: Path) -> None:
     assert rule.check(ts_dir, "", ctx) == []
 
 
-def test_structure_category_dispatches_s009_to_s012(tmp_path: Path) -> None:
-    """Running structure category dispatches S009-S012 across targets."""
+def test_structure_category_dispatches_s010_to_s013(tmp_path: Path) -> None:
+    """Running structure category dispatches S010-S013 across targets."""
     (tmp_path / "app.json").write_text(
         json.dumps({"displayName": "App", "guardrails": ["dangling_gr"]})
     )
@@ -264,4 +264,4 @@ def test_structure_category_dispatches_s009_to_s012(tmp_path: Path) -> None:
         categories=["structure"],
     )
     rule_ids = {r.rule_id for r in report.results}
-    assert "S009" in rule_ids
+    assert "S010" in rule_ids

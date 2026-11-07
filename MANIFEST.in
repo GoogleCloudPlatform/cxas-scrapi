@@ -1,6 +1,7 @@
 recursive-include .agents *
 recursive-include .claude *
 recursive-include .gemini *
+recursive-include src/cxas_scrapi/resources/noise *.wav
 include AGENTS.md
 global-exclude __pycache__
 global-exclude *.pyc

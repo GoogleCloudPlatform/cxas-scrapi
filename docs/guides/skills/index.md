@@ -94,8 +94,8 @@ Skills need to know which project and app to operate on. This configuration live
   "location": "us",
   "app_name": "My Support Agent",
   "deployed_app_id": null,
-  "model": "gemini-3.1-flash-live",
-  "modality": "text"
+  "model": "gemini-composite-v2",
+  "modality": "audio"
 }
 ```
 

@@ -221,7 +221,7 @@ def process_refund(order_id: str, amount: float) -> dict:
 ```
 
 !!! tip "Escalation state should be terminal"
-    When you set `sm['status'] = 'escalated'` (or equivalent), ensure your `before_model_callback` checks this and returns early, letting the LLM respond freely without further slot-filling or task-firing behavior. Escalated conversations should not resume normal flow.
+    When you set `sm['status'] = 'escalated'` (or equivalent), ensure your `before_model_callback` checks this and returns early, letting the LLM respond freely without further state-handling or task-firing behavior. Escalated conversations should not resume normal flow.
 
 ---
 

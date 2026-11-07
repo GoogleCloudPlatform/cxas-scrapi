@@ -1236,6 +1236,45 @@ def test_simulation_evals_aggregate_simulation_results_parallel() -> None:
     assert evals._run_single_simulation_job.call_count == 2
 
 
+def test_simulation_evals_aggregate_simulation_results_honors_high_parallel() -> (
+    None
+):
+    app_name = "projects/p/locations/l/apps/a"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            evals = SimulationEvals(app_name=app_name)
+
+    evals._run_single_simulation_job = MagicMock(return_value={"status": "ok"})
+    jobs = [({"name": "tc1"}, 0), ({"name": "tc1"}, 1)]
+
+    with patch(
+        "cxas_scrapi.evals.simulation_evals.ThreadPoolExecutor"
+    ) as mock_pool:
+        mock_executor = MagicMock()
+        mock_pool.return_value.__enter__.return_value = mock_executor
+        f1: typing.Any = MagicMock()
+        f1.result.return_value = {"status": "ok"}
+        f2: typing.Any = MagicMock()
+        f2.result.return_value = {"status": "ok"}
+        mock_executor.submit.side_effect = [f1, f2]
+        with patch(
+            "cxas_scrapi.evals.simulation_evals.as_completed",
+            return_value=[f1, f2],
+        ):
+            results = evals._aggregate_simulation_results(
+                jobs,
+                runs=1,
+                parallel=100,
+                sim_user_model="m_sim",
+                eval_model="m_eval",
+                modality="audio",
+                verbose=False,
+            )
+
+    mock_pool.assert_called_once_with(max_workers=100)
+    assert len(results) == 2
+
+
 @patch("cxas_scrapi.evals.simulation_evals.ConversationHistory")
 def test_simulation_evals_get_turns_from_platform(
     mock_ch_class: typing.Any,
@@ -3050,3 +3089,494 @@ def test_simulation_evals_infra_retries_default_and_half_parallel() -> None:
     assert mock_agg.call_args_list[1].args[2] == 3
     assert mock_agg.call_args_list[2].args[2] == 3
     assert all(r["passed"] is True and r["infra_retries"] == 2 for r in results)
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulate_conversation_with_background_noise_config(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I need help", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello, how can I help?"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {
+        "name": "noise_test",
+        "steps": [],
+        "config": {
+            "background_noise": {
+                "preset": "call_center",
+                "snr": 12.0,
+            }
+        },
+    }
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+    )
+
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        turn_num=0,
+        capture_agent_audio=False,
+        background_noise_file="call_center",
+        burst_noise_files=None,
+        use_tool_fakes=False,
+        bg_noise_snr=12.0,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulate_conversation_with_background_noise_opt_out(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I need help", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello!"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {
+        "name": "noise_opt_out",
+        "steps": [],
+        "config": {
+            "background_noise": False,
+        },
+    }
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        background_noise_file="traffic",
+        bg_noise_snr=10.0,
+    )
+
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        turn_num=0,
+        capture_agent_audio=False,
+        background_noise_file=None,
+        burst_noise_files=None,
+        use_tool_fakes=False,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulate_conversation_single_bidi_stream_with_noise_config(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("I want coffee", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_interactive_session = MagicMock()
+    mock_sessions.create_interactive_session.return_value = (
+        mock_interactive_session
+    )
+
+    mock_response = MagicMock()
+    mock_output = MagicMock()
+    mock_chunk = MagicMock()
+    mock_chunk.text = "Sure, one coffee!"
+    mock_output.diagnostic_info.messages = [MagicMock(chunks=[mock_chunk])]
+    mock_response.outputs = [mock_output]
+    mock_interactive_session.send_turn.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    test_case = {
+        "name": "cafe_noise",
+        "steps": [],
+        "config": {
+            "background_noise": {
+                "preset": "cafe",
+                "snr": 8.0,
+            }
+        },
+    }
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+        modality="audio",
+        single_bidi_stream=True,
+    )
+
+    mock_sessions.create_interactive_session.assert_called_once_with(
+        session_id="123",
+        capture_agent_audio=False,
+        background_noise_file="cafe",
+        use_tool_fakes=False,
+        skip_playback_wait=False,
+        voice_config=None,
+        bg_noise_snr=8.0,
+    )
+
+
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+@patch("cxas_scrapi.evals.simulation_evals.LLMUserConversation")
+def test_simulate_conversation_with_background_noise_level(
+    mock_llm_conv_class: typing.Any, mock_sessions_class: typing.Any
+) -> None:
+    mock_sessions = mock_sessions_class.return_value
+    mock_eval_conv = mock_llm_conv_class.return_value
+    mock_eval_conv.next_user_utterance.side_effect = [
+        ("event: welcome", {}),
+        ("", {}),
+    ]
+    mock_eval_conv.steps_progress = []
+
+    mock_response = MagicMock()
+    mock_response.session.name = (
+        "projects/test/locations/us/apps/123-abc/sessions/123"
+    )
+    mock_output = MagicMock()
+    mock_output.text = "Hello!"
+    mock_response.outputs = [mock_output]
+    mock_sessions.run.return_value = mock_response
+
+    app_name = "projects/test/locations/us/apps/123-abc"
+    with patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate"):  # noqa: SIM117
+        with patch("cxas_scrapi.core.apps.AgentServiceClient"):
+            simulator = SimulationEvals(app_name=app_name)
+
+    # Test shorthand "cafe:HIGH"
+    test_case = {
+        "name": "level_test",
+        "steps": [],
+        "config": {
+            "background_noise": "cafe:HIGH",
+        },
+    }
+    simulator.simulate_conversation(
+        test_case=test_case,
+        session_id="123",
+        console_logging=False,
+    )
+
+    mock_sessions.run.assert_any_call(
+        session_id="123",
+        event="welcome",
+        variables={},
+        modality="text",
+        turn_num=0,
+        capture_agent_audio=False,
+        background_noise_file="cafe",
+        burst_noise_files=None,
+        use_tool_fakes=False,
+        bg_noise_snr=5.0,
+    )
+
+
+def test_voice_config_for_deterministic_and_locale_aware() -> None:
+    from cxas_scrapi.evals.simulation_evals import (  # noqa: PLC0415
+        _scenario_locale,
+        _voice_locale,
+    )
+
+    assert _voice_locale("en-US-Journey-D") == "en-US"
+    assert _voice_locale("es-US-Chirp3-HD-Aoede") == "es-US"
+    assert _scenario_locale(None) == "en-US"
+    assert _scenario_locale({"locale": "es-US"}) == "es-US"
+    assert _scenario_locale({"user_lang": "S"}) == "es-US"
+    assert _scenario_locale({"user_lang": "ES"}) == "es-US"
+    assert _scenario_locale({"user_lang": "E"}) == "en-US"
+
+    evals = _naturalness_evals(
+        sim_user_voices=[
+            "en-US-Journey-D",
+            "en-US-Journey-F",
+            "es-US-Journey-D",
+            "es-US-Journey-F",
+        ]
+    )
+    en_tc = {
+        "name": "check_appointment_en",
+        "session_parameters": {"user_lang": "E"},
+    }
+    es_tc = {
+        "name": "check_appointment_es",
+        "session_parameters": {"user_lang": "S"},
+    }
+    explicit_tc = {
+        "name": "custom_voice_case",
+        "voice_config": {
+            "voice_name": "en-GB-Neural2-A",
+            "language_code": "en-GB",
+        },
+    }
+
+    vc_en_1 = evals._voice_config_for(en_tc)
+    vc_en_2 = evals._voice_config_for(en_tc)
+    assert vc_en_1 == vc_en_2
+    assert vc_en_1 is not None
+    assert vc_en_1["language_code"] == "en-US"
+    assert vc_en_1["voice_name"].startswith("en-US-")
+
+    vc_es = evals._voice_config_for(es_tc)
+    assert vc_es is not None
+    assert vc_es["language_code"] == "es-US"
+    assert vc_es["voice_name"].startswith("es-US-")
+
+    vc_explicit = evals._voice_config_for(explicit_tc)
+    assert vc_explicit == {
+        "voice_name": "en-GB-Neural2-A",
+        "language_code": "en-GB",
+    }
+
+
+def test_inconclusive_reason_detects_zero_caller_turns_and_retries() -> None:
+    from cxas_scrapi.evals.simulation_evals import (  # noqa: PLC0415
+        actual_caller_turns,
+        expected_caller_turns,
+    )
+
+    tc = {"name": "audio_case", "steps": [{"goal": "Ask about order"}]}
+    assert expected_caller_turns(tc) == 1
+
+    zero_turn_row = {
+        "name": "audio_case",
+        "run": 1,
+        "passed": False,
+        "turns": 0,
+        "transcript": "User: event: welcome\nAgent: Hello, how can I help?",
+    }
+    assert actual_caller_turns(zero_turn_row) == 0
+
+    reason = SimulationEvals._inconclusive_reason(
+        row=zero_turn_row,
+        declared_by_name={"audio_case": 1},
+        expected_turns_by_name={"audio_case": 1},
+    )
+    assert reason == "caller turns never reached agent (0 turns)"
+
+    evals = _naturalness_evals(expectations_only=True)
+    ok_row = {
+        "name": "audio_case",
+        "run": 1,
+        "passed": True,
+        "turns": 2,
+        "expectations": "1/1",
+        "transcript": "User: event: welcome\nAgent: Hi\nUser: Where is my order?",
+    }
+    with patch.object(
+        evals,
+        "_aggregate_simulation_results",
+        side_effect=[[zero_turn_row], [ok_row]],
+    ) as mock_agg:
+        results = evals.run_simulations(
+            test_cases=[tc],
+            runs=1,
+            parallel=2,
+            infra_retries=1,
+            retry_cooldown=0,
+        )
+    assert mock_agg.call_count == 2
+    assert results[0]["passed"] is True
+    assert (
+        results[0]["retried_because"]
+        == "caller turns never reached agent (0 turns)"
+    )
+
+
+def test_simulation_evals_requires_local_execution_tool_expectations() -> None:
+    req, reason = SimulationEvals.requires_local_execution(
+        {
+            "name": "case_with_tool_exp",
+            "tool_expectations": [
+                {"type": "tool_called", "tool": "lookup_account"}
+            ],
+        }
+    )
+    assert req is True
+    assert "tool_expectations" in reason
+
+
+def test_simulation_evals_declared_expectations_counts_tool_expectations() -> (
+    None
+):
+    tc = {
+        "expectations": ["agent confirms action"],
+        "tool_expectations": [
+            {"type": "tool_called", "tool": "lookup_account"},
+            {"type": "terminal_tool", "tool": "end_session"},
+        ],
+    }
+    assert SimulationEvals._declared_expectations_count(tc) == 3
+
+
+def test_simulation_evals_with_tool_expectations_met_and_folded() -> None:
+    evals = _naturalness_evals(expectations_only=False)
+    conv = _passing_conv(naturalness_result=None)
+    conv.expectation_results = [
+        ExpectationResult(
+            expectation="Agent is helpful",
+            status=ExpectationStatus.MET,
+            justification="Helpful.",
+        )
+    ]
+    conv._detailed_trace = [
+        "Tool Call: lookup_account with args {'account_id': '101'}\n"
+        "Tool Response: lookup_account with result {'status': 'active'}\n"
+        "Tool Call (Output): end_session with args {}"
+    ]
+    tc = {
+        "name": "sim_test",
+        "steps": [{"goal": "Goal 1", "success_criteria": "Done"}],
+        "expectations": ["Agent is helpful"],
+        "tool_expectations": [
+            {"type": "tool_called", "tool": "lookup_account"},
+            {"type": "last_tool", "tool": "end_session"},
+        ],
+    }
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is True
+    assert res["judge_passed"] is True
+    assert res["expectations"] == "4/4"
+    tool_details = [
+        d
+        for d in res["expectation_details"]
+        if d["expectation"].startswith("[tool] ")
+    ]
+    assert len(tool_details) == 3
+
+
+def test_simulation_evals_with_tool_expectations_failed_fails_run() -> None:
+    evals = _naturalness_evals(expectations_only=False)
+    conv = _passing_conv(naturalness_result=None)
+    conv.expectation_results = [
+        ExpectationResult(
+            expectation="Agent is helpful",
+            status=ExpectationStatus.MET,
+            justification="Helpful.",
+        )
+    ]
+    conv._detailed_trace = [
+        "Tool Call: cancel_order with args {'order_id': '999'}\n"
+        "Tool Call (Output): end_session with args {}"
+    ]
+    tc = {
+        "name": "sim_test",
+        "steps": [{"goal": "Goal 1", "success_criteria": "Done"}],
+        "expectations": ["Agent is helpful"],
+        "tool_expectations": [
+            {"type": "tool_not_called", "tool": "cancel_order"},
+        ],
+    }
+
+    with patch.object(evals, "simulate_conversation", return_value=conv):
+        res = evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is False
+    assert res["judge_passed"] is True
+    assert res["expectations"] == "2/3"
+
+
+def test_simulation_evals_error_path_counts_tool_expectations_in_totals() -> (
+    None
+):
+    evals = _naturalness_evals(expectations_only=False)
+    tc = {
+        "name": "sim_test",
+        "steps": [{"goal": "Goal 1", "success_criteria": "Done"}],
+        "expectations": ["Agent is helpful"],
+        "tool_expectations": [
+            {"type": "tool_called", "tool": "lookup_account"},
+            {"type": "tool_called", "tool": "create_order"},
+        ],
+    }
+
+    with patch.object(
+        evals,
+        "simulate_conversation",
+        side_effect=RuntimeError("connection died"),
+    ):
+        res = evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="fake",
+            eval_model="fake",
+            modality="text",
+            verbose=False,
+            parallel=1,
+        )
+
+    assert res["passed"] is False
+    assert "error" in res
+    assert res["goals"] == "0/1"
+    assert res["expectations"] == "0/3"

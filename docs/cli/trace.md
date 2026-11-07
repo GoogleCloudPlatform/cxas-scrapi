@@ -25,6 +25,8 @@ All `cxas trace` subcommands share a few flags:
 | `cxas trace logs <id>` | Fetch Cloud Logging entries correlated to a conversation. |
 | `cxas trace audio download <id>` | Download the GCS audio recording. |
 | `cxas trace audio analyze <id>` | Run configured Gemini audio metrics over the recording. |
+| `cxas trace audio measure <id>` | Numeric voice-consistency metrics per agent turn and per call: loudness, articulation rate, pitch, timbre drift, voice seams inside a turn (`pip install "cxas-scrapi[audio-metrics]"`). |
+| `cxas trace audio drift <id>` | Per-turn voice-drift flags: `SEAM` (cached vs fresh TTS), `LOUD` (loudness step between turns), `TRUNC` (audio cut off), `MIDTURN` / `MIDDRIFT` (pitch seam inside a turn; a pitch-only drift is marked as such), and `JUMP` — the voice suddenly louder and higher where the turn's next rendered part starts (pitch ≥ 3 st and loudness ≥ 5 dB). JUMP is the one listeners report as "the voice changed"; the fix is sending the turn as one part. |
 | `cxas trace audio transcribe <id>` / `cxas trace transcribe-audio <id>` | Transcribe GCS user turn audio with Gemini Flash/Flash-Lite, calculate WER against CES transcripts, and optionally reprocess into a cloned BigQuery export table. |
 | `cxas trace triage <id>` | Run text-only Gemini triage prompts over the transcript. |
 | `cxas trace replay <id>` | Replay user inputs against the current agent and diff. |

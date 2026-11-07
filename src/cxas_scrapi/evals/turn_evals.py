@@ -31,6 +31,7 @@ from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, Field, TypeAdapter, model_validator
 from rich.progress import track
 
+from cxas_scrapi.core.audio_transformer import resolve_noise_config
 from cxas_scrapi.core.response_parser import ParsedSessionResponse
 from cxas_scrapi.core.sessions import BargeInMetadata, Sessions
 from cxas_scrapi.core.variables import Variables
@@ -255,18 +256,75 @@ class TurnEvals:
             if "conversation" in t and "name" not in t:
                 t["name"] = t["conversation"]
 
-        global_config = raw_data.get("config", {})
+        global_config: dict[str, Any] = {}
+        for src in [
+            raw_data.get("config"),
+            raw_data.get("common_config"),
+            raw_data.get("common_params"),
+        ]:
+            if isinstance(src, dict):
+                global_config.update(src)
+
+        # Propagate top-level noise parameters if present
+        noise_key_aliases = {
+            "common_background_noise": "background_noise",
+            "background_noise": "background_noise",
+            "background_noise_file": "background_noise_file",
+            "common_bg_noise_level": "bg_noise_level",
+            "bg_noise_level": "bg_noise_level",
+            "noise_level": "bg_noise_level",
+            "common_bg_noise_snr": "bg_noise_snr",
+            "bg_noise_snr": "bg_noise_snr",
+            "common_burst_noise": "burst_noise",
+            "burst_noise": "burst_noise",
+            "common_burst_noise_level": "burst_noise_level",
+            "burst_noise_level": "burst_noise_level",
+            "common_burst_noise_snr": "burst_noise_snr",
+            "burst_noise_snr": "burst_noise_snr",
+            "common_burst_noise_files": "burst_noise_files",
+            "burst_noise_files": "burst_noise_files",
+        }
+        for k, target_k in noise_key_aliases.items():
+            if k in raw_data and target_k not in global_config:
+                global_config[target_k] = raw_data[k]
+
         adapter = TypeAdapter(list[TurnTestCase])
         tests = adapter.validate_python(raw_tests)
 
         for t in tests:
             merged = global_config.copy()
-            merged.update(t.config)
+            # If both global and test specify background_noise as a dict,
+            # merge them
+            if isinstance(merged.get("background_noise"), dict) and isinstance(
+                t.config.get("background_noise"), dict
+            ):
+                merged_bg = merged["background_noise"].copy()
+                merged_bg.update(t.config["background_noise"])
+                merged.update(t.config)
+                merged["background_noise"] = merged_bg
+            else:
+                merged.update(t.config)
+
+            # Honor explicit opt-out
+            if t.config.get("background_noise") is False:
+                merged["background_noise"] = False
+
             t.config = merged
             if t.turns:
                 for step in t.turns:
                     step_merged = merged.copy()
-                    step_merged.update(step.config)
+                    if isinstance(
+                        step_merged.get("background_noise"), dict
+                    ) and isinstance(step.config.get("background_noise"), dict):
+                        m_bg = step_merged["background_noise"].copy()
+                        m_bg.update(step.config["background_noise"])
+                        step_merged.update(step.config)
+                        step_merged["background_noise"] = m_bg
+                    else:
+                        step_merged.update(step.config)
+
+                    if step.config.get("background_noise") is False:
+                        step_merged["background_noise"] = False
                     step.config = step_merged
 
         return tests
@@ -968,6 +1026,10 @@ class TurnEvals:
         test_cases: list[TurnTestCase],
         debug: bool = False,
         session_id_prefix: str = "turn_eval_",
+        background_noise_file: str | None = None,
+        bg_noise_snr: float | None = None,
+        burst_noise_files: list[str] | None = None,
+        burst_noise_snr: float | None = None,
     ) -> pd.DataFrame:
         """Runs a list of single-turn tests. Every test runs in a brand new
         session."""
@@ -1024,6 +1086,14 @@ class TurnEvals:
                         case.config.get("single_bidi_stream")
                     )
 
+                    resolved_noise = resolve_noise_config(
+                        case.config,
+                        background_noise_file=background_noise_file,
+                        bg_noise_snr=bg_noise_snr,
+                        burst_noise_files=burst_noise_files,
+                        burst_noise_snr=burst_noise_snr,
+                    )
+
                     interactive_session = None
                     if use_bidi:
                         interactive_session = (
@@ -1034,12 +1104,16 @@ class TurnEvals:
                                     "capture_agent_audio", False
                                 ),
                                 voice_config=case.config.get("voice_config"),
-                                background_noise_file=case.config.get(
+                                background_noise_file=resolved_noise[
                                     "background_noise_file"
-                                ),
-                                bg_noise_snr=case.config.get(
-                                    "bg_noise_snr", 15.0
-                                ),
+                                ],
+                                bg_noise_snr=resolved_noise["bg_noise_snr"],
+                                burst_noise_files=resolved_noise[
+                                    "burst_noise_files"
+                                ],
+                                burst_noise_snr=resolved_noise[
+                                    "burst_noise_snr"
+                                ],
                                 use_tool_fakes=case.config.get(
                                     "use_tool_fakes", True
                                 ),
@@ -1144,6 +1218,27 @@ class TurnEvals:
                             else:
                                 merged_config = case.config.copy()
                                 merged_config.update(step.config)
+                                step_noise = resolve_noise_config(
+                                    merged_config,
+                                    background_noise_file=background_noise_file,
+                                    bg_noise_snr=bg_noise_snr,
+                                    burst_noise_files=burst_noise_files,
+                                    burst_noise_snr=burst_noise_snr,
+                                )
+                                merged_config.pop("background_noise", None)
+                                merged_config.pop("single_bidi_stream", None)
+                                merged_config["background_noise_file"] = (
+                                    step_noise["background_noise_file"]
+                                )
+                                merged_config["bg_noise_snr"] = step_noise[
+                                    "bg_noise_snr"
+                                ]
+                                merged_config["burst_noise_files"] = step_noise[
+                                    "burst_noise_files"
+                                ]
+                                merged_config["burst_noise_snr"] = step_noise[
+                                    "burst_noise_snr"
+                                ]
                                 turn_response = self.sessions_client.run(
                                     session_id=test_session_id,
                                     text=user_input,
@@ -1259,6 +1354,27 @@ class TurnEvals:
                         print(f"[DEBUG] Session ID: {test_session_id}")
                         print(f"[DEBUG] Variables: {case.variables}")
 
+                    single_noise = resolve_noise_config(
+                        case.config,
+                        background_noise_file=background_noise_file,
+                        bg_noise_snr=bg_noise_snr,
+                        burst_noise_files=burst_noise_files,
+                        burst_noise_snr=burst_noise_snr,
+                    )
+                    single_config = case.config.copy()
+                    single_config.pop("background_noise", None)
+                    single_config.pop("single_bidi_stream", None)
+                    single_config["background_noise_file"] = single_noise[
+                        "background_noise_file"
+                    ]
+                    single_config["bg_noise_snr"] = single_noise["bg_noise_snr"]
+                    single_config["burst_noise_files"] = single_noise[
+                        "burst_noise_files"
+                    ]
+                    single_config["burst_noise_snr"] = single_noise[
+                        "burst_noise_snr"
+                    ]
+
                     turn_response = self.sessions_client.run(
                         session_id=test_session_id,
                         text=user_input,
@@ -1272,7 +1388,7 @@ class TurnEvals:
                             if case.turn_count is not None
                             else None
                         ),
-                        **case.config,
+                        **single_config,
                     )
 
                     # 3. Validate expectations

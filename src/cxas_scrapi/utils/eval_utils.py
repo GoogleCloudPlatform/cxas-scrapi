@@ -339,11 +339,29 @@ class EvalUtils(Evaluations):
             evals_list = [item for item in data if isinstance(item, dict)]
 
         sanitized_evals: list[dict[str, Any]] = []
+        client_only_fields = [
+            "barge_in_after_ms",
+            "audio_expectations",
+            "audio_analysis",
+            "naturalness_metric",
+            "naturalness",
+            "voice_config",
+        ]
         for eval_idx, item in enumerate(evals_list):
             if not isinstance(item, dict):
                 continue
 
             name = item.get("name") or f"milestone_eval_{eval_idx + 1}"
+            stripped_eval_fields = [
+                f for f in client_only_fields if item.get(f) is not None
+            ]
+            if stripped_eval_fields:
+                logger.warning(
+                    "Stripping unsupported client-only field(s) %s from "
+                    "evaluation '%s' for Milestone platform compatibility.",
+                    stripped_eval_fields,
+                    name,
+                )
             sanitized_eval: dict[str, Any] = {"name": str(name)}
 
             tags = item.get("tags")
@@ -406,6 +424,18 @@ class EvalUtils(Evaluations):
                 if not isinstance(raw_step, dict):
                     continue
 
+                stripped_step_fields = [
+                    f for f in client_only_fields if raw_step.get(f) is not None
+                ]
+                if stripped_step_fields:
+                    logger.warning(
+                        "Stripping unsupported client-only field(s) %s from "
+                        "step %d in evaluation '%s'.",
+                        stripped_step_fields,
+                        step_idx,
+                        name,
+                    )
+
                 goal = raw_step.get("goal", "")
                 success_criteria = (
                     raw_step.get("success_criteria")
@@ -460,6 +490,13 @@ class EvalUtils(Evaluations):
                     if step_idx == 0:
                         step_dict["inject_variables"] = unwrapped_inj
                     else:
+                        logger.warning(
+                            "Hoisting inject_variables from step %d to "
+                            "session_parameters for evaluation '%s' (platform "
+                            "only allows inject_variables on step 0).",
+                            step_idx,
+                            name,
+                        )
                         hoisted_vars.update(unwrapped_inj)
 
                 step_meta = raw_step.get("metadata")

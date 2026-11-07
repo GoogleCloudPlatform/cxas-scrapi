@@ -645,7 +645,7 @@ def _referenced_file_exists(
 class AppResourceReferences(Rule):
     """App config references missing guardrails or globalInstruction."""
 
-    id = "S009"
+    id = "S010"
     name = "app-resource-references"
     description = (
         "Guardrails and globalInstruction file referenced in app config exist"
@@ -720,7 +720,7 @@ AppGuardrailReferences = AppResourceReferences
 class AgentResourceReferences(Rule):
     """Agent config references missing guardrails, toolsets, or instruction."""
 
-    id = "S010"
+    id = "S011"
     name = "agent-resource-references"
     description = (
         "Guardrails, toolsets, and instruction file referenced in agent "
@@ -816,7 +816,7 @@ class AgentResourceReferences(Rule):
 class ToolFileReferences(Rule):
     """Tool config references missing pythonCode or openApiSchema files."""
 
-    id = "S011"
+    id = "S012"
     name = "tool-file-references"
     description = (
         "Tool pythonCode and openApiSchema files referenced in tool "
@@ -889,7 +889,7 @@ class ToolFileReferences(Rule):
 class ToolsetFileReferences(Rule):
     """Toolset config openApiSchema path is app-relative and exists on disk."""
 
-    id = "S012"
+    id = "S013"
     name = "toolset-file-references"
     description = (
         "Toolset openApiSchema file path must be prefixed with "

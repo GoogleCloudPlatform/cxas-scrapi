@@ -19,9 +19,11 @@ Validates agent tool Python files against CXAS conventions.
 """
 
 import ast
+import functools
 import json
 import re
 import typing
+import warnings
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (
@@ -57,7 +59,9 @@ def _find_tool_ast_function(
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     """Find the entry tool AST function node, skipping private helpers."""
     try:
-        tree = ast.parse(content)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(content)
     except SyntaxError:
         return None
     fns = [
@@ -331,6 +335,108 @@ class ExcessiveReturnData(Rule):
         ]
 
 
+_TOOL_ATTR_RE = re.compile(r"\b(?:async_)?tools\.(\w+)\b")
+
+
+@functools.lru_cache(maxsize=512)
+def _extract_py_referenced_tools_cached(
+    py_path: Path,
+    mtime_ns: int,
+    file_size: int,
+) -> frozenset[str]:
+    """Return all tool names referenced via AST in ``py_path``."""
+    try:
+        text = py_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return frozenset()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(text)
+    except SyntaxError:
+        return frozenset(_TOOL_ATTR_RE.findall(text))
+
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in ("tools", "async_tools")
+        ):
+            found.add(node.attr)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2  # noqa: PLR2004
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in ("tools", "async_tools")
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        ):
+            found.add(node.args[1].value)
+    return frozenset(found)
+
+
+def _py_file_references_tools(
+    py_path: Path,
+    candidate_names: set[str],
+) -> bool:
+    """Check via AST whether a Python file references any candidate tool."""
+    try:
+        stat = py_path.stat()
+    except OSError:
+        return False
+    referenced = _extract_py_referenced_tools_cached(
+        py_path, stat.st_mtime_ns, stat.st_size
+    )
+    return bool(candidate_names & referenced)
+
+
+def _is_tool_referenced_in_code_or_guardrails(
+    app_root: Path,
+    candidate_names: set[str],
+    own_tool_dir: Path,
+) -> bool:
+    """Return True if candidate tool is referenced in code or guardrails."""
+    agents_dir = app_root / "agents"
+    if agents_dir.exists():
+        for py_path in agents_dir.rglob("*.py"):
+            if _py_file_references_tools(py_path, candidate_names):
+                return True
+
+    tools_dir = app_root / "tools"
+    if tools_dir.exists():
+        for py_path in tools_dir.rglob("*.py"):
+            if own_tool_dir in py_path.parents:
+                continue
+            if _py_file_references_tools(py_path, candidate_names):
+                return True
+
+    guardrails_dir = app_root / "guardrails"
+    if guardrails_dir.exists():
+        for gr_json in guardrails_dir.rglob("*.json"):
+            try:
+                gr_data = json.loads(
+                    gr_json.read_text(encoding="utf-8", errors="replace")
+                )
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(gr_data, dict):
+                continue
+            action = gr_data.get("action")
+            if not isinstance(action, dict):
+                continue
+            tool_call = action.get("toolCall") or action.get("tool_call")
+            if isinstance(tool_call, dict):
+                tool_ref = str(tool_call.get("tool") or "")
+                short_ref = tool_ref.rsplit("/", 1)[-1]
+                if tool_ref in candidate_names or short_ref in candidate_names:
+                    return True
+
+    return False
+
+
 @rule("tools")
 class ToolDisplayNameUnreferenced(Rule):
     id = "T008"
@@ -342,7 +448,7 @@ class ToolDisplayNameUnreferenced(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         tool_config, json_path = _load_tool_config(file_path)
-        if not tool_config:
+        if not tool_config or json_path is None:
             return []
 
         display_name = tool_config.get("displayName", "")
@@ -358,13 +464,21 @@ class ToolDisplayNameUnreferenced(Rule):
         if not agents_dir.exists():
             return []
 
+        candidate_names = {display_name, json_path.parent.name}
         referenced = any(
-            display_name in json.loads(agent_json.read_text()).get("tools", [])
+            bool(
+                candidate_names
+                & set(json.loads(agent_json.read_text()).get("tools", []))
+            )
             for agent_dir in agents_dir.iterdir()
             if agent_dir.is_dir()
             for agent_json in [agent_dir / f"{agent_dir.name}.json"]
             if agent_json.exists()
         )
+        if not referenced:
+            referenced = _is_tool_referenced_in_code_or_guardrails(
+                app_root, candidate_names, json_path.parent
+            )
 
         if not referenced:
             rel = str(json_path.relative_to(context.project_root))
@@ -477,7 +591,9 @@ class ToolInvalidPythonSyntax(Rule):
             return []
         rel = str(file_path.relative_to(context.project_root))
         try:
-            compile(content, rel, "exec")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                compile(content, rel, "exec")
         except SyntaxError as e:
             return [
                 self.make_result(
@@ -636,10 +752,54 @@ class MissingToolDescriptionInJSON(Rule):
                 if isinstance(tool_obj, dict):
                     description = tool_obj.get("description")
                 field_name = f"{active_tool_type}.description"
-                fix_msg = (
-                    f"Add a 'description' key to the '{active_tool_type}' "
-                    f"object in the tool's JSON file."
+                if active_tool_type == "pythonFunction":
+                    fix_msg = (
+                        "Add a docstring to the Python tool function or a "
+                        "'description' key to the 'pythonFunction' object in "
+                        "the tool's JSON file."
+                    )
+                else:
+                    fix_msg = (
+                        f"Add a 'description' key to the '{active_tool_type}' "
+                        f"object in the tool's JSON file."
+                    )
+
+        if (
+            (not description or not str(description).strip())
+            and active_tool_type == "pythonFunction"
+            and json_path is not None
+        ):
+            app_root = json_path.parent.parent.parent
+            py_func_cfg = tool_config.get("pythonFunction")
+            code_ref = (
+                py_func_cfg.get("pythonCode")
+                if isinstance(py_func_cfg, dict)
+                else None
+            )
+            py_path = (
+                (app_root / code_ref)
+                if isinstance(code_ref, str) and code_ref.strip()
+                else (json_path.parent / "python_function" / "python_code.py")
+            )
+            if not py_path.is_file():
+                py_path = (
+                    json_path.parent / "python_function" / "python_code.py"
                 )
+            if py_path.is_file():
+                try:
+                    py_text = py_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                    fn_node = _find_tool_ast_function(
+                        py_text, json_path.parent.name
+                    )
+                    if (
+                        fn_node is not None
+                        and (ast.get_docstring(fn_node) or "").strip()
+                    ):
+                        return []
+                except OSError:
+                    pass
 
         if not description or not str(description).strip():
             rel = str(json_path.relative_to(context.project_root))

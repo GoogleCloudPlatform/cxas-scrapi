@@ -130,3 +130,33 @@ def test_test_single_callback_for_agent(tmp_path: typing.Any) -> None:
     assert result.iloc[0]["test_name"] == "test_dummy"
     assert result.iloc[0]["agent_name"] == "agentA"
     assert result.iloc[0]["callback_type"] == "before_model_callback"
+
+
+def test_run_python_unit_tests_in_dir_discovers_and_filters(
+    tmp_path: typing.Any,
+) -> None:
+    tool_tests_dir = tmp_path / "tool_tests"
+    tool_tests_dir.mkdir()
+    t1 = tool_tests_dir / "test_lookup_tool.py"
+    t1.write_text(
+        "def test_ok():\n    assert 1 + 1 == 2\n\n"
+        "def test_bad():\n    assert 1 == 2, 'mismatch'\n",
+        encoding="utf-8",
+    )
+    t2 = tool_tests_dir / "test_excluded_tool.py"
+    t2.write_text("def test_skip():\n    assert True\n", encoding="utf-8")
+
+    evals = CallbackEvals()
+    df = evals.run_python_unit_tests_in_dir(
+        str(tool_tests_dir),
+        filter_files=["lookup"],
+        exclude_files=["excluded"],
+    )
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) == 2
+    by_name = {row["test_name"]: row for _, row in df.iterrows()}
+    assert by_name["test_ok"]["status"] == "PASSED"
+    assert by_name["test_ok"]["agent_name"] == "test_lookup_tool"
+    assert by_name["test_ok"]["callback_type"] == "tool_unit_test"
+    assert by_name["test_bad"]["status"] == "FAILED"
+    assert "mismatch" in by_name["test_bad"]["error_message"]

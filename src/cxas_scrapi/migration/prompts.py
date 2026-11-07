@@ -15,16 +15,11 @@
 """Central repository for all migration prompts to ensure easy iteration and \
 version control."""
 
-from pathlib import Path
-
-# Inline copy of examples/bella_notte/agents/Bella_Notte_Host/instruction.txt,
-# used as the few-shot example in STEP_3B_CONSOLIDATION_INSTRUCTIONS when the
-# source tree is not available (e.g. installed wheel without examples/).
-# Keep this in sync with the source file; the loader prefers the file when
-# present so drift on the source file wins automatically.
+# Canonical host instruction used as the few-shot example in
+# STEP_3B_CONSOLIDATION_INSTRUCTIONS.
 _CANONICAL_EXAMPLE_FALLBACK = """\
 <role>
-You are the Bella Notte Host, the welcoming face and entry point of Bella Notte Italian Restaurant.
+You are the Concierge Host, the welcoming face and entry point for Customer Service.
 </role>
 
 <persona>
@@ -35,7 +30,7 @@ You are the Bella Notte Host, the welcoming face and entry point of Bella Notte 
 
 <guidelines>
   <guideline name="stay_in_scope">
-    You can ONLY help with restaurant reservations, takeout orders, or simple restaurant information (hours/location). Redirect other requests politely.
+    You can ONLY help with customer inquiries, support requests, or store hours and location. Redirect other requests politely.
   </guideline>
 </guidelines>
 
@@ -44,19 +39,15 @@ You are the Bella Notte Host, the welcoming face and entry point of Bella Notte 
     <step name="Welcome">
       <trigger>Conversation begins.</trigger>
       <action>
-        1. Greet the customer warmly with a brief opening line that names the restaurant and the things you can help with (reservations, takeout, hours).
+        1. Greet the customer warmly with a brief opening line that names the service and the things you can help with.
       </action>
     </step>
   </subtask>
 
   <subtask name="Intent_Routing">
-    <step name="Route_To_Reservation">
-      <trigger>Customer wants to book a table, make a reservation, or mentions reservation-specific details (party size, dining date/time, name for the reservation).</trigger>
-      <action>Call {@TOOL: set_active_flow} with flow="reservation" silently (no conversational text).</action>
-    </step>
-    <step name="Route_To_Takeout">
-      <trigger>Customer wants to place a takeout order or names a menu item to order.</trigger>
-      <action>Call {@TOOL: set_active_flow} with flow="takeout" silently (no conversational text).</action>
+    <step name="Route_To_Support">
+      <trigger>Customer wants technical support or account assistance.</trigger>
+      <action>Call {@TOOL: route_to_support} silently (no conversational text).</action>
     </step>
     <step name="Answer_General_Questions">
       <trigger>Customer has general questions about hours or location.</trigger>
@@ -68,27 +59,10 @@ You are the Bella Notte Host, the welcoming face and entry point of Bella Notte 
 
 
 def _load_canonical_example_escaped() -> str:
-    """Return the canonical Bella Notte instruction with braces escaped
+    """Return the canonical host instruction with braces escaped
     for splicing into ``str.format`` templates.
-
-    Reads ``examples/bella_notte/agents/Bella_Notte_Host/instruction.txt``
-    relative to the repo root. Falls back to the inline copy above when
-    the source tree isn't available (installed wheel without examples/).
     """
-    try:
-        path = (
-            Path(__file__).resolve().parents[3]
-            / "examples"
-            / "bella_notte"
-            / "agents"
-            / "Bella_Notte_Host"
-            / "instruction.txt"
-        )
-        text = path.read_text(encoding="utf-8")
-    except (OSError, IndexError):
-        text = _CANONICAL_EXAMPLE_FALLBACK
-    # Escape braces so .format() leaves the example intact.
-    return text.replace("{", "{{").replace("}", "}}")
+    return _CANONICAL_EXAMPLE_FALLBACK.replace("{", "{{").replace("}", "}}")
 
 
 _CANONICAL_EXAMPLE: str = _load_canonical_example_escaped()
@@ -607,8 +581,8 @@ Integration Specialist.
       `llm_response: LlmResponse) -> Optional[LlmResponse]:`
 
     **Accessing Context & State:**
-    - Get variable: `val = callback_context.variables.get('key')`
-    - Set variable: `callback_context.variables['key'] = new_val` (Do not
+    - Get variable: `val = callback_context.state.get('key')`
+    - Set variable: `callback_context.state['key'] = new_val` (Do not
       mutate nested dicts directly; reassign the whole value).
 
     **Method Restriction Constraint:**
@@ -644,19 +618,19 @@ Integration Specialist.
     ```
 
     **PATTERN C: Deterministic Greeting (before_model_callback)**
-    If the agent needs to send a canned response on the first turn, use a state
-    variable check. Review the Global IR Variables (Input 3) for an
-    appropriate tracking flag (e.g., `first_turn` or `session_started`).
-    Provide a default of `True` if it's the first execution.
+    If the agent needs to send a canned response on session start, intercept
+    `<event>session start</event>` on `callback_context.get_last_user_input()`
+    and return `Part.from_customized_response` (or `Part.from_text`) directly so
+    CXAS speaks the greeting and waits for caller speech.
     ```python
-    if callback_context.variables.get("first_turn", True):
-        callback_context.variables["first_turn"] = False
-        response = LlmResponse.from_parts(
-            [Part.from_text("Hello, how can I help?")]
-        )
-        # Forces the agent to continue processing after the response
-        response.partial = True
-        return response
+    for part in callback_context.get_last_user_input():
+        if (part.text_or_transcript() or "") == "<event>session start</event>":
+            return LlmResponse.from_parts(parts=[
+                Part.from_customized_response(
+                    content="Hello, how can I help?",
+                    disable_barge_in=False,
+                )
+            ])
     ```
 
     **PATTERN D: Disallow Barge-in / Custom Audio (before_model_callback)**
@@ -671,20 +645,21 @@ Integration Specialist.
 
     **PATTERN E: Custom Response for No-Input / Silence Timeout
     (before_model_callback)**
-    Check whether input was received by the user, track retries in the context variables,
+    Check whether input was received by the user, track retries in `callback_context.state`,
     and conditionally provide a response or escalate if max retries are reached.
     ```python
     for part in callback_context.get_last_user_input():
-        if part.text and "no user activity detected" in part.text:
-            retry_count = callback_context.variables.get("no_input_retry_count", 0) + 1
-            callback_context.variables["no_input_retry_count"] = retry_count
+        text_val = part.text_or_transcript() or ""
+        if "no user activity detected" in text_val.lower():
+            retry_count = int(callback_context.state.get("no_input_retry_count", 0)) + 1
+            callback_context.state["no_input_retry_count"] = retry_count
             if retry_count >= 3:
                 return LlmResponse.from_parts(parts=[
-                    Part.from_text("We haven't heard from you. Let me transfer you to an agent."),
+                    Part.from_text(text="We haven't heard from you. Let me transfer you to an agent."),
                     Part.from_agent_transfer(agent="escalation_agent")
                 ])
             return LlmResponse.from_parts(
-                parts=[Part.from_text("Hi, are you still there?")]
+                parts=[Part.from_text(text="Hi, are you still there?")]
             )
     ```
 
@@ -1435,10 +1410,10 @@ and CXAS Architect.
            - Example Callback Implementation to assume:
              ```python
              for part in callback_context.get_last_user_input():
-                 text_input = part.text.lower() if part.text else ""
+                 text_input = (part.text_or_transcript() or "").lower()
                  if "no user activity detected" in text_input or "sys.no-input" in text_input or "sys.no-match" in text_input or text_input.strip() == "":
-                     retry = callback_context.variables.get("no_input_retry_count", 0) + 1
-                     callback_context.variables["no_input_retry_count"] = retry
+                     retry = int(callback_context.state.get("no_input_retry_count", 0)) + 1
+                     callback_context.state["no_input_retry_count"] = retry
                      if retry >= 3:
                          # Customize text verbatim from source agent's final transfer message
                          return LlmResponse.from_parts([

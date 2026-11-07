@@ -17,10 +17,12 @@ These tags form the standard vocabulary for CXAS agent instructions:
 
 | Tag | Purpose |
 |-----|---------|
-| `<role>` | Defines who this agent is — unique to this agent, not shared with others |
+| `<role>` | Defines who this agent is (and injects `{{current_date}}` for relative date grounding) — unique to this agent |
 | `<persona>` | Sets tone and communication style — can be shared globally across agents |
 | `<primary_goal>` | One sentence: what this agent exists to accomplish |
 | `<constraints>` | Hard limits on what the agent can and cannot do |
+| `<error_protocol>` | Explicit fallback behavior when tools return errors or `agent_action` guidance |
+| `<reply_shape>` | Optional voice latency-masking contract (Named Two-Part Reply: `PART 1` brief spoken acknowledgment + `PART 2` `{@TOOL: ...}` call in the same pass) |
 | `<taskflow>` | The ordered sequence of steps the agent follows in a conversation |
 | `<subtask>` | A named unit of work within the taskflow |
 | `<step>` | A single action or decision within a subtask |
@@ -34,12 +36,13 @@ Not every instruction needs every tag. Use the tags that match the complexity of
 
 ## A complete instruction example
 
-The following is a representative instruction set for a restaurant reservation agent (Bella Notte). It demonstrates how the tags compose in practice.
+The following is a representative instruction set for a restaurant reservation agent (The Bistro Assistant). It demonstrates how the tags compose in practice.
 
 ```xml
 <role>
-You are the reservations assistant for Bella Notte, an upscale Italian restaurant
-in San Francisco. You help guests make, modify, and cancel reservations. You have
+You are the reservations assistant for The Bistro, an upscale restaurant.
+Today's date is {{current_date}}.
+You help guests make, modify, and cancel reservations. You have
 no knowledge of menu items, pricing, or kitchen operations — guests with those
 questions should be directed to the restaurant directly.
 </role>
@@ -55,9 +58,9 @@ Complete reservation requests accurately and confirm all details before finalizi
 
 <constraints>
 - Never confirm a reservation without collecting: date, time, party size, and guest name.
-- Never book a party larger than 12 — direct larger parties to events@bellanotte.com.
+- Never book a party larger than 12 — direct larger parties to events@thebistro.com.
 - Never modify a reservation made more than 24 hours in the future without
-  calling the check_modification_policy tool first.
+  calling {@TOOL: check_modification_policy} first.
 - If the requested time is unavailable, always offer exactly two alternatives.
 </constraints>
 
@@ -67,20 +70,20 @@ Complete reservation requests accurately and confirm all details before finalizi
     <step>Ask for the party size if not provided.</step>
     <step>Ask for the preferred time if not provided.</step>
     <step>Ask for the guest name if not provided.</step>
-    <step>Once all four are collected, call check_availability.</step>
+    <step>Once all four are collected, call {@TOOL: check_availability}.</step>
   </subtask>
 
   <subtask name="handle_availability_response">
-    <trigger>check_availability returns available=true</trigger>
+    <trigger>{@TOOL: check_availability} returns available=true</trigger>
     <action>Present the slot to the guest and ask for confirmation.</action>
 
-    <trigger>check_availability returns available=false</trigger>
-    <action>Call get_alternative_slots and present exactly two options to the guest.</action>
+    <trigger>{@TOOL: check_availability} returns available=false</trigger>
+    <action>Call {@TOOL: get_alternative_slots} and present exactly two options to the guest.</action>
   </subtask>
 
   <subtask name="confirm_reservation">
     <trigger>Guest confirms a slot</trigger>
-    <action>Call create_reservation with all collected details.</action>
+    <action>Call {@TOOL: create_reservation} with all collected details.</action>
     <action>Read back the confirmation number and full details to the guest.</action>
   </subtask>
 </taskflow>
@@ -115,10 +118,10 @@ Assistant: "What date were you thinking — this weekend, or further out?"
 
     ```xml
     <role>
-    You are the reservations assistant for Bella Notte, an upscale Italian restaurant
-    in San Francisco. You handle reservation creation, modification, and cancellation.
+    You are the reservations assistant for The Bistro, an upscale restaurant.
+    You handle reservation creation, modification, and cancellation.
     Questions about the menu, pricing, or events are outside your scope — direct
-    those guests to the restaurant directly at info@bellanotte.com.
+    those guests to the restaurant directly at info@thebistro.com.
     </role>
     ```
 
@@ -144,7 +147,7 @@ Assistant: "What date were you thinking — this weekend, or further out?"
       party size, and guest name.
     - Never accept a party size greater than 12. If the guest requests more than 12,
       say: "For parties larger than 12, please contact our events team at
-      events@bellanotte.com."
+      events@thebistro.com."
     - If the requested time slot is unavailable, always offer exactly two alternatives.
       Never offer one or three.
     </constraints>
@@ -156,7 +159,7 @@ Assistant: "What date were you thinking — this weekend, or further out?"
 
 ## Do not encode a state machine in the prompt
 
-The most damaging instruction anti-pattern is hand-building a finite-state machine inside the prompt and asking the model to execute it on every turn: reading a counter variable, comparing it to a literal, branching to a named step, writing state back, and following `agent_action` codes verbatim. LLMs execute this kind of imperative control flow unreliably — they lose track of which "state" they are in, fire steps out of order, and skip the counter increments. Control flow, retry limits, and routing belong in **deterministic code** (callbacks and slot-filling DAG transitions), not in prose.
+The most damaging instruction anti-pattern is hand-building a finite-state machine inside the prompt and asking the model to execute it on every turn: reading a counter variable, comparing it to a literal, branching to a named step, writing state back, and following `agent_action` codes verbatim. LLMs execute this kind of imperative control flow unreliably — they lose track of which "state" they are in, fire steps out of order, and skip the counter increments. Control flow, retry limits, and routing belong in **deterministic code** (callbacks and deterministic state transitions), not in prose.
 
 === "Bad"
 
@@ -188,7 +191,7 @@ The most damaging instruction anti-pattern is hand-building a finite-state machi
     </taskflow>
     ```
 
-    The prompt states the goal and calls a setter tool. The retry counter, the "ask again vs. escalate" decision, and the transfer are owned by a `before_model`/`after_model` callback that keeps state in Python (a `_retries` dict). See the [slot-filling pattern](../patterns/slot-filling.md): *the LLM is a language interface, not a state machine.*
+    The prompt states the goal and calls a tool. The retry counter, the "ask again vs. escalate" decision, and the transfer are owned by a `before_model`/`after_model` callback that keeps state in Python (a `_retries` dict). Put retry/attempt counters in callbacks: *the LLM is a language interface, not a state machine.*
 
 ---
 

@@ -1,9 +1,0 @@
-{
-  "name": "f1a2b3c4-aaaa-4ddd-eeee-111111111111",
-  "pythonFunction": {
-    "name": "find_available_times",
-    "pythonCode": "tools/find_available_times/python_function/python_code.py",
-    "description": "Look up available reservation times for a given party size and date. Called automatically by the system when party size and date are confirmed — do not call directly."
-  },
-  "displayName": "find_available_times"
-}

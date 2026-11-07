@@ -31,7 +31,19 @@
 #      (e.g., authenticate → ask question → follow up with second topic)
 #   7. naturalness_metric is OPTIONAL and opt-in — omit it entirely and the
 #      eval behaves exactly as before (see the last eval in this file)
+#   8. common_background_noise & common_params apply file-wide defaults for
+#      acoustic noise stress testing across all evals (with per-eval overrides)
 # =============================================================================
+
+# Common background acoustic noise applied to audio simulations across this file
+common_background_noise: "cafe"
+common_bg_noise_level: "MEDIUM"  # "LOW"=20dB, "MEDIUM"=12dB, "HIGH"=5dB (or numeric dB)
+
+# Optional common parameters for session variables or burst noise
+# common_params:
+#   user_region: "US-WEST"
+#   burst_noise: ["dog_barking"]
+#   burst_noise_level: "HIGH"
 
 evals:
   # --- P0: Critical flows ---
@@ -221,3 +233,24 @@ evals:
       - "The agent must confirm the cancellation status"
     session_parameters:
       order_id: "98765"
+
+  # --- Background Noise Evaluation: tests voice agent resilience under realistic acoustic noise ---
+  # Supported built-in presets: white, pink, brown, cafe, call_center, traffic,
+  # cross_talk (other_people_speaking), baby_crying, kids_noise, dog_barking,
+  # tv_radio, kitchen, wind. Custom audio file paths (.wav, .mp3) are also supported.
+
+  - name: call_center_noise_inquiry
+    tags: [P0, audio, noise, billing]
+    background_noise:
+      preset: call_center
+      level: MEDIUM   # Categorical level: LOW (20dB), MEDIUM (12dB), HIGH (5dB)
+    steps:
+      - goal: Ask about billing balance in a noisy call center environment
+        success_criteria: Agent correctly understands user speech despite background noise
+        response_guide: >
+          You are calling from a busy office or call center.
+          Ask: "Can you tell me my current account balance?"
+        max_turns: 6
+    expectations:
+      - "The agent must understand the caller's balance request despite background noise"
+      - "The agent must respond with the account balance or request account verification"
