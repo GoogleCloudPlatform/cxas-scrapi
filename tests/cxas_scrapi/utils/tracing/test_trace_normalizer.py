@@ -75,29 +75,33 @@ _RESULT = {
         "User: Hi",
         "Agent Text: Hello, what are you calling about today?",
         "User: Where is my order?",
-        "\n".join([
-            "Agent Transfer: Transferred to orders_router",
-            "Agent Transfer: Transferred to order_status_cb",
-            "Agent Text: Your Zentrix Z9 has shipped.",
-            "It should arrive on November 4.",
-            (
-                "Tool Call: send_sms with args {'txnType': 'TRACK',"
-                " 'order_id': '1001'}"
-            ),
-            (
-                "Tool Response: send_sms with result {'result': {'statuscode':"
-                " '200'}}"
-            ),
-        ]),
+        "\n".join(
+            [
+                "Agent Transfer: Transferred to orders_router",
+                "Agent Transfer: Transferred to order_status_cb",
+                "Agent Text: Your Zentrix Z9 has shipped.",
+                "It should arrive on November 4.",
+                (
+                    "Tool Call: send_sms with args {'txnType': 'TRACK',"
+                    " 'order_id': '1001'}"
+                ),
+                (
+                    "Tool Response: send_sms with result {'result': {'statuscode':"
+                    " '200'}}"
+                ),
+            ]
+        ),
         "User: Can you cancel it? Yes please do.",
-        "\n".join([
-            "Agent Text (Diag): Connecting you to an order specialist.",
-            "Tool Call: escalate_to_agent with args {'reason': 'cancel'}",
-            (
-                "Custom Payload: {'action': 'route', 'parameters':"
-                " {'intent': 'order_cancel'}}"
-            ),
-        ]),
+        "\n".join(
+            [
+                "Agent Text (Diag): Connecting you to an order specialist.",
+                "Tool Call: escalate_to_agent with args {'reason': 'cancel'}",
+                (
+                    "Custom Payload: {'action': 'route', 'parameters':"
+                    " {'intent': 'order_cancel'}}"
+                ),
+            ]
+        ),
     ],
     "turn_traces": [
         {"turn_index": 1, "root_span": _ROOT_SPAN},
@@ -164,9 +168,7 @@ def test_to_conversation_header_and_sequence() -> None:
     ]
     callback_calls = [e["tool"] for e in events if e.get("via")]
     assert callback_calls == ["lookup_orders", "lookup_orders_secondary"]
-    assert (
-        events[4]["response"]["session_changes"]["orders[0].sku"] == "Z9"
-    )
+    assert events[4]["response"]["session_changes"]["orders[0].sku"] == "Z9"
     assert events[11]["actor"] == "order_status_cb"
     assert (
         events[11]["text"]
@@ -188,17 +190,19 @@ def test_tool_failed() -> None:
 
 def test_nested_callback_tool_preserved_when_llm_calls_same_tool() -> None:
     """Tests preserving nested Callback -> Tool calls when LLM calls same tool."""
-    conv = trace_normalizer.to_conversation({
-        "name": "c__r0",
-        "detailed_trace": [
-            "User: check order",
-            (
-                "Tool Call: lookup_orders with args {'account_id': '1002'}\n"
-                "Tool Response: lookup_orders with result {'status': 'SUCCESS'}"
-            ),
-        ],
-        "turn_traces": [{"turn_index": 0, "root_span": _ROOT_SPAN}],
-    })
+    conv = trace_normalizer.to_conversation(
+        {
+            "name": "c__r0",
+            "detailed_trace": [
+                "User: check order",
+                (
+                    "Tool Call: lookup_orders with args {'account_id': '1002'}\n"
+                    "Tool Response: lookup_orders with result {'status': 'SUCCESS'}"
+                ),
+            ],
+            "turn_traces": [{"turn_index": 0, "root_span": _ROOT_SPAN}],
+        }
+    )
     lookup_calls = [
         (e.get("via", "llm"), e["args"])
         for e in conv["events"]

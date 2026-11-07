@@ -427,9 +427,7 @@ def test_parser_extracts_callback_and_sibling_fake_tool_spans() -> None:
         ("lookup_orders_secondary", {"status": "SHIPPED"}),
     ]
 
-    parsed_merged = ParsedSessionResponse(
-        response, include_callback_tools=True
-    )
+    parsed_merged = ParsedSessionResponse(response, include_callback_tools=True)
     assert [
         (tc.name, tc.args, tc.source) for tc in parsed_merged.tool_calls
     ] == [
@@ -437,9 +435,7 @@ def test_parser_extracts_callback_and_sibling_fake_tool_spans() -> None:
         ("lookup_orders", {"account_id": "1001"}, "callback"),
         ("lookup_orders_secondary", {"order_id": "99"}, "callback"),
     ]
-    assert [
-        (tr.name, tr.response) for tr in parsed_merged.tool_responses
-    ] == [
+    assert [(tr.name, tr.response) for tr in parsed_merged.tool_responses] == [
         ("lookup_orders", {"status": "SUCCESS"}),
         ("lookup_orders_secondary", {"status": "SHIPPED"}),
     ]

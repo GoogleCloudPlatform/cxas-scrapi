@@ -307,7 +307,7 @@ class ParsedSessionResponse:
         span_dict: dict[str, Any],
         existing_llm_tools: set[str],
     ) -> None:
-        """Extracts Tool and sibling Fake Tool spans invoked by Callback spans."""
+        """Extracts Callback-invoked Tool and sibling Fake Tool spans."""
         if not isinstance(span_dict, dict):
             return
 

@@ -113,7 +113,7 @@ def _flatten(value: Any, prefix: str, out: dict[str, Any]) -> None:
 
 
 def normalize_response(response: Any, failed: bool) -> dict[str, Any]:
-    """Maps a CES tool response to `{status_code, session_changes, output_keys}`."""
+    """Maps a CES tool response to its status, session changes, and keys."""
     body = as_obj(response)
     if isinstance(body, Mapping) and set(body) == {"result"}:
         body = as_obj(body["result"])
@@ -137,7 +137,13 @@ def parse_value(text: str) -> Any:
     for parser in (ast.literal_eval, json.loads):
         try:
             return parser(text)
-        except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        except (
+            ValueError,
+            SyntaxError,
+            TypeError,
+            MemoryError,
+            RecursionError,
+        ):
             continue
     return text
 
@@ -231,13 +237,15 @@ def callback_tools(
             if out_key in attrs and attrs[out_key] is not None:
                 raw_out = attrs[out_key]
                 break
-        out.append((
-            agent,
-            tool,
-            as_obj(raw_in),
-            as_obj(raw_out),
-            kind,
-        ))
+        out.append(
+            (
+                agent,
+                tool,
+                as_obj(raw_in),
+                as_obj(raw_out),
+                kind,
+            )
+        )
 
     def walk(span: Mapping[str, Any]) -> None:
         last_callback: str | None = None
@@ -258,10 +266,10 @@ def callback_tools(
                 walk(child)
 
     root = as_obj(root_span)
-    for r in root if isinstance(root, list) else [root]:
-        r = as_obj(r)
-        if isinstance(r, Mapping):
-            walk(r)
+    for item in root if isinstance(root, list) else [root]:
+        span = as_obj(item)
+        if isinstance(span, Mapping):
+            walk(span)
     return out
 
 
@@ -330,12 +338,14 @@ class _Builder:
     def payload(self, turn: int, actor: str, payload: Any) -> None:
         if not isinstance(payload, Mapping):
             return
-        self.add({
-            "turn": turn,
-            "type": "payload",
-            "actor": actor,
-            "payload": dict(payload),
-        })
+        self.add(
+            {
+                "turn": turn,
+                "type": "payload",
+                "actor": actor,
+                "payload": dict(payload),
+            }
+        )
 
 
 def to_conversation(
@@ -373,7 +383,8 @@ def to_conversation(
             spans_by_turn[t], tools_map=resolved_tools_map
         ):
             if kind == _FAKE_TOOL_SPAN and tool in llm_tools:
-                continue  # Sibling Fake Tool already rendered as an LLM tool call.
+                # Sibling Fake Tool already rendered as an LLM tool call.
+                continue
             b.tool_call(t, agent, tool, args, via="callback")
             b.tool_result(t, agent, tool, response)
 
@@ -385,12 +396,14 @@ def to_conversation(
             text = entry[len(_USER_PREFIX) :]
             if text.startswith(_BARGE_IN_PREFIX):
                 text = text[len(_BARGE_IN_PREFIX) :]
-            b.add({
-                "turn": turn,
-                "type": "user_message",
-                "actor": "user",
-                "text": text,
-            })
+            b.add(
+                {
+                    "turn": turn,
+                    "type": "user_message",
+                    "actor": "user",
+                    "text": text,
+                }
+            )
             continue
         turn = max(turn, 0)
         lines = []
@@ -399,19 +412,22 @@ def to_conversation(
             if match is not None:
                 lines.append((kind, match))
         emit_callbacks(turn, {m.group(1) for k, m in lines if k == "tool_call"})
-        # Top-level agent text is rendered first but spoken after the turn's tools
-        # and transfers, so it is emitted last (with the final speaking agent).
+        # Top-level agent text is rendered first but spoken after the turn's
+        # tools and transfers, so it is emitted last (with the final speaking
+        # agent).
         spoken = []
         for kind, match in lines:
             if kind == "agent_text":
                 spoken.append(match.group(1))
             elif kind == "agent_text_diag":
-                b.add({
-                    "turn": turn,
-                    "type": "agent_message",
-                    "actor": actor,
-                    "text": match.group(1),
-                })
+                b.add(
+                    {
+                        "turn": turn,
+                        "type": "agent_message",
+                        "actor": actor,
+                        "text": match.group(1),
+                    }
+                )
             elif kind == "tool_call":
                 b.tool_call(
                     turn, actor, match.group(1), parse_value(match.group(2))
@@ -422,22 +438,26 @@ def to_conversation(
                 )
             elif kind == "transfer":
                 target = _short_name(match.group(1).strip())
-                b.add({
-                    "turn": turn,
-                    "type": "handoff",
-                    "actor": actor,
-                    "target": target,
-                })
+                b.add(
+                    {
+                        "turn": turn,
+                        "type": "handoff",
+                        "actor": actor,
+                        "target": target,
+                    }
+                )
                 actor = target
             elif kind == "payload":
                 b.payload(turn, actor, parse_value(match.group(1)))
         for text in spoken:
-            b.add({
-                "turn": turn,
-                "type": "agent_message",
-                "actor": actor,
-                "text": text,
-            })
+            b.add(
+                {
+                    "turn": turn,
+                    "type": "agent_message",
+                    "actor": actor,
+                    "text": text,
+                }
+            )
     for t in sorted(spans_by_turn):
         emit_callbacks(
             t, set()
