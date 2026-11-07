@@ -34,7 +34,7 @@ The CLI bundles the following top-level items from `--app-dir` into a ZIP archiv
 
 - `app.yaml` / `app.json`
 - `global_instruction.txt`
-- `environment.json` (or the file you pass via `--env-file`). Any boolean `"$env_var"` placeholders or per-environment boolean overrides (such as `bigqueryExportSettings.enabled`, `cloudLoggingSettings.enableCloudLogging`, or `openApiTool.ignoreUnknownFields`) are resolved into the staged manifests as native JSON booleans before archiving.
+- `environment.json` (or the file you pass via `--env-file`). Place app-level settings under `"app": { ... }` and component settings under `"tools"`, `"toolsets"`, `"agents"`, or `"guardrails"` keyed by `displayName` (or directory name). Any boolean `"$env_var"` placeholders or per-environment boolean overrides on CES protobuf `bool` fields (such as `app.pinned`, `app.loggingSettings.bigqueryExportSettings.enabled`, `app.loggingSettings.cloudLoggingSettings.enableCloudLogging`, `app.loggingSettings.conversationLoggingSettings.disableConversationLogging`, `app.loggingSettings.redactionConfig.enableRedaction`, or `openApiTool.ignoreUnknownFields`) are resolved into the staged `.json`/`.yaml` manifests as native booleans before archiving. `cxas lint` (`V001`–`V007`) likewise resolves boolean `"$env_var"` placeholders from `environment.json` (or accepts `"$env_var"` on protobuf `bool` fields when `--env-file` is supplied externally at push time).
 - `agents/`, `tools/`, `guardrails/`, `toolsets/`
 - `evaluations/`, `evaluationDatasets/`, `evaluationExpectations/`
 - `.github/workflows/`

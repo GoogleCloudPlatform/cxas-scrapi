@@ -211,7 +211,7 @@ Understanding what happens during a push helps you reason about partial failures
 
 1. SCRAPI copies supported app files and resource directories into a temporary directory.
 2. If `--env-file` is provided, its contents replace `environment.json` in that temporary copy.
-3. Boolean `"$env_var"` placeholders and per-environment boolean overrides in `environment.json` (such as `bigqueryExportSettings.enabled` or `cloudLoggingSettings.enableCloudLogging`, whether written as `true`/`false` or `"true"`/`"false"`) are resolved into the staged `app.json` and component manifests before archiving.
+3. Boolean `"$env_var"` placeholders and per-environment boolean overrides in `environment.json` (structured under `"app": { ... }` and `"tools"` / `"toolsets"` / `"agents"` / `"guardrails"` keyed by `displayName`, for any CES protobuf `bool` field such as `loggingSettings.bigqueryExportSettings.enabled`, `loggingSettings.cloudLoggingSettings.enableCloudLogging`, or `openApiTool.ignoreUnknownFields`, whether written as `true`/`false`, `1`/`0`, or `"true"`/`"false"`) are resolved into the staged `app.json`/`app.yaml` and `<category>/<name>/<name>.{json,yaml}` manifests before archiving.
 4. It creates a ZIP archive and calls the app import API, targeting an existing app or creating a new one.
 5. It waits for the import operation and reports any resources rejected by the server.
 
