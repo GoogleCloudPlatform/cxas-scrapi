@@ -297,6 +297,10 @@ def test_get_report_all_formats(traces_obj: typing.Any) -> None:
 
     md = traces_obj.get_report("c1", fmt="md")
     assert "Conversation `c1`" in md
+    assert "Raw turn JSON" not in md
+    assert "Raw turn JSON" in traces_obj.get_report(
+        "c1", fmt="md", include_raw=True
+    )
 
     md2 = traces_obj.get_report("c1", fmt="markdown")
     assert md == md2
@@ -306,6 +310,10 @@ def test_get_report_all_formats(traces_obj: typing.Any) -> None:
 
     html = traces_obj.get_report("c1", fmt="html")
     assert "<html" in html
+    assert "Raw turn JSON" not in html
+    assert "Raw turn JSON" in traces_obj.get_report(
+        "c1", fmt="html", include_raw=True
+    )
 
 
 def test_get_report_unknown_format_raises(traces_obj: typing.Any) -> None:
