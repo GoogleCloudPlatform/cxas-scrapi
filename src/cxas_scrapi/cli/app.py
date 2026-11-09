@@ -16,6 +16,7 @@
 
 import argparse
 import io
+import json
 import logging
 import os
 import shutil
@@ -29,6 +30,12 @@ from typing import Any
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions
+from cxas_scrapi.utils.env_vars import (
+    collect_env_var_declaration_names,
+    extract_env_variable_defaults,
+    preserve_env_var_placeholders_on_pull,
+    resolve_app_env_variables_in_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +199,25 @@ def _app_pull(
                 )
                 top_dir = first_part if has_top_dir else ""
 
+            pulled_app_root = (
+                dest_app_root
+                if dest_app_root is not None
+                else (
+                    os.path.join(target_dir, top_dir) if top_dir else target_dir
+                )
+            )
+            prev_env_vars = collect_env_var_declaration_names(pulled_app_root)
+            prev_env_defaults: dict[str, Any] = {}
+            prev_env_path = os.path.join(pulled_app_root, "environment.json")
+            if prev_env_vars and os.path.isfile(prev_env_path):
+                try:
+                    with open(prev_env_path, encoding="utf-8") as ef:
+                        prev_env_defaults, _ = extract_env_variable_defaults(
+                            json.load(ef)
+                        )
+                except (OSError, ValueError):
+                    prev_env_defaults = {}
+
             if dest_app_root is not None:
                 os.makedirs(dest_app_root, exist_ok=True)
                 abs_dest_root = os.path.abspath(dest_app_root)
@@ -305,6 +331,19 @@ def _app_pull(
                                         )
                                         os.rmdir(dir_path)
 
+        if prev_env_vars:
+            preserved = preserve_env_var_placeholders_on_pull(
+                pulled_app_root,
+                prev_env_vars,
+                previous_env_defaults=prev_env_defaults,
+            )
+            if preserved:
+                print(
+                    "Preserved $env_var placeholders for "
+                    f"{len(preserved)} variable(s) in app config and updated "
+                    "environment.json."
+                )
+
         print("Successfully pulled app.")
 
     except Exception as e:
@@ -355,6 +394,7 @@ def _app_push(
 ) -> str | None:
     """Helper to push an app to CXAS."""
     temp_dir = tempfile.mkdtemp()
+    temp_zip = tempfile.mktemp(suffix=".zip")
     inner_dir = os.path.join(temp_dir, "agent")
     os.makedirs(inner_dir)
 
@@ -375,49 +415,63 @@ def _app_push(
         "pythonEnvFiles",
     ]
 
-    for item in valid_roots:
-        src_path = os.path.join(app_dir, item)
-        if os.path.exists(src_path):
-            dst_path = os.path.join(inner_dir, item)
-            os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-            if os.path.isdir(src_path):
-                shutil.copytree(src_path, dst_path)
-            else:
-                shutil.copy2(src_path, dst_path)
-
-    # Inject explicit env_file if provided
-    if env_file:
-        if os.path.exists(env_file):
-            dst_path = os.path.join(inner_dir, "environment.json")
-            shutil.copy2(env_file, dst_path)
-            print(
-                f"Included custom environment file "
-                f"from {env_file} as environment.json"
-            )
-        else:
-            print(
-                f"Warning: Custom environment file "
-                f"'{env_file}' not found. Skipping."
-            )
-
-    # ZIP does not support timestamps before 1980.
-    # Touch files and directories in temp_dir with timestamps before 1980.
-    limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
-    for root, dirs, files in os.walk(temp_dir):
-        for name in files:
-            path = os.path.join(root, name)
-            if os.path.getmtime(path) < limit_time:
-                os.utime(path, None)
-        for name in dirs:
-            path = os.path.join(root, name)
-            if os.path.getmtime(path) < limit_time:
-                os.utime(path, None)
-
-    # Zip the filtered agent directory
-    temp_zip = tempfile.mktemp(suffix=".zip")
-    shutil.make_archive(temp_zip.replace(".zip", ""), "zip", temp_dir)
-
     try:
+        for item in valid_roots:
+            src_path = os.path.join(app_dir, item)
+            if os.path.exists(src_path):
+                dst_path = os.path.join(inner_dir, item)
+                os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+                if os.path.isdir(src_path):
+                    shutil.copytree(src_path, dst_path)
+                else:
+                    shutil.copy2(src_path, dst_path)
+
+        # Inject explicit env_file if provided
+        env_file_missing = False
+        if env_file:
+            if os.path.exists(env_file):
+                dst_path = os.path.join(inner_dir, "environment.json")
+                shutil.copy2(env_file, dst_path)
+                print(
+                    f"Included custom environment file "
+                    f"from {env_file} as environment.json"
+                )
+            else:
+                env_file_missing = True
+                print(
+                    f"Warning: Custom environment file "
+                    f"'{env_file}' not found. Skipping."
+                )
+
+        if env_file_missing and collect_env_var_declaration_names(inner_dir):
+            raise FileNotFoundError(
+                f"Custom environment file '{env_file}' not found; required to "
+                "resolve '$env_var' variableDeclarations"
+            )
+
+        resolved_vars = resolve_app_env_variables_in_dir(inner_dir)
+        if resolved_vars:
+            print(
+                f"Resolved {len(resolved_vars)} '$env_var' variable "
+                f"default(s) from environment.json: {', '.join(resolved_vars)}"
+            )
+
+        # ZIP does not support timestamps before 1980.
+        # Touch files and directories in temp_dir with timestamps before 1980.
+        limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
+        for root, dirs, files in os.walk(temp_dir):
+            for name in files:
+                path = os.path.join(root, name)
+                if os.path.getmtime(path) < limit_time:
+                    os.utime(path, None)
+            for name in dirs:
+                path = os.path.join(root, name)
+                if os.path.getmtime(path) < limit_time:
+                    os.utime(path, None)
+
+        # Zip the filtered agent directory
+        shutil.make_archive(temp_zip.replace(".zip", ""), "zip", temp_dir)
+
         with open(temp_zip, "rb") as f:
             app_content = f.read()
 
@@ -474,6 +528,8 @@ def _app_push(
     finally:
         if os.path.exists(temp_zip):
             os.remove(temp_zip)
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def app_create(args: argparse.Namespace) -> None:
@@ -726,8 +782,15 @@ def app_lint(args: argparse.Namespace) -> None:
             )
         sys.exit(1)
 
+    env_file_arg = getattr(args, "env_file", None)
+    resolved_env_file = Path(env_file_arg).resolve() if env_file_arg else None
+
     context = build_context(
-        project_root, config, discovery, model_override=model_override
+        project_root,
+        config,
+        discovery,
+        model_override=model_override,
+        env_file=resolved_env_file,
     )
 
     if not json_output:

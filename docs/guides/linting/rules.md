@@ -419,6 +419,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A014 | `async-tool-missing-inactivity-timeout` | Error | Apps with `ASYNCHRONOUS` tools must configure `audioProcessingConfig.inactivityTimeout` |
     | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100; configurable via `max_variables_per_app`) |
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
+    | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
 
     ---
 
@@ -441,6 +442,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `root_agent` (snake_case) is used instead of `rootAgent`, `rootAgent` is missing or not a string, or the referenced agent directory/JSON is missing.
 
     *Fix:* Add or fix the `rootAgent` field in `app.json` and ensure the agent directory and config file exist.
+
+    ---
+
+    **A017 — variable-defaults-and-env-vars**
+
+    Validates `variableDeclarations[].schema.default` types (`BOOLEAN`, `STRING`, `INTEGER`, `NUMBER`, `OBJECT`, `ARRAY`) in `app.json` / `app.yaml` and cross-validates `"$env_var"` placeholders against `environment.json` (or `--env-file` when provided).
+
+    *Triggers:* A static `schema.default` does not match its declared `schema.type` (e.g. `"true"` on a `BOOLEAN`), `variableDeclarations` is placed at the top level of `environment.json` instead of under `app.variableDeclarations`, a `"$env_var"` variable is missing or has a mismatched type in `environment.json`, or `environment.json` overrides a variable that is undeclared or lacks `"default": "$env_var"` in `app.json`.
+
+    *Fix:* Ensure `schema.default` values match the declared schema type, set `"default": "$env_var"` in `app.json` for environment-specific variables, and nest per-environment values under `app.variableDeclarations` in `environment.json`.
 
 === "S — Structure"
 
