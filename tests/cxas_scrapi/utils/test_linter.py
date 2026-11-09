@@ -240,6 +240,7 @@ def test_reset_registry() -> None:
         importlib.reload(mod)
 
     registry_restored = build_registry()
+    assert len(registry_restored.all_rules()) == 102  # noqa: PLR2004
     assert len(registry_restored.all_rules()) == initial_count
 
 
@@ -542,7 +543,7 @@ def test_discovery_filtering(tmp_path: typing.Any) -> None:
 def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
-    assert len(all_rules) >= 79  # noqa: PLR2004
+    assert len(all_rules) == 102  # noqa: PLR2004
 
 
 def test_build_context(tmp_path: typing.Any) -> None:
