@@ -719,6 +719,8 @@ class SimulationEvals(Apps):
             return True, "voice_config requires local client simulation"
         if test_case.get("naturalness_metric") or test_case.get("naturalness"):
             return True, "naturalness_metric requires local client evaluation"
+        if test_case.get("tool_expectations"):
+            return True, "tool_expectations requires local client evaluation"
         if test_case.get("barge_in_after_ms") is not None:
             return True, "barge_in_after_ms requires local audio bidi session"
         for step in test_case.get("steps", []):
@@ -2096,7 +2098,9 @@ class SimulationEvals(Apps):
                 if r.status == ExpectationStatus.MET
             )
             total_exp = len(conv.expectation_results)
-            declared_exp = self._declared_expectations_count(tc, conv)
+            declared_exp = self._declared_expectations_count(
+                tc, conv, include_tool_expectations=False
+            )
 
             passed = goals_completed == total_goals
             if declared_exp > 0 and total_exp == 0:
@@ -2120,16 +2124,6 @@ class SimulationEvals(Apps):
                     naturalness_note += f" | FAILED: {reason}"
                 if naturalness_result.passed is not None:
                     passed = passed and naturalness_result.passed
-
-            status = "PASS" if passed else "FAIL"
-            if parallel > 1 or not verbose:
-                print(
-                    f"  {status}  {label} | goals: "
-                    f"{goals_completed}/{total_goals} | "
-                    f"expectations: {expectations_met}/{total_exp} | "
-                    f"turns: {conv.current_turn} | {duration_s}s"
-                    f"{naturalness_note}"
-                )
 
             raw_turn_traces = getattr(
                 conv,
@@ -2220,6 +2214,32 @@ class SimulationEvals(Apps):
                     "sim_user_voice", voice_config.get("voice_name", "")
                 )
 
+            failed_checks = []
+            if tc.get("tool_expectations") and isinstance(result, dict):
+                from cxas_scrapi.evals import tool_expectations  # noqa: PLC0415
+
+                checks = tool_expectations.apply_to_result(tc, result)
+                failed_checks = [c for c in checks if not c.met]
+
+            status = "PASS" if result["passed"] else "FAIL"
+            if parallel > 1 or not verbose:
+                print(
+                    f"  {status}  {label} | goals: "
+                    f"{goals_completed}/{total_goals} | "
+                    f"expectations: {result['expectations']} | "
+                    f"turns: {conv.current_turn} | {duration_s}s"
+                    f"{naturalness_note}"
+                )
+                if failed_checks:
+                    reasons = "; ".join(
+                        f"{c.operator}: {c.justification}"
+                        for c in failed_checks
+                    )
+                    print(
+                        f"  FAIL  {name} (run {run_idx + 1}/{runs})"
+                        f" [tool_expectations] {reasons}"
+                    )
+
             return result
         except Exception as e:
             print(f"  ERROR  {label}: {e}")
@@ -2242,21 +2262,31 @@ class SimulationEvals(Apps):
 
     @staticmethod
     def _declared_expectations_count(
-        tc: dict[str, Any], conv: Any = None
+        tc: dict[str, Any],
+        conv: Any = None,
+        *,
+        include_tool_expectations: bool = True,
     ) -> int:
         tc_exp = len(tc.get("expectations") or []) + len(
             tc.get("audio_expectations") or []
         )
+        if include_tool_expectations:
+            tc_exp += len(tc.get("tool_expectations") or [])
         if tc_exp > 0:
             return tc_exp
         if conv is not None:
             conv_exp = getattr(conv, "expectations", None)
             conv_audio_exp = getattr(conv, "audio_expectations", None)
+            conv_tool_exp = getattr(conv, "tool_expectations", None)
             count = 0
             if isinstance(conv_exp, (list, tuple)):
                 count += len(conv_exp)
             if isinstance(conv_audio_exp, (list, tuple)):
                 count += len(conv_audio_exp)
+            if include_tool_expectations and isinstance(
+                conv_tool_exp, (list, tuple)
+            ):
+                count += len(conv_tool_exp)
             return count
         return 0
 
@@ -2443,7 +2473,7 @@ class SimulationEvals(Apps):
                     if progress_callback:
                         progress_callback(len(results), len(jobs))
             else:
-                max_workers = min(parallel, 25)
+                max_workers = parallel
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
                         executor.submit(
@@ -2665,7 +2695,9 @@ class SimulationEvals(Apps):
         )
 
         declared_by_name = {
-            tc.get("name", ""): self._declared_expectations_count(tc)
+            tc.get("name", ""): self._declared_expectations_count(
+                tc, include_tool_expectations=False
+            )
             for tc in test_cases
             if isinstance(tc, dict) and tc.get("name")
         }

@@ -54,7 +54,7 @@ CHANNEL_PROFILE_TYPES: dict[str, str] = {
     "WHATSAPP": "WHATSAPP",
 }
 
-# ChannelProfile types that are voice-first (used by lint rule T017).
+# ChannelProfile types that are voice-first (used by lint rule T019).
 VOICE_CHANNEL_PROFILE_TYPES: frozenset[str] = frozenset(
     {"GOOGLE_TELEPHONY_PLATFORM", "CONTACT_CENTER_AS_A_SERVICE"}
 )

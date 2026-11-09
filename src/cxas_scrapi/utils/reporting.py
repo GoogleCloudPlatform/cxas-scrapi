@@ -5240,6 +5240,7 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
             "common_config",
             "expectations",
             "common_expectations",
+            "tool_expectations",
             "naturalness_metric",
             "common_naturalness_metric",
         }

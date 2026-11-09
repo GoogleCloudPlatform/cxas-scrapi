@@ -91,8 +91,8 @@ def before_model_callback(callback_context: CallbackContext, llm_request: LlmReq
 
     return LlmResponse.from_parts(parts=[
         Part.from_text(text=escalation["text"]),
-        Part.from_function_call(
-            name="end_session",
-            args={"session_escalated": True},
+        Part.from_end_session(
+            reason=trigger_value,
+            escalated=True,
         ),
     ])

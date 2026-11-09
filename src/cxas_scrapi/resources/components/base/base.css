@@ -885,6 +885,24 @@ body.dark-mode .transcript .system {
   border-radius: 4px;
 }
 
+.expectation.tool-expectation {
+  border-left: 3px solid #8e44ad;
+}
+
+.badge-tool {
+  background: #8e44ad;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.72em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 4px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
 .step {
   margin: 6px 0;
   padding: 8px;

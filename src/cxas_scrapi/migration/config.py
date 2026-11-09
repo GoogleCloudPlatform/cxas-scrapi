@@ -15,6 +15,8 @@
 """Configuration constants for migration."""
 
 AGENT_MODELS = [
+    "gemini-composite-v2",
+    "gemini-composite-v1",
     "gemini-3.0-flash-001",
     "gemini-3.0-pro-001",
     "gemini-2.5-flash-001",
@@ -26,4 +28,4 @@ AGENT_MODELS = [
     "gemini-3.1-pro-preview",
 ]
 
-DEFAULT_MODEL = "gemini-3.1-flash-live"
+DEFAULT_MODEL = "gemini-composite-v2"

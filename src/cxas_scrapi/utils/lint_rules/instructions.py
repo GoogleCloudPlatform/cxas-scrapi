@@ -17,8 +17,11 @@
 Validates agent instruction files against CXAS design guide best practices.
 """
 
+import ast
+import contextlib
 import json
 import re
+import warnings
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (
@@ -352,6 +355,120 @@ class WrongToolSyntax(Rule):
         )
 
 
+def _extract_py_tool_refs_and_dags(
+    text: str, candidate_tools: set[str]
+) -> tuple[set[str], set[str]]:
+    """Extract candidate tool references and ``*_dag`` calls from Python AST."""
+    matched: set[str] = set()
+    dags: set[str] = set()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(text)
+    except SyntaxError:
+        for tool in candidate_tools:
+            if re.search(rf"\btools\.{re.escape(tool)}\b", text):
+                matched.add(tool)
+        for m in re.finditer(
+            r"\b(?:FunctionCall|from_function_call)\s*\(\s*(?:name\s*=\s*)?['\"](\w+)['\"]",
+            text,
+        ):
+            call_name = m.group(1)
+            if call_name in candidate_tools:
+                matched.add(call_name)
+            if call_name.endswith("_dag"):
+                dags.add(call_name)
+        for m in re.finditer(r"\btools\.(\w+_dag)\s*\(", text):
+            dags.add(m.group(1))
+        return matched, dags
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in ("tools", "async_tools")
+        ):
+            if node.attr in candidate_tools:
+                matched.add(node.attr)
+            if node.attr.endswith("_dag"):
+                dags.add(node.attr)
+        elif isinstance(node, ast.Call):
+            func_name = (
+                node.func.id
+                if isinstance(node.func, ast.Name)
+                else node.func.attr
+                if isinstance(node.func, ast.Attribute)
+                else None
+            )
+            if func_name in ("FunctionCall", "from_function_call"):
+                call_tool_name: str | None = None
+                for kw in node.keywords:
+                    if (
+                        kw.arg == "name"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, str)
+                    ):
+                        call_tool_name = kw.value.value
+                        break
+                if (
+                    call_tool_name is None
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    call_tool_name = node.args[0].value
+                if call_tool_name:
+                    if call_tool_name in candidate_tools:
+                        matched.add(call_tool_name)
+                    if call_tool_name.endswith("_dag"):
+                        dags.add(call_tool_name)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            s = node.value
+            matched |= _extract_tool_refs(s) & candidate_tools
+            for tool in candidate_tools - matched:
+                if re.search(rf"\b(?:async_)?tools\.{re.escape(tool)}\b", s):
+                    matched.add(tool)
+    return matched, dags
+
+
+def _collect_agent_callback_and_dag_tool_refs(
+    agent_dir: Path, app_root: Path, candidate_tools: set[str]
+) -> set[str]:
+    """Return tools referenced in agent callbacks or invoked DAG tools."""
+    if not candidate_tools or not agent_dir.exists():
+        return set()
+
+    found: set[str] = set()
+    dag_calls: set[str] = set()
+    for py_path in agent_dir.rglob("*.py"):
+        try:
+            text = py_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        matched, dags = _extract_py_tool_refs_and_dags(
+            text, candidate_tools - found
+        )
+        found |= matched
+        dag_calls |= dags
+
+    for dag_name in dag_calls:
+        dag_py = (
+            app_root / "tools" / dag_name / "python_function" / "python_code.py"
+        )
+        if not dag_py.exists():
+            continue
+        try:
+            dag_text = dag_py.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        matched, _ = _extract_py_tool_refs_and_dags(
+            dag_text, candidate_tools - found
+        )
+        found |= matched
+
+    return found
+
+
 @rule("instructions")
 class UnusedToolInConfig(Rule):
     id = "I012"
@@ -368,7 +485,17 @@ class UnusedToolInConfig(Rule):
 
         config_tools = set(config.get("tools", []))
         instruction_refs = _extract_tool_refs(content)
+        app_root = context.app_root or file_path.parent.parent.parent
+        global_inst = app_root / "global_instruction.txt"
+        if global_inst.exists():
+            with contextlib.suppress(OSError):
+                instruction_refs |= _extract_tool_refs(global_inst.read_text())
+
         unused = config_tools - instruction_refs - {"end_session"}
+        if unused:
+            unused -= _collect_agent_callback_and_dag_tool_refs(
+                file_path.parent, app_root, unused
+            )
 
         agent_json_rel = str(
             (file_path.parent / f"{file_path.parent.name}.json").relative_to(
@@ -478,7 +605,6 @@ class BannedLegacyXmlTags(Rule):
         "Persona",
         "Role",
         "General_Instruction",
-        "Context",
     )
 
     PROHIBITED_TAG_NAMES = (
@@ -510,16 +636,64 @@ class BannedLegacyXmlTags(Rule):
         re.IGNORECASE,
     )
 
+    _INLINE_SPAN_RE = re.compile(
+        r'```[\s\S]*?```|`[^`\n]*`|"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\''
+        r'|"[^"\n]*"|(?<!\w)\'[^\'\n]*\'(?!\w)'
+    )
+    _USER_TURN_RE = re.compile(
+        r"(?im)^[ \t]*(?:\[user\]|user)[ \t]*:"
+        r"(?:[^\n]*?(?:\n[ \t]*)?<context\b"
+        r"(?:(?!<context\b)[\s\S])*?</context>|[^\n]*)"
+    )
+
+    @classmethod
+    def _is_runtime_context_envelope_ref(
+        cls,
+        line: str,
+        start: int,
+        tag: str,
+        *,
+        abs_start: int | None = None,
+        excluded_spans: list[tuple[int, int]] | None = None,
+    ) -> bool:
+        m = re.match(r"<\s*/?\s*([A-Za-z_][\w-]*)", tag)
+        tag_name = m.group(1).lower() if m else ""
+        if tag_name != "context":
+            return False
+        if abs_start is not None and excluded_spans is not None:
+            return any(s <= abs_start < e for s, e in excluded_spans)
+        if cls._USER_TURN_RE.match(line):
+            return True
+        return any(
+            m.start() <= start < m.end()
+            for m in cls._INLINE_SPAN_RE.finditer(line)
+        )
+
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
         results = []
-        for line_num, line in enumerate(content.splitlines(), start=1):
+        excluded_spans = [
+            m.span() for m in self._INLINE_SPAN_RE.finditer(content)
+        ] + [m.span() for m in self._USER_TURN_RE.finditer(content)]
+        offset = 0
+        for line_num, raw_line in enumerate(
+            content.splitlines(keepends=True), start=1
+        ):
+            line = raw_line.rstrip("\r\n")
             for match in list(self._EXACT_PATTERN.finditer(line)) + list(
                 self._PROHIBITED_PATTERN.finditer(line)
             ):
                 tag = match.group(0)
+                if self._is_runtime_context_envelope_ref(
+                    line,
+                    match.start(),
+                    tag,
+                    abs_start=offset + match.start(),
+                    excluded_spans=excluded_spans,
+                ):
+                    continue
                 results.append(
                     self.make_result(
                         file=rel,
@@ -537,6 +711,7 @@ class BannedLegacyXmlTags(Rule):
                         ),
                     )
                 )
+            offset += len(raw_line)
         return results
 
 

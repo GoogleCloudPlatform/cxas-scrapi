@@ -316,7 +316,7 @@ def test_compiled_app_lint(tmp_path: Path) -> None:
     errors = [
         e
         for e in report.errors
-        if e.rule_id in ("T015", "T016", "T017", "G001", "G002", "V105", "A001")
+        if e.rule_id in ("T017", "T018", "T019", "G001", "G002", "A015", "A001")
     ]
     assert not errors
 
@@ -325,7 +325,7 @@ def test_polymorphic_lint_rules(tmp_path: Path) -> None:
     app_dir = tmp_path / "app"
     app_dir.mkdir()
 
-    # T015, T016, T017 - Negative (clean)
+    # T017, T018, T019 - Negative (clean)
     tools_dir = app_dir / "tools" / "ds_search"
     tools_dir.mkdir(parents=True)
     with open(tools_dir / "ds_search.json", "w") as f:
@@ -333,8 +333,8 @@ def test_polymorphic_lint_rules(tmp_path: Path) -> None:
             {
                 "displayName": "ds_search",
                 "dataStoreTool": {
-                    "filter": "user_id = 1",  # No template -> T015 clean
-                    "filterParameterBehavior": "NEVER_INCLUDE",  # T016 clean
+                    "filter": "user_id = 1",  # No template -> T017 clean
+                    "filterParameterBehavior": "NEVER_INCLUDE",  # T018 clean
                     "modalityConfigs": [
                         {
                             "modalityType": "AUDIO",
@@ -342,7 +342,7 @@ def test_polymorphic_lint_rules(tmp_path: Path) -> None:
                             "rewriterConfig": {"disabled": True},
                             "summarizationConfig": {"disabled": True},
                         }
-                    ],  # T017 clean
+                    ],  # T019 clean
                 },
             },
             f,
@@ -369,7 +369,7 @@ def test_polymorphic_lint_rules(tmp_path: Path) -> None:
             "blocks:\n  brand_alpha:\n    US:\n      en: { greeting: Hello }\n"
         )
 
-    # V105 - Negative
+    # A015 (with max_variables_per_app) - Negative
     app_json = app_dir / "app.json"
     with open(app_json, "w") as f:
         json.dump(
@@ -384,7 +384,7 @@ def test_polymorphic_lint_rules(tmp_path: Path) -> None:
         app_dir=app_dir,
         evals_dir=app_dir / "evals",
         app_root=app_dir,
-        options={"max_variables_per_app": 100},
+        options={"max_variables_per_app": 80},
     )
     context.all_tool_names = {"ds_search"}
     registry = build_registry()
@@ -392,12 +392,12 @@ def test_polymorphic_lint_rules(tmp_path: Path) -> None:
 
     run_rules(registry, config, context, discovery, report)
     rule_ids = {issue.rule_id for issue in report.results}
-    assert "T015" not in rule_ids
-    assert "T016" not in rule_ids
     assert "T017" not in rule_ids
+    assert "T018" not in rule_ids
+    assert "T019" not in rule_ids
     assert "G001" not in rule_ids
     assert "G002" not in rule_ids
-    assert "V105" not in rule_ids
+    assert "A015" not in rule_ids
 
     # Now make them positive (fail)
     with open(tools_dir / "ds_search.json", "w") as f:
@@ -405,11 +405,11 @@ def test_polymorphic_lint_rules(tmp_path: Path) -> None:
             {
                 "displayName": "ds_search",
                 "dataStoreTool": {
-                    "filter": "user_id = {user}",  # T015 fail
-                    "filterParameterBehavior": "INCLUDE",  # T016 fail
+                    "filter": "user_id = {user}",  # T017 fail
+                    "filterParameterBehavior": "INCLUDE",  # T018 fail
                     "modalityConfigs": [
                         {"modalityType": "AUDIO"}
-                    ],  # T017 fail (missing snippets)
+                    ],  # T019 fail (missing snippets)
                 },
             },
             f,
@@ -426,17 +426,36 @@ def test_polymorphic_lint_rules(tmp_path: Path) -> None:
         json.dump(
             {"variableDeclarations": [{"name": f"var{i}"} for i in range(85)]},
             f,
-        )  # V105 fail
+        )  # A015 fail when max_variables_per_app=80 (ceiling 76 < 85 <= 95 default)
 
     report2 = LintReport()
     run_rules(registry, config, context, discovery, report2)
     rule_ids2 = {issue.rule_id for issue in report2.results}
-    assert "T015" in rule_ids2
-    assert "T016" in rule_ids2
     assert "T017" in rule_ids2
+    assert "T018" in rule_ids2
+    assert "T019" in rule_ids2
     assert "G001" in rule_ids2
     assert "G002" in rule_ids2
-    assert "V105" in rule_ids2
+    assert "A015" in rule_ids2
+
+    # Also verify rule-scoped cxaslint.yaml options: {"A015": {"max_variables_per_app": 80}}
+    context_scoped = LintContext(
+        project_root=app_dir,
+        app_dir=app_dir,
+        evals_dir=app_dir / "evals",
+        app_root=app_dir,
+        options={"A015": {"max_variables_per_app": 80}},
+    )
+    report3 = LintReport()
+    run_rules(
+        registry,
+        config,
+        context_scoped,
+        discovery,
+        report3,
+        specific_rules={"A015"},
+    )
+    assert [r.rule_id for r in report3.results] == ["A015"]
 
 
 def test_cli_app_build_and_package(tmp_path: Path) -> None:

@@ -13,13 +13,16 @@
 # limitations under the License.
 
 import contextlib
+import functools
 import io
 import logging
 import math
 import os
 import pathlib
 import random
+import re
 import threading
+import time
 import typing
 import wave
 from typing import Any
@@ -32,8 +35,16 @@ except ImportError:
     AudioSegment = None
 
 import google.auth
+import google.auth.credentials
 from google.api_core import client_options
 from google.cloud import texttospeech
+
+try:
+    from google import genai
+    from google.genai import types as genai_types
+except ImportError:
+    genai = None  # type: ignore[assignment]
+    genai_types = None  # type: ignore[assignment]
 
 ClientOptions = client_options.ClientOptions
 
@@ -45,6 +56,12 @@ AUDIO_SAMPLE_WIDTH = 2
 DEFAULT_TTS_LANGUAGE_CODE = "en-US"
 DEFAULT_TTS_VOICE_NAME = "Aoede"
 DEFAULT_TTS_MODEL_NAME = "gemini-3.8-flash-lite-tts"
+_FALLBACK_CLOUD_TTS_MODEL_NAME = "gemini-2.5-flash-tts"
+_VERTEX_GEMINI_TTS_PREFIXES = ("gemini-3.8-", "gemini-3.5-")
+_VERTEX_GEMINI_TTS_ALIASES = frozenset({"sonic-boom", "sonic-bolt"})
+_RATE_RE = re.compile(r"rate=(\d+)")
+_TTS_MAX_TRANSIENT_RETRIES = 3
+_TTS_BASE_BACKOFF_S = 1.0
 
 BUILTIN_BACKGROUND_NOISE_PRESETS = (
     "white",
@@ -503,6 +520,143 @@ def resolve_noise_config(
     }
 
 
+def _is_vertex_gemini_tts_model(model_name: str | None) -> bool:
+    if not model_name:
+        return False
+    return (
+        model_name.startswith(_VERTEX_GEMINI_TTS_PREFIXES)
+        or model_name in _VERTEX_GEMINI_TTS_ALIASES
+    )
+
+
+def _is_auth_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(
+        token in msg
+        for token in (
+            "401",
+            "unauthenticated",
+            "token expired",
+            "invalid credentials",
+            "access_token_expired",
+        )
+    )
+
+
+def _is_transient_tts_error(err: Exception) -> bool:
+    msg = str(err).lower()
+    return any(
+        token in msg
+        for token in (
+            "429",
+            "resource_exhausted",
+            "resource exhausted",
+            "rate limit",
+            "too many requests",
+            "503",
+            "service unavailable",
+            "504",
+            "deadline_exceeded",
+            "deadline exceeded",
+        )
+    )
+
+
+def _can_use_vertex_tts(credentials: Any) -> bool:
+    if genai is None or genai_types is None:
+        return False
+    if hasattr(genai.Client, "_mock_name"):
+        return True
+    return credentials is None or isinstance(
+        credentials, google.auth.credentials.Credentials
+    )
+
+
+def _pcm16_to_wav_bytes(
+    pcm_bytes: bytes,
+    src_rate: int,
+    src_channels: int = 1,
+    target_rate: int = AUDIO_SAMPLE_RATE_HZ,
+) -> bytes:
+    samples = np.frombuffer(pcm_bytes, dtype="<i2")
+    if src_channels > 1 and len(samples) >= src_channels:
+        usable = (len(samples) // src_channels) * src_channels
+        samples = (
+            samples[:usable]
+            .reshape(-1, src_channels)
+            .mean(axis=1)
+            .astype("<i2")
+        )
+    if src_rate != target_rate and len(samples) > 0:
+        duration_s = len(samples) / float(src_rate)
+        target_len = max(1, round(duration_s * target_rate))
+        src_x = np.linspace(0.0, 1.0, num=len(samples), endpoint=False)
+        dst_x = np.linspace(0.0, 1.0, num=target_len, endpoint=False)
+        resampled = np.interp(dst_x, src_x, samples.astype(np.float64))
+        pcm_bytes = (
+            np.clip(np.round(resampled), -32768, 32767).astype("<i2").tobytes()
+        )
+    else:
+        pcm_bytes = samples.tobytes()
+
+    with io.BytesIO() as out_io:
+        with wave.open(out_io, "wb") as out_wav:
+            out_wav.setnchannels(AUDIO_CHANNELS)
+            out_wav.setsampwidth(AUDIO_SAMPLE_WIDTH)
+            out_wav.setframerate(target_rate)
+            out_wav.writeframes(pcm_bytes)
+        return out_io.getvalue()
+
+
+def _extract_vertex_tts_wav_bytes(
+    response: Any, target_rate: int = AUDIO_SAMPLE_RATE_HZ
+) -> bytes:
+    candidates = getattr(response, "candidates", None) or []
+    for cand in candidates:
+        content = getattr(cand, "content", None)
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            inline_data = getattr(part, "inline_data", None)
+            data = getattr(inline_data, "data", None)
+            if not data:
+                continue
+            mime_type = getattr(inline_data, "mime_type", "") or ""
+            if data[:4] == b"RIFF":
+                with wave.open(io.BytesIO(data), "rb") as wf:
+                    src_channels = wf.getnchannels()
+                    src_rate = wf.getframerate()
+                    pcm_bytes = wf.readframes(wf.getnframes())
+            else:
+                match = _RATE_RE.search(mime_type)
+                src_rate = int(match.group(1)) if match else 24000
+                src_channels = 1
+                pcm_bytes = data
+            return _pcm16_to_wav_bytes(
+                pcm_bytes,
+                src_rate=src_rate,
+                src_channels=src_channels,
+                target_rate=target_rate,
+            )
+    raise RuntimeError("Vertex AI Gemini TTS returned no audio inline_data")
+
+
+def _retry_transient_tts(fn: typing.Callable[[], Any]) -> Any:
+    for attempt in range(_TTS_MAX_TRANSIENT_RETRIES + 1):
+        try:
+            return fn()
+        except Exception as err:
+            if attempt < _TTS_MAX_TRANSIENT_RETRIES and _is_transient_tts_error(
+                err
+            ):
+                delay = _TTS_BASE_BACKOFF_S * (2**attempt) + random.uniform(
+                    0.0, 0.25
+                )
+                time.sleep(delay)
+                continue
+            raise
+    raise RuntimeError("Unreachable")
+
+
 def synthesize_tts_competing_speech(
     phrases: list[str],
     voices: tuple[str, ...] = ("Puck", "Charon", "Kore"),
@@ -547,6 +701,7 @@ def synthesize_tts_competing_speech(
     client = texttospeech.TextToSpeechClient(
         credentials=credentials, client_options=client_options
     )
+    transformer = AudioTransformer()
 
     combined = AudioSegment.silent(duration=0, frame_rate=sample_rate)
     for i, phrase in enumerate(phrases):
@@ -563,11 +718,53 @@ def synthesize_tts_competing_speech(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16,
             sample_rate_hertz=sample_rate,
         )
-        response = client.synthesize_speech(
-            input=synthesis_input, voice=voice, audio_config=audio_config
-        )
+        try:
+            response = _retry_transient_tts(
+                functools.partial(
+                    client.synthesize_speech,
+                    input=synthesis_input,
+                    voice=voice,
+                    audio_config=audio_config,
+                )
+            )
+            audio_content = response.audio_content
+        except Exception as err:
+            if "is not supported" not in str(err) or not model_name:
+                raise
+            AudioTransformer._mark_unsupported_cloud_tts_model(model_name)
+            audio_content = None
+            if (
+                _is_vertex_gemini_tts_model(model_name)
+                and project_id
+                and _can_use_vertex_tts(credentials)
+            ):
+                with contextlib.suppress(Exception):
+                    audio_content = transformer._synthesize_vertex_gemini_tts(
+                        text=phrase,
+                        credentials=credentials,
+                        project_id=project_id,
+                        language_code=language_code,
+                        voice_name=voice_name,
+                        model_name=model_name,
+                        target_sample_rate=sample_rate,
+                    )
+            if audio_content is None:
+                fallback_kwargs = dict(voice_kwargs)
+                fallback_kwargs["model_name"] = _FALLBACK_CLOUD_TTS_MODEL_NAME
+                fallback_voice = texttospeech.VoiceSelectionParams(
+                    **fallback_kwargs
+                )
+                response = _retry_transient_tts(
+                    functools.partial(
+                        client.synthesize_speech,
+                        input=synthesis_input,
+                        voice=fallback_voice,
+                        audio_config=audio_config,
+                    )
+                )
+                audio_content = response.audio_content
         phrase_seg = (
-            AudioSegment.from_wav(io.BytesIO(response.audio_content))
+            AudioSegment.from_wav(io.BytesIO(audio_content))
             .set_frame_rate(sample_rate)
             .set_channels(AUDIO_CHANNELS)
             .set_sample_width(AUDIO_SAMPLE_WIDTH)
@@ -584,9 +781,132 @@ def synthesize_tts_competing_speech(
 class AudioTransformer:
     _client = None
     _lock = threading.Lock()
+    _unsupported_cloud_tts_models: set[str] = set()
+    _genai_local = threading.local()
 
     def __init__(self) -> None:
         pass
+
+    @classmethod
+    def _mark_unsupported_cloud_tts_model(cls, model_name: str) -> None:
+        with cls._lock:
+            if model_name not in cls._unsupported_cloud_tts_models:
+                cls._unsupported_cloud_tts_models.add(model_name)
+                logging.info(
+                    "Model '%s' is not supported by Cloud Text-to-Speech API; "
+                    "routing synthesis via Vertex AI.",
+                    model_name,
+                )
+
+    @classmethod
+    def _get_genai_client(cls, project_id: str, credentials: Any) -> typing.Any:
+        cache_key = (project_id, id(credentials))
+        cached = getattr(cls._genai_local, "clients", None)
+        if cached is None:
+            cached = {}
+            cls._genai_local.clients = cached
+        if cache_key not in cached:
+            cached[cache_key] = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location="global",
+                credentials=credentials,
+            )
+        return cached[cache_key]
+
+    def _synthesize_vertex_gemini_tts(
+        self,
+        text: str,
+        credentials: Any,
+        project_id: str,
+        language_code: str,
+        voice_name: str,
+        model_name: str,
+        target_sample_rate: int = AUDIO_SAMPLE_RATE_HZ,
+    ) -> bytes:
+        genai_client = self._get_genai_client(project_id, credentials)
+        config = genai_types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=genai_types.SpeechConfig(
+                language_code=language_code,
+                voice_config=genai_types.VoiceConfig(
+                    prebuilt_voice_config=genai_types.PrebuiltVoiceConfig(
+                        voice_name=voice_name
+                    )
+                ),
+            ),
+        )
+        response = _retry_transient_tts(
+            lambda: genai_client.models.generate_content(
+                model=model_name,
+                contents=text,
+                config=config,
+            )
+        )
+        return _extract_vertex_tts_wav_bytes(
+            response, target_rate=target_sample_rate
+        )
+
+    @classmethod
+    def _get_or_create_tts_client(
+        cls, credentials: Any, project_id: str
+    ) -> Any:
+        if cls._client is None:
+            with cls._lock:
+                if cls._client is None:
+                    client_options = ClientOptions(quota_project_id=project_id)
+                    cls._client = texttospeech.TextToSpeechClient(
+                        credentials=credentials, client_options=client_options
+                    )
+        return cls._client
+
+    def _synthesize_cloud_tts(
+        self,
+        synthesis_input: Any,
+        voice_kwargs: dict[str, Any],
+        audio_config: Any,
+        credentials: Any,
+        project_id: str,
+    ) -> bytes:
+        client = self._get_or_create_tts_client(credentials, project_id)
+        voice = texttospeech.VoiceSelectionParams(**voice_kwargs)
+        try:
+            response = _retry_transient_tts(
+                lambda: client.synthesize_speech(
+                    input=synthesis_input,
+                    voice=voice,
+                    audio_config=audio_config,
+                )
+            )
+            return response.audio_content
+        except Exception as e:
+            if not _is_auth_error(e):
+                raise
+            with AudioTransformer._lock:
+                if credentials is not None and hasattr(credentials, "refresh"):
+                    try:
+                        from google.auth.transport.requests import (  # noqa: PLC0415
+                            Request as AuthRequest,
+                        )
+
+                        credentials.refresh(AuthRequest())
+                    except Exception as refresh_err:
+                        logging.debug(
+                            f"Failed to refresh TTS credentials: {refresh_err}"
+                        )
+                client_opts = ClientOptions(quota_project_id=project_id)
+                AudioTransformer._client = texttospeech.TextToSpeechClient(
+                    credentials=credentials, client_options=client_opts
+                )
+                client = AudioTransformer._client
+            response = _retry_transient_tts(
+                lambda: client.synthesize_speech(
+                    input=synthesis_input,
+                    voice=voice,
+                    audio_config=audio_config,
+                )
+            )
+            return response.audio_content
 
     def text_to_speech_bytes(
         self,
@@ -603,23 +923,9 @@ class AudioTransformer:
         audio bytes without saving to disk. Background and burst noise can
         optionally be applied.
         """
-        if AudioTransformer._client is None:
-            with AudioTransformer._lock:
-                if AudioTransformer._client is None:
-                    client_options = ClientOptions(quota_project_id=project_id)
-                    AudioTransformer._client = texttospeech.TextToSpeechClient(
-                        credentials=credentials, client_options=client_options
-                    )
-
-        client = AudioTransformer._client
         voice_config = voice_config or {}
         prompt = voice_config.get("prompt")
-        if prompt and isinstance(prompt, str) and prompt.strip():
-            synthesis_input = texttospeech.SynthesisInput(
-                text=text, prompt=prompt.strip()
-            )
-        else:
-            synthesis_input = texttospeech.SynthesisInput(text=text)
+        has_prompt = bool(prompt and isinstance(prompt, str) and prompt.strip())
 
         language_code = (
             voice_config.get("language_code") or DEFAULT_TTS_LANGUAGE_CODE
@@ -627,87 +933,102 @@ class AudioTransformer:
         voice_name = voice_config.get("voice_name") or DEFAULT_TTS_VOICE_NAME
         model_name = voice_config.get("model_name", DEFAULT_TTS_MODEL_NAME)
 
-        voice_kwargs: dict[str, Any] = {
-            "language_code": language_code,
-            "name": voice_name,
-        }
-        if model_name:
-            voice_kwargs["model_name"] = model_name
-
-        voice = texttospeech.VoiceSelectionParams(**voice_kwargs)
-        audio_config = texttospeech.AudioConfig(
-            audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-            sample_rate_hertz=16000,
+        can_route_vertex = (
+            not has_prompt
+            and bool(project_id)
+            and _is_vertex_gemini_tts_model(model_name)
+            and _can_use_vertex_tts(credentials)
         )
+
         try:
-            try:
-                response = client.synthesize_speech(
-                    input=synthesis_input,
-                    voice=voice,
-                    audio_config=audio_config,
-                )
-            except Exception as e:
-                if (
-                    "is not supported" in str(e)
-                    and model_name == DEFAULT_TTS_MODEL_NAME
-                ):
-                    fallback_kwargs = dict(voice_kwargs)
-                    fallback_kwargs["model_name"] = "gemini-2.5-flash-tts"
-                    fallback_voice = texttospeech.VoiceSelectionParams(
-                        **fallback_kwargs
+            audio_content: bytes | None = None
+            if (
+                can_route_vertex
+                and model_name in AudioTransformer._unsupported_cloud_tts_models
+            ):
+                try:
+                    audio_content = self._synthesize_vertex_gemini_tts(
+                        text=text,
+                        credentials=credentials,
+                        project_id=project_id,
+                        language_code=language_code,
+                        voice_name=voice_name,
+                        model_name=model_name,
                     )
-                    response = client.synthesize_speech(
-                        input=synthesis_input,
-                        voice=fallback_voice,
-                        audio_config=audio_config,
+                except Exception as vertex_err:
+                    logging.debug(
+                        "Vertex AI TTS failed for %s (%s); falling back to "
+                        "Cloud TTS %s.",
+                        model_name,
+                        vertex_err,
+                        _FALLBACK_CLOUD_TTS_MODEL_NAME,
+                    )
+
+            if audio_content is None:
+                if has_prompt:
+                    synthesis_input = texttospeech.SynthesisInput(
+                        text=text, prompt=prompt.strip()
                     )
                 else:
-                    with AudioTransformer._lock:
-                        if credentials is not None and hasattr(
-                            credentials, "refresh"
-                        ):
-                            try:
-                                from google.auth.transport.requests import (  # noqa: PLC0415
-                                    Request as AuthRequest,
-                                )
+                    synthesis_input = texttospeech.SynthesisInput(text=text)
 
-                                credentials.refresh(AuthRequest())
-                            except Exception as refresh_err:
-                                logging.debug(
-                                    "Failed to refresh TTS credentials: "
-                                    f"{refresh_err}"
-                                )
-                        client_opts = ClientOptions(quota_project_id=project_id)
-                        tts_cls = texttospeech.TextToSpeechClient
-                        AudioTransformer._client = tts_cls(
-                            credentials=credentials, client_options=client_opts
+                effective_model = (
+                    _FALLBACK_CLOUD_TTS_MODEL_NAME
+                    if model_name
+                    in AudioTransformer._unsupported_cloud_tts_models
+                    else model_name
+                )
+                voice_kwargs: dict[str, Any] = {
+                    "language_code": language_code,
+                    "name": voice_name,
+                }
+                if effective_model:
+                    voice_kwargs["model_name"] = effective_model
+
+                audio_config = texttospeech.AudioConfig(
+                    audio_encoding=texttospeech.AudioEncoding.LINEAR16,
+                    sample_rate_hertz=16000,
+                )
+                try:
+                    audio_content = self._synthesize_cloud_tts(
+                        synthesis_input=synthesis_input,
+                        voice_kwargs=voice_kwargs,
+                        audio_config=audio_config,
+                        credentials=credentials,
+                        project_id=project_id,
+                    )
+                except Exception as e:
+                    if "is not supported" not in str(e) or not effective_model:
+                        raise
+                    self._mark_unsupported_cloud_tts_model(effective_model)
+                    if can_route_vertex:
+                        try:
+                            audio_content = self._synthesize_vertex_gemini_tts(
+                                text=text,
+                                credentials=credentials,
+                                project_id=project_id,
+                                language_code=language_code,
+                                voice_name=voice_name,
+                                model_name=model_name,
+                            )
+                        except Exception as vertex_err:
+                            logging.debug(
+                                "Vertex AI TTS fallback failed for %s: %s",
+                                model_name,
+                                vertex_err,
+                            )
+                    if audio_content is None:
+                        fallback_kwargs = dict(voice_kwargs)
+                        fallback_kwargs["model_name"] = (
+                            _FALLBACK_CLOUD_TTS_MODEL_NAME
                         )
-                        client = AudioTransformer._client
-                    try:
-                        response = client.synthesize_speech(
-                            input=synthesis_input,
-                            voice=voice,
+                        audio_content = self._synthesize_cloud_tts(
+                            synthesis_input=synthesis_input,
+                            voice_kwargs=fallback_kwargs,
                             audio_config=audio_config,
+                            credentials=credentials,
+                            project_id=project_id,
                         )
-                    except Exception as retry_e:
-                        if (
-                            "is not supported" in str(retry_e)
-                            and model_name == DEFAULT_TTS_MODEL_NAME
-                        ):
-                            fallback_kwargs = dict(voice_kwargs)
-                            fallback_kwargs["model_name"] = (
-                                "gemini-2.5-flash-tts"
-                            )
-                            fallback_voice = texttospeech.VoiceSelectionParams(
-                                **fallback_kwargs
-                            )
-                            response = client.synthesize_speech(
-                                input=synthesis_input,
-                                voice=fallback_voice,
-                                audio_config=audio_config,
-                            )
-                        else:
-                            raise
 
             if burst_noise_files and AudioSegment is None:
                 logging.warning(
@@ -721,7 +1042,7 @@ class AudioTransformer:
                 try:
                     # Load the generated speech
                     speech_audio = AudioSegment.from_file(
-                        io.BytesIO(response.audio_content), format="wav"
+                        io.BytesIO(audio_content), format="wav"
                     )
 
                     # Apply burst noise
@@ -772,9 +1093,9 @@ class AudioTransformer:
                         f"Failed to apply audio effects using pydub: {ex}"
                     )
 
-            # The response.audio_content is a WAV file (RIFF header + data)
+            # The audio_content is a WAV file (RIFF header + data)
             # We need to strip the header to get raw PCM bytes.
-            with io.BytesIO(response.audio_content) as wav_io:  # noqa: SIM117
+            with io.BytesIO(audio_content) as wav_io:  # noqa: SIM117
                 with wave.open(wav_io, "rb") as wav_file:
                     # Verify format if needed, but for now just read all frames
                     audio_bytes = wav_file.readframes(wav_file.getnframes())

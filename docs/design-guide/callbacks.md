@@ -295,11 +295,11 @@ When `before_model_callback` returns an `LlmResponse` containing **only text/med
 ```python
 # Pattern: Synchronous Tool Execution + Text-Only Preemption
 def before_model_callback(callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
-    variables = callback_context.variables
-    if variables.get("nextAction") == "BAN Confirm Rejected":
+    state = callback_context.state
+    if state.get("nextAction") == "BAN Confirm Rejected":
         # 1. Execute tool or update state synchronously in Python sandbox
-        variables["nextAction"] = "Enter Account or ITN"
-        variables["idNumber"] = ""
+        state["nextAction"] = "Enter Account or ITN"
+        state["idNumber"] = ""
 
         # 2. Return ONLY text parts -- LLM is COMPLETELY bypassed
         return LlmResponse.from_parts(
@@ -312,26 +312,32 @@ def before_model_callback(callback_context: CallbackContext, llm_request: LlmReq
 
 ### 2. Platform Tool Delegation & Model Synthesis (Invokes LLM)
 When `before_model_callback` returns an `LlmResponse` containing a **`Part.from_function_call(...)`**:
-1. CXAS delivers any prefix text to the user/TTS (e.g., using `partial=True` for latency masking audio fillers).
-2. CXAS schedules and executes the tool via the platform runtime.
+1. CXAS delivers any prefix `Part.from_text(...)` to the user/TTS as a spoken latency filler while the tool executes.
+2. CXAS schedules and executes the tool via the platform runtime (note: Python tools **must** declare a `-> dict` return annotation for callback `Part.from_function_call` dispatch to succeed).
 3. Upon tool completion, CXAS feeds the resulting `toolResponse` back into the **LLM**.
 4. The LLM runs a model turn to interpret the tool output and formulate the final response.
 
 ```python
-# Pattern: Audio Filler + Asynchronous Tool Delegation for LLM Reasoning
+# Pattern: Audio Filler + Tool Delegation for LLM Reasoning
 def before_model_callback(callback_context: CallbackContext, llm_request: LlmRequest) -> Optional[LlmResponse]:
-    if callback_context.variables.get("needs_lookup") == "true":
-        callback_context.variables["needs_lookup"] = "false"
+    state = callback_context.state
+    if state.get("needs_lookup") == "true":
+        state["needs_lookup"] = "false"
         return LlmResponse.from_parts(
             parts=[
-                # Audio filler spoken while tool executes
-                Part.from_text(text="Please give me just a moment while I pull up your records.", partial=True),
+                # Audio filler spoken while tool executes (do NOT pass partial=True!)
+                Part.from_text(text="Please give me just a moment while I pull up your records."),
                 # Tool dispatched by CES runtime -> output fed back to LLM
                 Part.from_function_call(name="fetch_customer_record", args={"account_id": "ACC123"})
             ]
         )
     return None
 ```
+
+!!! danger "Critical `LlmResponse` Voice & Runtime Invariants"
+    - **`Part.from_text(text=...)` has no `partial` argument:** Passing `partial=True` to `Part.from_text` raises `TypeError` at runtime.
+    - **Never set `response.partial = True` with `function_call` or inline audio tags:** Setting `response.partial = True` on an `LlmResponse` that contains a `Part.from_function_call(...)` **silently drops the tool call**. Combining `response.partial = True` with inline TTS tags (`<warm>`, `<prosody ...>`) causes TTS to read tag names aloud and clips audio at ~1.9 seconds.
+    - **Silent close on caller turns requires `Part.from_text(text="")`, NEVER `parts=[]`:** When closing a turn silently (for example, after a Two-Part Reply already spoke the answer before a state-write tool), return `LlmResponse.from_parts(parts=[Part.from_text(text="")])`. Returning `LlmResponse.from_parts(parts=[])` on a caller turn erases the caller's turn and leaves a voice session permanently deaf (`parts=[]` is valid **only** on `<context>no user activity detected...</context>` inactivity ticks).
 
 ### ⚠️ The `EMPTY_RESPONSE` Voice Gotcha
 If your intent was to deterministically ask a question and wait for the caller, but you return `Part.from_function_call(...)` alongside text (or modify state and return `None`), the platform triggers a post-tool LLM turn. 

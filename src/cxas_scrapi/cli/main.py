@@ -2811,8 +2811,8 @@ def get_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Target model (e.g., gemini-composite-v1, gemini-2.5-flash). "
-            "If omitted, inferred from app.json."
+            "Target model (e.g., gemini-composite-v2, gemini-3.1-flash-live, "
+            "gemini-3-flash). If omitted, inferred from app.json."
         ),
     )
     parser_lint.add_argument(

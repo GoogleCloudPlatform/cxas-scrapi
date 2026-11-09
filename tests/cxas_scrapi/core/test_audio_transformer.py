@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import io
+import threading
 import typing
 import wave
 from unittest.mock import MagicMock, patch
@@ -34,6 +35,8 @@ from cxas_scrapi.core.audio_transformer import (
 class TestAudioTransformer:
     def setup_method(self) -> None:
         AudioTransformer._client = None
+        AudioTransformer._unsupported_cloud_tts_models.clear()
+        AudioTransformer._genai_local = threading.local()
         self.transformer = AudioTransformer()
 
     @patch("cxas_scrapi.core.audio_transformer.texttospeech")
@@ -442,6 +445,132 @@ class TestAudioTransformer:
         assert result["audio_bytes"] == b"recovered_audio_"
         creds.refresh.assert_called_once_with(mock_auth_request.return_value)
         assert mock_tts.TextToSpeechClient.call_count == 2
+
+    @patch("cxas_scrapi.core.audio_transformer.time.sleep")
+    @patch("cxas_scrapi.core.audio_transformer.texttospeech")
+    def test_text_to_speech_bytes_retries_429_without_client_recreation(
+        self, mock_tts: typing.Any, mock_sleep: typing.Any
+    ) -> None:
+        mock_client = MagicMock()
+        mock_tts.TextToSpeechClient.return_value = mock_client
+
+        with io.BytesIO() as wav_io:
+            with wave.open(wav_io, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(16000)
+                wav_file.writeframes(b"retried_audio_")
+            wav_bytes = wav_io.getvalue()
+
+        mock_response = MagicMock()
+        mock_response.audio_content = wav_bytes
+        mock_client.synthesize_speech.side_effect = [
+            RuntimeError("429 ResourceExhausted: rate limit exceeded"),
+            mock_response,
+        ]
+
+        creds = MagicMock()
+        result = self.transformer.text_to_speech_bytes(
+            text="transient retry",
+            credentials=creds,
+            project_id="test-project",
+        )
+
+        assert result["audio_bytes"] == b"retried_audio_"
+        creds.refresh.assert_not_called()
+        mock_tts.TextToSpeechClient.assert_called_once()
+        assert mock_client.synthesize_speech.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @patch("cxas_scrapi.core.audio_transformer.genai")
+    @patch("cxas_scrapi.core.audio_transformer.texttospeech")
+    def test_text_to_speech_bytes_routes_vertex_and_caches_unsupported_model(
+        self, mock_tts: typing.Any, mock_genai: typing.Any
+    ) -> None:
+        mock_tts_client = MagicMock()
+        mock_tts.TextToSpeechClient.return_value = mock_tts_client
+        mock_tts_client.synthesize_speech.side_effect = RuntimeError(
+            "400 The model 'gemini-3.8-flash-lite-tts' is not supported."
+        )
+
+        with io.BytesIO() as wav_io:
+            with wave.open(wav_io, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(24000)
+                wav_file.writeframes(b"\x10\x00" * 2400)
+            vertex_wav_24k = wav_io.getvalue()
+
+        mock_part = MagicMock()
+        mock_part.inline_data.data = vertex_wav_24k
+        mock_part.inline_data.mime_type = "audio/wav"
+        mock_cand = MagicMock()
+        mock_cand.content.parts = [mock_part]
+        mock_vertex_resp = MagicMock()
+        mock_vertex_resp.candidates = [mock_cand]
+
+        mock_genai_client = MagicMock()
+        mock_genai_client.models.generate_content.return_value = (
+            mock_vertex_resp
+        )
+        mock_genai.Client.return_value = mock_genai_client
+
+        creds = MagicMock()
+        first = self.transformer.text_to_speech_bytes(
+            text="first utterance",
+            credentials=creds,
+            project_id="test-project",
+        )
+        second = self.transformer.text_to_speech_bytes(
+            text="second utterance",
+            credentials=creds,
+            project_id="test-project",
+        )
+
+        assert first["audio_bytes"] is not None
+        assert len(first["audio_bytes"]) == 1600 * 2
+        assert second["audio_bytes"] is not None
+        assert len(second["audio_bytes"]) == 1600 * 2
+        assert mock_tts_client.synthesize_speech.call_count == 1
+        assert mock_genai_client.models.generate_content.call_count == 2
+        mock_genai.Client.assert_called_once_with(
+            vertexai=True,
+            project="test-project",
+            location="global",
+            credentials=creds,
+        )
+
+    @patch("cxas_scrapi.core.audio_transformer.genai")
+    @patch("cxas_scrapi.core.audio_transformer.texttospeech")
+    def test_text_to_speech_bytes_vertex_raw_l16_pcm(
+        self, mock_tts: typing.Any, mock_genai: typing.Any
+    ) -> None:
+        AudioTransformer._unsupported_cloud_tts_models.add(
+            "gemini-3.8-flash-lite-tts"
+        )
+        mock_part = MagicMock()
+        mock_part.inline_data.data = b"\x20\x00" * 2400
+        mock_part.inline_data.mime_type = "audio/L16;codec=pcm;rate=24000"
+        mock_cand = MagicMock()
+        mock_cand.content.parts = [mock_part]
+        mock_vertex_resp = MagicMock()
+        mock_vertex_resp.candidates = [mock_cand]
+
+        mock_genai_client = MagicMock()
+        mock_genai_client.models.generate_content.return_value = (
+            mock_vertex_resp
+        )
+        mock_genai.Client.return_value = mock_genai_client
+
+        res = self.transformer.text_to_speech_bytes(
+            text="raw pcm utterance",
+            credentials=MagicMock(),
+            project_id="test-project",
+        )
+
+        assert res["audio_bytes"] is not None
+        assert len(res["audio_bytes"]) == 1600 * 2
+        mock_tts.TextToSpeechClient.assert_not_called()
 
     def test_load_background_noise_presets(self) -> None:
         assert len(BUILTIN_BACKGROUND_NOISE_PRESETS) == 13
