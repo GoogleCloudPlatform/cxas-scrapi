@@ -418,6 +418,56 @@ def test_generate_combined_html_report(tmp_path: typing.Any) -> None:
         assert "test_callback" in content
 
 
+def test_generate_combined_html_report_renders_tool_expectations(
+    tmp_path: typing.Any,
+) -> None:
+    output_path = os.path.join(tmp_path, "report_tool_exp.html")
+    sim_results = [
+        {
+            "name": "test_sim_tools",
+            "passed": True,
+            "run": 1,
+            "duration_s": 2.0,
+            "goals": "1/1",
+            "expectations": "2/2",
+            "turns": 1,
+            "session_id": "sess_tool",
+            "session_parameters": {},
+            "step_details": [],
+            "expectation_details": [
+                {
+                    "expectation": "Agent greets caller",
+                    "status": "Met",
+                    "justification": "Greeting present.",
+                },
+                {
+                    "expectation": "[tool] lookup_account is called",
+                    "status": "Met",
+                    "justification": "lookup_account was called 1 time(s)",
+                },
+            ],
+            "detailed_trace": ["User: hi", "Agent Text: hello"],
+        }
+    ]
+
+    generate_combined_html_report(
+        golden_results=[],
+        sim_results=sim_results,
+        tool_results=[],
+        callback_results=[],
+        output_path=output_path,
+        app_name="projects/test-proj/locations/global/apps/test-app",
+    )
+
+    assert os.path.exists(output_path)
+    with open(output_path, encoding="utf-8") as f:
+        content = f.read()
+        assert "tool-expectation" in content
+        assert "badge-tool" in content
+        assert "[tool]" in content
+        assert "lookup_account is called" in content
+
+
 def test_generate_combined_html_report_renders_background_noise(
     tmp_path: typing.Any,
 ) -> None:
@@ -1420,6 +1470,27 @@ evals:
             "The agent welcomes the user",
             "The agent behaves politely",
         ]
+
+
+def test_load_sim_test_cases_preserves_tool_expectations() -> None:
+    yaml_data = """
+evals:
+  - name: sim1
+    session_params:
+      user_id: "12345"
+    tool_expectations:
+      - type: tool_output
+        tool: lookup_account
+        result: {status: "found"}
+"""
+    with patch("builtins.open", mock_open(read_data=yaml_data)):
+        cases = _load_sim_test_cases("dummy.yaml")
+
+        assert len(cases) == 1
+        assert "tool_expectations" in cases[0]
+        assert len(cases[0]["tool_expectations"]) == 1
+        assert cases[0]["tool_expectations"][0]["tool"] == "lookup_account"
+        assert "tool_expectations" not in cases[0].get("session_params", {})
 
 
 def test_load_sim_test_cases_without_common_naturalness() -> None:

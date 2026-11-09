@@ -581,8 +581,8 @@ Integration Specialist.
       `llm_response: LlmResponse) -> Optional[LlmResponse]:`
 
     **Accessing Context & State:**
-    - Get variable: `val = callback_context.variables.get('key')`
-    - Set variable: `callback_context.variables['key'] = new_val` (Do not
+    - Get variable: `val = callback_context.state.get('key')`
+    - Set variable: `callback_context.state['key'] = new_val` (Do not
       mutate nested dicts directly; reassign the whole value).
 
     **Method Restriction Constraint:**
@@ -618,19 +618,19 @@ Integration Specialist.
     ```
 
     **PATTERN C: Deterministic Greeting (before_model_callback)**
-    If the agent needs to send a canned response on the first turn, use a state
-    variable check. Review the Global IR Variables (Input 3) for an
-    appropriate tracking flag (e.g., `first_turn` or `session_started`).
-    Provide a default of `True` if it's the first execution.
+    If the agent needs to send a canned response on session start, intercept
+    `<event>session start</event>` on `callback_context.get_last_user_input()`
+    and return `Part.from_customized_response` (or `Part.from_text`) directly so
+    CXAS speaks the greeting and waits for caller speech.
     ```python
-    if callback_context.variables.get("first_turn", True):
-        callback_context.variables["first_turn"] = False
-        response = LlmResponse.from_parts(
-            [Part.from_text("Hello, how can I help?")]
-        )
-        # Forces the agent to continue processing after the response
-        response.partial = True
-        return response
+    for part in callback_context.get_last_user_input():
+        if (part.text_or_transcript() or "") == "<event>session start</event>":
+            return LlmResponse.from_parts(parts=[
+                Part.from_customized_response(
+                    content="Hello, how can I help?",
+                    disable_barge_in=False,
+                )
+            ])
     ```
 
     **PATTERN D: Disallow Barge-in / Custom Audio (before_model_callback)**
@@ -645,20 +645,21 @@ Integration Specialist.
 
     **PATTERN E: Custom Response for No-Input / Silence Timeout
     (before_model_callback)**
-    Check whether input was received by the user, track retries in the context variables,
+    Check whether input was received by the user, track retries in `callback_context.state`,
     and conditionally provide a response or escalate if max retries are reached.
     ```python
     for part in callback_context.get_last_user_input():
-        if part.text and "no user activity detected" in part.text:
-            retry_count = callback_context.variables.get("no_input_retry_count", 0) + 1
-            callback_context.variables["no_input_retry_count"] = retry_count
+        text_val = part.text_or_transcript() or ""
+        if "no user activity detected" in text_val.lower():
+            retry_count = int(callback_context.state.get("no_input_retry_count", 0)) + 1
+            callback_context.state["no_input_retry_count"] = retry_count
             if retry_count >= 3:
                 return LlmResponse.from_parts(parts=[
-                    Part.from_text("We haven't heard from you. Let me transfer you to an agent."),
+                    Part.from_text(text="We haven't heard from you. Let me transfer you to an agent."),
                     Part.from_agent_transfer(agent="escalation_agent")
                 ])
             return LlmResponse.from_parts(
-                parts=[Part.from_text("Hi, are you still there?")]
+                parts=[Part.from_text(text="Hi, are you still there?")]
             )
     ```
 
@@ -1409,10 +1410,10 @@ and CXAS Architect.
            - Example Callback Implementation to assume:
              ```python
              for part in callback_context.get_last_user_input():
-                 text_input = part.text.lower() if part.text else ""
+                 text_input = (part.text_or_transcript() or "").lower()
                  if "no user activity detected" in text_input or "sys.no-input" in text_input or "sys.no-match" in text_input or text_input.strip() == "":
-                     retry = callback_context.variables.get("no_input_retry_count", 0) + 1
-                     callback_context.variables["no_input_retry_count"] = retry
+                     retry = int(callback_context.state.get("no_input_retry_count", 0)) + 1
+                     callback_context.state["no_input_retry_count"] = retry
                      if retry >= 3:
                          # Customize text verbatim from source agent's final transfer message
                          return LlmResponse.from_parts([

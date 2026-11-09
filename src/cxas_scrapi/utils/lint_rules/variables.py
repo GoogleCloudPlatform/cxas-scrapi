@@ -24,6 +24,7 @@ import ast
 import json  # noqa: PLC0415
 import re
 import typing
+import warnings
 from pathlib import Path
 
 import yaml  # noqa: PLC0415
@@ -50,8 +51,9 @@ SCHEMA_TYPE_TO_PY = {
     "ARRAY": ("list",),
 }
 
-# Builtin instruction variables that bypass declaration checks.
-INSTRUCTION_BUILTINS = {"current_date"}
+# Builtin CES runtime variables/state keys populated by the platform.
+INSTRUCTION_BUILTINS = {"_session", "current_date", "session_metadata"}
+STATE_BUILTINS = INSTRUCTION_BUILTINS
 
 # Template ref pattern — matches single {var} and double {{var}} syntax (plus
 # dotted paths like {var.child} and {{var.child}}). Excludes {@TOOL: name}
@@ -60,7 +62,15 @@ TEMPLATE_RE = re.compile(r"\{{1,2}(?!@)([a-zA-Z_][\w.]*)\}{1,2}")
 
 # Eval YAML keys that contain nested var assignments shaped like
 # ``{var_name: {nested_key: value, ...}, ...}``.
-EVAL_VAR_KEYS = ("variables", "session_parameters", "common_session_parameters")
+EVAL_VAR_KEYS = (
+    "variables",
+    "session_parameters",
+    "sessionParameters",
+    "common_session_parameters",
+    "commonSessionParameters",
+    "inject_variables",
+    "injectVariables",
+)
 
 
 def _resolve_app_root(context: LintContext) -> Path | None:
@@ -109,11 +119,18 @@ def _load_var_schema(context: LintContext) -> dict:
     if key in _SCHEMA_CACHE:
         return _SCHEMA_CACHE[key]
     cfg = _load_app_config(app_root)
-    decls = (
-        cfg.get("variableDeclarations")
-        or cfg.get("variable_declarations")
-        or []
-    )
+    decls = [
+        *(
+            cfg.get("variableDeclarations")
+            or cfg.get("variable_declarations")
+            or []
+        ),
+        *(
+            cfg.get("predefinedVariableDeclarations")
+            or cfg.get("predefined_variable_declarations")
+            or []
+        ),
+    ]
     schema: dict[str, dict] = {}
     for d in decls:
         if isinstance(d, dict):
@@ -447,7 +464,9 @@ def _collect_state_accesses(
     content: str,
 ) -> list[tuple[str, str, int, str | None]]:
     try:
-        tree = ast.parse(content)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(content)
     except SyntaxError:
         return []
     visitor = _StateAccessVisitor()
@@ -529,13 +548,55 @@ def _strip_inline_examples(content: str) -> str:
 def _collect_template_refs(content: str) -> list[tuple[str, int]]:
     stripped = _strip_inline_examples(content)
     refs = []
+    seen: set[tuple[str, int]] = set()
     for m in TEMPLATE_RE.finditer(stripped):
-        ref = m.group(1)  # noqa: B023
-        if ref in INSTRUCTION_BUILTINS:
+        ref = m.group(1)
+        if ref.split(".")[0] in INSTRUCTION_BUILTINS:
             continue
         line = stripped[: m.start()].count("\n") + 1
+        if (ref, line) in seen:
+            continue
+        seen.add((ref, line))
         refs.append((ref, line))
     return refs
+
+
+def _tree_replaces_placeholder(tree: ast.AST, placeholder: str) -> bool:
+    """Return True if ``tree`` calls ``.replace(placeholder, ...)``."""
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "replace"
+        and len(node.args) >= 2  # noqa: PLR2004
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and node.args[0].value == placeholder
+        for node in ast.walk(tree)
+    )
+
+
+def _agent_callback_substitutes_ref(file_path: Path, ref: str) -> bool:
+    """Return True if an agent before_model callback replaces ``{ref}``."""
+    agent_dir = file_path.parent
+    if agent_dir.parent.name != "agents" or not agent_dir.is_dir():
+        return False
+    placeholder = f"{{{ref}}}"
+    for py_file in agent_dir.rglob("*.py"):
+        rel_parts = py_file.relative_to(agent_dir).parts
+        if not rel_parts or not rel_parts[0].startswith(
+            "before_model_callbacks"
+        ):
+            continue
+        try:
+            text = py_file.read_text(errors="ignore")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(text)
+        except (OSError, SyntaxError):
+            continue
+        if _tree_replaces_placeholder(tree, placeholder):
+            return True
+    return False
 
 
 # ── Rules ────────────────────────────────────────────────────────────────
@@ -595,8 +656,10 @@ class EvalVariableDeclared(Rule):
         seen: set[tuple[str, int]] = set()
         failed_prefixes: set[str] = set()
         for path, line in _collect_eval_var_refs(content):
-            if (path, line) in seen or any(
-                path.startswith(f"{p}.") for p in failed_prefixes
+            if (
+                (path, line) in seen
+                or path.split(".")[0] in STATE_BUILTINS
+                or any(path.startswith(f"{p}.") for p in failed_prefixes)
             ):
                 continue
             verdict = resolve_path(path, schema)
@@ -675,7 +738,7 @@ def _check_v100_python(
     results = []
     seen: set[tuple[str, int]] = set()
     for _kind, key, line, _rhs in _collect_state_accesses(content):
-        if (key, line) in seen:
+        if (key, line) in seen or key.split(".")[0] in STATE_BUILTINS:
             continue
         verdict = resolve_path(key, schema)
         if verdict[0] != "undeclared":
@@ -913,7 +976,7 @@ def _check_v103_python(
     results = []
     seen: set[tuple[str, int]] = set()
     for _kind, key, line, _rhs in _collect_state_accesses(content):
-        if (key, line) in seen:
+        if (key, line) in seen or key.split(".")[0] in STATE_BUILTINS:
             continue
         verdict = resolve_path(key, schema)
         if verdict[0] != "stale_flat":
@@ -973,6 +1036,10 @@ class InstructionVariableRef(Rule):
             tag = verdict[0]
             if tag in ("ok", "ok_object"):
                 continue
+            if tag == "undeclared" and _agent_callback_substitutes_ref(
+                file_path, ref
+            ):
+                continue
             if tag in ("undeclared", "stale_flat"):
                 # Both surface as "not a declared top-level var".
                 results.append(
@@ -1026,47 +1093,3 @@ class InstructionVariableRef(Rule):
                     )
                 )
         return results
-
-
-@rule("config")
-class VariableDeclarationsLimit(Rule):
-    id = "V105"
-    name = "variable-declarations-limit"
-    description = (
-        "Warns when len(app['variableDeclarations'])"
-        " exceeds 80% of max_variables_per_app."
-    )
-    default_severity = Severity.WARNING
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        rel = str(file_path.relative_to(context.project_root))
-        if file_path.name != "app.json":
-            return []
-
-        import json  # noqa: PLC0415
-
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
-            return []
-
-        decls = data.get("variableDeclarations", [])
-        if not decls:
-            return []
-
-        limit = context.options.get("max_variables_per_app", 100)
-
-        if len(decls) > limit * 0.8:
-            return [
-                self.make_result(
-                    file=rel,
-                    message=(
-                        f"variableDeclarations count ({len(decls)})"
-                        f" exceeds 80% of limit ({limit})."
-                    ),
-                    fix="Remove unused variables or consolidate them.",
-                )
-            ]
-        return []

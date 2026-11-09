@@ -171,8 +171,8 @@ if Part.has_function_call('agent_transfer'):
     return Part.from_agent_transfer(agent='escalation_agent')
 ```
 
-### 7. Partial Responses (`response.partial = True`)
-For deterministic greetings or intermediate UI payloads (e.g., sending a client-side view while an async tool runs), SCRAPI generates callbacks with `response.partial = True`, allowing the agent to emit deterministic JSON payloads without terminating the LLM generation loop.
+### 7. Deterministic Greetings & Customized Responses
+For 0-token deterministic greetings and non-interruptible disclaimers, SCRAPI generates `before_model_callback` guards intercepting `<event>session start</event>` (or `callback_context.state` flags) and returning `Part.from_customized_response(...)` (without setting `response.partial = True`, which clips audio tags and drops sibling tool calls).
 
 ### 8. The Hybrid Optimization Module & Checkpoints
 When `Optimize for CXAS` is active, SCRAPI deploys standard optimizations sequentially and records clear Version Checkpoints to track step-level changes:

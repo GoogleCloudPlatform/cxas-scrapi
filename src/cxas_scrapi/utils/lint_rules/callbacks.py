@@ -1,7 +1,3 @@
-import json
-
-import yaml
-
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,9 +19,11 @@ Validates agent callback Python files against CXAS conventions.
 
 import ast
 import json
-import yaml
 import re
+import warnings
 from pathlib import Path
+
+import yaml
 
 from cxas_scrapi.utils.linter import (
     LintContext,
@@ -57,6 +55,18 @@ CALLBACK_SIGNATURES = {
 }
 
 
+def _resolve_cb_type(file_path: Path) -> str:
+    """Resolve callback type from nested or flat callback directory layout."""
+    parent_type = file_path.parent.parent.name
+    if parent_type in CALLBACK_SIGNATURES:
+        return parent_type
+    dir_name = file_path.parent.name
+    for cb_type in CALLBACK_SIGNATURES:
+        if dir_name == cb_type or dir_name.startswith(f"{cb_type}_"):
+            return cb_type
+    return parent_type
+
+
 def _find_entry_function(content: str, expected_fn: str) -> re.Match | None:
     """Find the entry callback function, not helper functions."""
     entry = re.search(rf"def\s+({re.escape(expected_fn)})\s*\(", content)
@@ -66,7 +76,9 @@ def _find_entry_function(content: str, expected_fn: str) -> re.Match | None:
 def _get_args(content: str, fn_name: str) -> list[str] | None:
     """Return argument names of fn_name using AST, or None if not found."""
     try:
-        tree = ast.parse(content)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(content)
     except SyntaxError:
         return None
     for node in ast.walk(tree):
@@ -89,7 +101,7 @@ class WrongFunctionName(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        cb_type = file_path.parent.parent.name
+        cb_type = _resolve_cb_type(file_path)
         expected_fn, _ = CALLBACK_SIGNATURES.get(cb_type, (None, None))
         if not expected_fn:
             return []
@@ -132,7 +144,7 @@ class WrongArgCount(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        cb_type = file_path.parent.parent.name
+        cb_type = _resolve_cb_type(file_path)
         expected_fn, expected_args = CALLBACK_SIGNATURES.get(
             cb_type, (None, None)
         )
@@ -227,14 +239,16 @@ class ReturnsDictNotLlmResponse(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        cb_type = file_path.parent.parent.name
+        cb_type = _resolve_cb_type(file_path)
 
         if cb_type not in ("before_model_callbacks", "after_model_callbacks"):
             return []
 
         returns_dict = False
         try:
-            tree = ast.parse(content)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(content)
             expected_fn, _ = CALLBACK_SIGNATURES.get(cb_type, (None, None))
             top_fns = [
                 n
@@ -384,6 +398,28 @@ _PYTHON_COLLECTION_METHODS: frozenset[str] = frozenset(
 )
 
 
+def _extract_tools_calls(content: str) -> list[str]:
+    """Extract tool names invoked via ``tools`` or ``async_tools``."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(content)
+    except SyntaxError:
+        matches = re.findall(r"\b(?:async_)?tools\.(\w+)\s*\(", content)
+        return list(dict.fromkeys(matches))
+
+    calls: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in ("tools", "async_tools")
+        ):
+            calls.append(node.func.attr)
+    return list(dict.fromkeys(calls))
+
+
 @rule("callbacks")
 class ToolNamingConvention(Rule):
     id = "C007"
@@ -396,9 +432,14 @@ class ToolNamingConvention(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
         results = []
-        tool_calls = re.findall(r"\btools\.(\w+)\s*\(", content)
+        tool_calls = _extract_tools_calls(content)
         for tool_name in tool_calls:
             if tool_name in _PYTHON_COLLECTION_METHODS:
+                continue
+            if any(
+                tool_name.startswith(pfx)
+                for pfx in context.bypass_tool_prefixes
+            ):
                 continue
             if tool_name not in context.all_known_tools:
                 results.append(
@@ -441,7 +482,9 @@ class InvalidPythonSyntax(Rule):
             return []
         rel = str(file_path.relative_to(context.project_root))
         try:
-            compile(content, rel, "exec")
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                compile(content, rel, "exec")
         except SyntaxError as e:
             return [
                 self.make_result(
@@ -461,7 +504,7 @@ class InvalidPythonSyntax(Rule):
 
 @rule("callbacks")
 class VoiceBeforeModelToolMutation(Rule):
-    id = "C011"
+    id = "C024"
     name = "voice-before-model-request-mutation"
     description = "Voice apps ignore before_model llm_request mutations"
     default_severity = Severity.WARNING
@@ -531,10 +574,12 @@ class VoiceBeforeModelToolMutation(Rule):
                 self.mutations = []
                 self.llm_req_name = "llm_request"
 
-            def visit_FunctionDef(self, node: ast.AST) -> None:
-                if node.name == "before_model_callback":
-                    if len(node.args.args) >= 2:
-                        self.llm_req_name = node.args.args[1].arg
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                if (
+                    node.name == "before_model_callback"
+                    and len(node.args.args) >= 2
+                ):
+                    self.llm_req_name = node.args.args[1].arg
                 self.generic_visit(node)
 
             def _is_target(self, target: ast.AST) -> bool:
@@ -552,34 +597,35 @@ class VoiceBeforeModelToolMutation(Rule):
                     and self._is_target(target.value)
                 )
 
-            def visit_Assign(self, node: ast.AST) -> None:
+            def visit_Assign(self, node: ast.Assign) -> None:
                 for target in node.targets:
                     if self._is_target(target):
                         self.mutations.append(node)
                 self.generic_visit(node)
 
-            def visit_AugAssign(self, node: ast.AST) -> None:
+            def visit_AugAssign(self, node: ast.AugAssign) -> None:
                 if self._is_target(node.target):
                     self.mutations.append(node)
                 self.generic_visit(node)
 
-            def visit_AnnAssign(self, node: ast.AST) -> None:
+            def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
                 if self._is_target(node.target):
                     self.mutations.append(node)
                 self.generic_visit(node)
 
-            def visit_Delete(self, node: ast.AST) -> None:
+            def visit_Delete(self, node: ast.Delete) -> None:
                 for target in node.targets:
                     if self._is_target(target):
                         self.mutations.append(node)
                 self.generic_visit(node)
 
-            def visit_Call(self, node: ast.AST) -> None:
-                if isinstance(node.func, ast.Attribute):
-                    if (
+            def visit_Call(self, node: ast.Call) -> None:
+                if isinstance(node.func, ast.Attribute) and (
+                    (
                         node.func.attr == "hide_tool"
                         and self._is_target(node.func.value)
-                    ) or (
+                    )
+                    or (
                         node.func.attr
                         in {
                             "append",
@@ -588,8 +634,9 @@ class VoiceBeforeModelToolMutation(Rule):
                             "update",
                         }
                         and self._is_target(node.func.value)
-                    ):
-                        self.mutations.append(node)
+                    )
+                ):
+                    self.mutations.append(node)
                 self.generic_visit(node)
 
         visitor = MutationVisitor()
@@ -600,8 +647,14 @@ class VoiceBeforeModelToolMutation(Rule):
                 self.make_result(
                     file=rel,
                     line=m.lineno,
-                    message="Voice streaming ignores before_model llm_request mutations",
-                    fix="Use ChannelPolicy pruning (cxas build) or before_tool_callback",
+                    message=(
+                        "Voice streaming ignores before_model llm_request"
+                        " mutations"
+                    ),
+                    fix=(
+                        "Use ChannelPolicy pruning (cxas build) or"
+                        " before_tool_callback"
+                    ),
                 )
             )
 

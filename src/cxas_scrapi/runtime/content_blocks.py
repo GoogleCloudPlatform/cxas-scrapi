@@ -42,8 +42,8 @@ def get_verbatim_content_block(
         ("default", "DEFAULT", lang),
     ]
 
-    for b, c, l in attempts:
-        val = catalog.get(b, {}).get(c, {}).get(l, {}).get(key)
+    for b, c, lang_code in attempts:
+        val = catalog.get(b, {}).get(c, {}).get(lang_code, {}).get(key)
         if val is not None:
             return val
 
@@ -58,7 +58,7 @@ def resolve_content_block_or_handoff(
     fallback_utterance: str,
     handoff_reason: str = "missing_statutory_copy",
 ) -> str:
-    """Resolves context keys, returns verbatim copy on hit or triggers fail-closed handoff."""
+    """Resolves context keys, returning verbatim copy or fail-closed handoff."""
     ctx = state.get("context") or {}
     brand = ctx.get("brand_id")
     country = ctx.get("country_code")

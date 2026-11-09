@@ -17,6 +17,7 @@
 import os
 import shutil
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -130,8 +131,6 @@ def package_app_archive(
                 f"Total archive size {total_size} exceeds maximum {MAX_TOTAL_ARCHIVE_BYTES} bytes"  # noqa: E501
             )
 
-
-        import time
         limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
         for root, dirs, files in os.walk(temp_dir):
             for name in files:

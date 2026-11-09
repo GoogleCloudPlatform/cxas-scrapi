@@ -55,7 +55,10 @@ def build_scoped_datastore_filter(
     country_q = quoted_filter_literal(country)
     lang_q = quoted_filter_literal(lang)
 
-    base = f"brand: ANY({brand_q}) AND country: ANY({country_q}) AND language: ANY({lang_q})"
+    base = (
+        f"brand: ANY({brand_q}) AND country: ANY({country_q})"
+        f" AND language: ANY({lang_q})"
+    )
 
     if extra_clauses:
         extra_str = " AND ".join(f"({c})" for c in extra_clauses)

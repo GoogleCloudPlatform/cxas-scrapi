@@ -21,6 +21,7 @@ Platform sunset trigger: Declarative channels integration.
 
 import json
 import re
+import sys
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -41,7 +42,7 @@ def adapt_presentation(
     *,
     part_factory: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
-    """Inspects context channel_class and adapts presentation to voice or digital."""
+    """Inspects channel_class and adapts presentation to voice or digital."""
     ctx = state.get("context", {})
     channel_class = ctx.get("channel_class", "")
 
@@ -55,16 +56,12 @@ def adapt_presentation(
         if json_str:
             if part_factory:
                 part_obj = part_factory(json_str)
-            else:
-                # Attempt to use CES sandbox Part.from_json if in scope
-                import sys
-
-                if "cxas_sandbox" in sys.modules and hasattr(
-                    sys.modules["cxas_sandbox"], "Part"
-                ):
-                    part_obj = sys.modules["cxas_sandbox"].Part.from_json(
-                        data=json_str
-                    )  # type: ignore
+            elif "cxas_sandbox" in sys.modules and hasattr(
+                sys.modules["cxas_sandbox"], "Part"
+            ):
+                part_obj = sys.modules["cxas_sandbox"].Part.from_json(
+                    data=json_str
+                )  # type: ignore
         return {
             "channel_mode": "digital",
             "text": spoken_text,

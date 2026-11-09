@@ -15,7 +15,7 @@
 """
 Optional, temporary Rung 1 bridge for LlmAgent apps for kill switches.
 Not required for brand identity (cxas build), incompatible with Guided Agents.
-Python-free alternative available today: Compile-time manifest exclusions (`cxas build`).
+Python-free alternative today: Compile-time manifest exclusions (`cxas build`).
 Platform sunset trigger: Agent routing policies.
 """
 
@@ -27,7 +27,7 @@ from typing import Any
 def check_disabled_agent(
     state: Mapping[str, Any], agent_name: str, *, fallback_message: str
 ) -> dict[str, Any] | None:
-    """Inspects context disabled_agents and returns short-circuit response if agent disabled."""
+    """Checks disabled_agents and returns short-circuit response if disabled."""
     ctx = state.get("context", {})
     disabled = ctx.get("disabled_agents")
 

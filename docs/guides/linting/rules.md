@@ -27,6 +27,10 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | I014 | `missing-current-date` | Warning | Instruction (or global instruction) should reference `{current_date}` |
     | I015 | `banned-legacy-xml-tags` | Error | Instruction uses a banned legacy XML tag |
     | I016 | `prose-state-machine` | Warning | Instruction encodes a state machine in prose (named-step GOTOs, retry counters, STOP tokens, state writes, orchestrator `agent_action` traversal) |
+    | I017 | `composite-v2-invalid-audio-tags` | Error | Invalid Composite v2 TTS markup (`</prosody>`, `<slow>`, `[tag]`, or translated tags) in instructions or callbacks (`gemini-composite-v2`) |
+    | I018 | `composite-v2-normalization-scope` | Warning | Text normalization block lacks a `Scope:` guard excluding tool arguments (`gemini-composite-v2`) |
+    | I019 | `live-audio-inline-tags` | Error | Inline TTS delivery tags emitted on native audio-to-audio (`live`) models |
+    | I020 | `ces-jinja-subset-syntax` | Error | Instruction uses unsupported CES Jinja syntax (`not in`, `dict['key']` subscripts, or `{# ... #}` comments) |
 
     ---
 
@@ -168,7 +172,11 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C006 | `callback-bare-except` | Warning | Bare `except:` without logging swallows errors silently |
     | C007 | `callback-tool-naming` | Info | Verify `tools.*` call uses correct naming convention |
     | C010 | `callback-python-syntax` | Error | Callback Python file must have valid syntax |
-    | C011 | `voice-before-model-request-mutation` | Warning | Voice apps ignore before_model llm_request mutations |
+    | C011 | `state-none-assignment` | Warning | Session state keys should not be assigned `None` (callbacks and tools) |
+    | C012 | `after-model-unreturned-response` | Error | `after_model_callback` mutates or constructs `LlmResponse` without returning it |
+    | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
+    | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
+    | C024 | `voice-before-model-request-mutation` | Warning | Voice apps ignore `before_model` `llm_request` mutations |
 
     ---
 
@@ -260,6 +268,11 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | T010 | `tool-python-syntax` | Error | Tool Python file must have valid syntax |
     | T011 | `tool-none-default` | Error | Tool parameter uses `None` as default value |
     | T012 | `tool-json-missing-description` | Error | Tool JSON configuration must include description |
+    | T015 | `tool-entry-first-def` | Error | Entry tool function must be the first top-level `def` in `python_code.py` |
+    | T016 | `tool-return-dict-annotation` | Warning | Python tool entry function should declare a `-> dict` return annotation |
+    | T017 | `data-store-filter-template` | Error | Detects template syntax (`{...}` or `{{...}}`) in data store static filters |
+    | T018 | `data-store-filter-parameter-behavior` | Error | Brand-scoped `dataStoreTool` must use `NEVER_INCLUDE` parameter behavior |
+    | T019 | `data-store-voice-modality` | Warning | Voice deployments require an `AUDIO` modality config on `dataStoreTool` |
 
     ---
 
@@ -303,11 +316,35 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **T012 — tool-json-missing-description**
 
-    Tool JSON configuration must include `pythonFunction.description` or `widgetTool.description`. The LLM relies on this description to know when to call the tool.
+    Tool JSON configuration must include a description (or, for `pythonFunction` tools, a docstring on the Python tool function). The LLM relies on this description to know when to call the tool.
 
-    *Triggers:* The description field is missing or empty in the tool's JSON configuration.
+    *Triggers:* The description field is missing or empty in the tool's JSON configuration (and, for `pythonFunction` tools, the Python tool function also lacks a docstring).
 
-    *Fix:* Add a 'description' key within the 'pythonFunction' or 'widgetTool' object in the tool's JSON file.
+    *Fix:* Add a docstring to the Python tool function or a `'description'` key within the tool type object (`pythonFunction`, `remoteAgentTool`, `widgetTool`, etc.) in the tool's JSON file.
+
+    ---
+
+    **T017 — data-store-filter-template**
+
+    *Triggers:* When a data store tool (or its sources) contains template syntax (`{...}` or `{{...}}`) inside a static `filter`.
+
+    *Fix:* Remove the template syntax. Static filters do not support variable interpolation.
+
+    ---
+
+    **T018 — data-store-filter-parameter-behavior**
+
+    *Triggers:* When a brand-scoped `dataStoreTool` (either explicitly containing a filter, or prefixed with `ds_`) specifies a `filterParameterBehavior` other than `NEVER_INCLUDE` or `3`.
+
+    *Fix:* Set `filterParameterBehavior` to `NEVER_INCLUDE`.
+
+    ---
+
+    **T019 — data-store-voice-modality**
+
+    *Triggers:* When a data store tool lacks an `AUDIO` configuration block in `modalityConfigs`, or does not disable `rewriterConfig`/`summarizationConfig` inside that block, or lacks a `snippetsConfig` while operating under a voice deployment (`GOOGLE_TELEPHONY_PLATFORM` or `CONTACT_CENTER_AS_A_SERVICE`).
+
+    *Fix:* Add an `AUDIO` configuration to `modalityConfigs` and ensure `rewriterConfig.disabled` and `summarizationConfig.disabled` are both `true`, and provide a valid `snippetsConfig`.
 
 === "E — Evals"
 
@@ -327,6 +364,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | E010 | `eval-tool-test-wrong-key` | Error | Tool test uses `test_cases` instead of `tests` |
     | E011 | `eval-invalid-match-type` | Error | Invalid `$matchType` value in golden `tool_calls` |
     | E012 | `eval-shadow-structure` | Error | Shadow eval needs `conversation_id` and non-empty `expectations`, a valid `replay_mode`, and only known keys (unknown keys are warnings) |
+    | E013 | `eval-simulation-structure` | Error | Simulation / CXAS 2.0 Milestone eval needs a `name`, a non-empty `steps` list, an actionable key per step (`goal`, `static_utterance`, or `event`), `inject_variables` only on step 1, and only known keys |
 
     ---
 
@@ -360,6 +398,12 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     Applies to YAML files under `evals/shadows/`. Each shadow eval needs a `conversation_id` and at least one natural-language expectation. `replay_mode` (on the case or in `config:`) must be `hybrid` or `exact`. Unknown keys in a case or in the `config:` block are reported as warnings with a *did you mean* suggestion, because ShadowEvals would otherwise ignore them silently (for example `session_params` instead of `session_parameters`).
 
+    ---
+
+    **E013 — eval-simulation-structure**
+
+    Applies to simulation and CXAS 2.0 Milestone evaluation YAML files under `evals/simulations/`. Each test case under `evals:` must define a `name` and a non-empty `steps` list where every step contains at least one actionable field (`goal`, `static_utterance`, or `event`), `inject_variables` only appears on step 1, `event` mappings specify `event` or `name`, and eval/step keys match the supported simulation and milestone schemas.
+
 === "A — Config"
 
     Rules in the `A` category check `app.json` and agent JSON configuration files.
@@ -372,6 +416,10 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A004 | `config-missing-instruction` | Error | Agent directory must have an `instruction.txt` file |
     | A005 | `config-root-missing-end-session` | Error | Root agent must have `end_session` tool |
     | A006 | `config-root-agent` | Error | App config must have a valid `rootAgent` pointing to an existing agent directory |
+    | A013 | `composite-v2-speech-instruction` | Warning | Legacy Director's Notes in `synthesizeSpeechConfigs` or missing `voiceInstructionMode: "NO_INSTRUCTION"` on `gemini-composite-v2` |
+    | A014 | `async-tool-missing-inactivity-timeout` | Error | Apps with `ASYNCHRONOUS` tools must configure `audioProcessingConfig.inactivityTimeout` |
+    | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100; configurable via `max_variables_per_app`) |
+    | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
 
     ---
 
@@ -408,6 +456,13 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S006 | `strict-tool-path-layout` | Error | Tool config paths must be app-relative and prefixed with `tools/{tool_name}/` |
     | S007 | `sub-agent-single-parent` | Error | Sub-agents must have at most one parent agent (tree constraint) |
     | S008 | `singleton-guardrail-types` | Error | At most one guardrail of each singleton type (`llmPromptSecurity`) per app |
+    | S009 | `guardrail-re2-quantifier-spacing` | Error | Guardrail `contentFilter` regex contains spaces inside RE2 repetition quantifiers (`{m, n}`) |
+    | S010 | `app-resource-references` | Error | App JSON references guardrails or `globalInstruction` files that don't exist |
+    | S011 | `agent-resource-references` | Error | Agent JSON references guardrails, toolsets, or `instruction` files that don't exist |
+    | S012 | `tool-file-references` | Error | Tool JSON references `pythonCode` or `openApiSchema` files that don't exist |
+    | S013 | `toolset-file-references` | Error | Toolset JSON references `openApiSchema` files that don't exist |
+    | G001 | `guardrail-jinja-syntax` | Error | Guardrail `llmPolicy.prompt` contains Jinja tokens (`{{...}}` or `{% ... %}`) |
+    | G002 | `crosscheck-locales-content-blocks` | Error | `(brandId, country, lang)` tuple in `deployments/*.yaml` missing from `content_blocks.yaml` |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 
@@ -420,6 +475,46 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* More than one directory under `guardrails/` declares the same singleton guardrail type (`llmPromptSecurity` or `llm_prompt_security`).
 
     *Fix:* Keep a single guardrail of that type and remove the others.
+
+    ---
+
+    **S010 — app-resource-references**
+
+    Validates that every guardrail referenced in `app.json` `guardrails` resolves to an existing guardrail directory/file stem or `displayName` under `guardrails/`, and that an explicit `globalInstruction` file path exists on disk.
+
+    ---
+
+    **S011 — agent-resource-references**
+
+    Validates that every guardrail in `<agent>.json` `guardrails`, every toolset in `<agent>.json` `toolsets`, and any explicit `instruction` file path in `<agent>.json` exist on disk.
+
+    ---
+
+    **S012 — tool-file-references**
+
+    Validates that `pythonFunction.pythonCode` and `openApiTool.openApiSchema` file paths in `<tool>.json` exist on disk when non-inline paths are specified.
+
+    ---
+
+    **S013 — toolset-file-references**
+
+    Validates that `openApiToolset.openApiSchema` file paths in `<toolset>.json` exist on disk when non-inline paths are specified.
+
+    ---
+
+    **G001 — guardrail-jinja-syntax**
+
+    *Triggers:* When a guardrail's `llmPolicy.prompt` contains Jinja tokens (`{{...}}` or `{% ... %}`).
+
+    *Fix:* Use CES `@@...@@` placeholder syntax or explicit string interpolation instead of Jinja templates.
+
+    ---
+
+    **G002 — crosscheck-locales-content-blocks**
+
+    *Triggers:* When a combination of `brandId`, `supportedCountries`, and `supportedLanguages` defined in `deployments/*.yaml` is missing from `manifests/locales/content_blocks.yaml`.
+
+    *Fix:* Ensure `content_blocks.yaml` declares the missing combination or remove it from the deployment configuration.
 
 === "V — Schema"
 
@@ -498,34 +593,3 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `{var}` reference where `var` is not declared or doesn't resolve.
 
     *Fix:* Declare the variable in `app.json` or fix the reference.
-
-### Tools (T015-T017)
-
-**T015 — data-store-filter-template**
-*Triggers:* When a data store tool (or its sources) contains template syntax (`{...}` or `{{...}}`) inside a static `filter`.
-*Fix:* Remove the template syntax. Static filters do not support variable interpolation.
-
-**T016 — data-store-filter-parameter-behavior**
-*Triggers:* When a brand-scoped dataStoreTool (either explicitly containing a filter, or prefixed with `ds_`) specifies a `filterParameterBehavior` other than `NEVER_INCLUDE` or `3`.
-*Fix:* Set `filterParameterBehavior` to `NEVER_INCLUDE`.
-
-**T017 — data-store-voice-modality**
-*Triggers:* When a data store tool lacks an `AUDIO` configuration block in `modalityConfigs`, or does not disable `rewriterConfig`/`summarizationConfig` inside that block, or lacks a `snippetsConfig` while operating under a voice deployment (`GOOGLE_TELEPHONY_PLATFORM` or `CONTACT_CENTER_AS_A_SERVICE`).
-*Fix:* Add an `AUDIO` configuration to `modalityConfigs` and ensure `rewriterConfig.disabled` and `summarizationConfig.disabled` are both `true`, and provide a valid `snippetsConfig`.
-
-### Config (G001-G002)
-
-**G001 — guardrail-jinja-syntax**
-*Triggers:* When a guardrail's `llmPolicy.prompt` contains Jinja tokens (`{{...}}` or `{% ... %}`).
-*Fix:* Use CES `@@...@@` placeholder syntax or explicit string interpolation instead of Jinja templates.
-
-**G002 — crosscheck-locales-content-blocks**
-*Triggers:* When a combination of `brandId`, `supportedCountries`, and `supportedLanguages` defined in `deployments/*.yaml` is missing from `manifests/locales/content_blocks.yaml`.
-*Fix:* Ensure `content_blocks.yaml` declares the missing combination or remove it from the deployment configuration.
-
-### Variables (V105)
-
-**V105 — variable-declarations-limit**
-*Triggers:* When the number of items in `app.json`'s `variableDeclarations` exceeds 80% of `max_variables_per_app` (default 100).
-*Fix:* Remove unused variables or consolidate them.
-

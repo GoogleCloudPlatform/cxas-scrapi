@@ -290,7 +290,7 @@ def test_check_disabled_agent() -> None:
     assert check_disabled_agent(state, "a2", fallback_message="out") is None
 
 
-def test_c011_rule(tmp_path: Path) -> None:
+def test_c024_rule(tmp_path: Path) -> None:
     cb_file = tmp_path / "before_model_callbacks" / "python_code.py"
     cb_file.parent.mkdir()
     code = "def before_model_callback(cb, req):\n    req.hide_tool('x')\n    req.config = 1\n"
@@ -307,4 +307,5 @@ def test_c011_rule(tmp_path: Path) -> None:
     rule = VoiceBeforeModelToolMutation()
     res = rule.check(cb_file, code, ctx)
     assert len(res) == 2
+    assert all(r.rule_id == "C024" for r in res)
     assert "mutations" in res[0].message
