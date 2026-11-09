@@ -18,9 +18,12 @@ Validates agent callback Python files against CXAS conventions.
 """
 
 import ast
+import json
 import re
 import warnings
 from pathlib import Path
+
+import yaml
 
 from cxas_scrapi.utils.linter import (
     LintContext,
@@ -497,3 +500,162 @@ class InvalidPythonSyntax(Rule):
                 )
             ]
         return []
+
+
+@rule("callbacks")
+class VoiceBeforeModelToolMutation(Rule):
+    id = "C024"
+    name = "voice-before-model-request-mutation"
+    description = "Voice apps ignore before_model llm_request mutations"
+    default_severity = Severity.WARNING
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if "before_model_callbacks" not in file_path.parts:
+            return []
+
+        rel = str(file_path.relative_to(context.project_root))
+
+        voice_enabled = False
+        app_json = context.app_root / "app.json" if context.app_root else None
+        app_yaml = context.app_root / "app.yaml" if context.app_root else None
+
+        if app_json and app_json.is_file():
+            try:
+                data = json.loads(app_json.read_text("utf-8"))
+                if data.get("audioProcessingConfig"):
+                    voice_enabled = True
+            except json.JSONDecodeError:
+                pass
+        elif app_yaml and app_yaml.is_file():
+            try:
+                data = yaml.safe_load(app_yaml.read_text("utf-8"))
+                if data and data.get("audioProcessingConfig"):
+                    voice_enabled = True
+            except yaml.YAMLError:
+                pass
+
+        if not voice_enabled:
+            for root in (context.app_dir, context.project_root):
+                deps_dir = root / "deployments"
+                if deps_dir.is_dir():
+                    for f in deps_dir.iterdir():
+                        if f.name.endswith(".yaml"):
+                            try:
+                                data = yaml.safe_load(f.read_text("utf-8"))
+                                ch = data.get("channel", "")
+                                if ch in {
+                                    "GOOGLE_TELEPHONY_PLATFORM",
+                                    "TELEPHONY",
+                                    "VOICE",
+                                    "AUDIO",
+                                    "CONTACT_CENTER",
+                                }:
+                                    voice_enabled = True
+                                    break
+                            except yaml.YAMLError:
+                                pass
+                if voice_enabled:
+                    break
+
+        if not voice_enabled:
+            return []
+
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            return []
+
+        results = []
+
+        class MutationVisitor(ast.NodeVisitor):
+            def __init__(self):
+                self.mutations = []
+                self.llm_req_name = "llm_request"
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                if (
+                    node.name == "before_model_callback"
+                    and len(node.args.args) >= 2
+                ):
+                    self.llm_req_name = node.args.args[1].arg
+                self.generic_visit(node)
+
+            def _is_target(self, target: ast.AST) -> bool:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == self.llm_req_name
+                ):
+                    return True
+                if isinstance(target, ast.Attribute) and self._is_target(
+                    target.value
+                ):
+                    return True
+                return bool(
+                    isinstance(target, ast.Subscript)
+                    and self._is_target(target.value)
+                )
+
+            def visit_Assign(self, node: ast.Assign) -> None:
+                for target in node.targets:
+                    if self._is_target(target):
+                        self.mutations.append(node)
+                self.generic_visit(node)
+
+            def visit_AugAssign(self, node: ast.AugAssign) -> None:
+                if self._is_target(node.target):
+                    self.mutations.append(node)
+                self.generic_visit(node)
+
+            def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+                if self._is_target(node.target):
+                    self.mutations.append(node)
+                self.generic_visit(node)
+
+            def visit_Delete(self, node: ast.Delete) -> None:
+                for target in node.targets:
+                    if self._is_target(target):
+                        self.mutations.append(node)
+                self.generic_visit(node)
+
+            def visit_Call(self, node: ast.Call) -> None:
+                if isinstance(node.func, ast.Attribute) and (
+                    (
+                        node.func.attr == "hide_tool"
+                        and self._is_target(node.func.value)
+                    )
+                    or (
+                        node.func.attr
+                        in {
+                            "append",
+                            "pop",
+                            "clear",
+                            "update",
+                        }
+                        and self._is_target(node.func.value)
+                    )
+                ):
+                    self.mutations.append(node)
+                self.generic_visit(node)
+
+        visitor = MutationVisitor()
+        visitor.visit(tree)
+
+        for m in visitor.mutations:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    line=m.lineno,
+                    message=(
+                        "Voice streaming ignores before_model llm_request"
+                        " mutations"
+                    ),
+                    fix=(
+                        "Use ChannelPolicy pruning (cxas build) or"
+                        " before_tool_callback"
+                    ),
+                )
+            )
+
+        return results

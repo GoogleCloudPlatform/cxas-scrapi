@@ -195,7 +195,10 @@ class CallbackFileReferences(Rule):
                 results.append(
                     self.make_result(
                         str(file_path),
-                        f"Callback references '{code_path}' but file not found",
+                        (
+                            f"Callback references '{code_path}'"
+                            f" but file not found"
+                        ),
                         fix=(
                             "Create the callback"
                             " file or fix the path"
@@ -956,4 +959,127 @@ class ToolsetFileReferences(Rule):
                 )
             )
 
+        return results
+
+
+@rule("structure")
+class GuardrailJinjaSyntax(Rule):
+    id = "G001"
+    target = "guardrail_config"
+    name = "guardrail-jinja-syntax"
+    description = "Detects Jinja tokens inside llm_policy.prompt in guardrails."
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        jsons_to_check = []
+        if file_path.is_dir():
+            jsons_to_check.extend(sorted(file_path.glob("*.json")))
+        elif file_path.name.endswith(".json"):
+            jsons_to_check.append(file_path)
+
+        results = []
+        for j_path in jsons_to_check:
+            rel = str(j_path.relative_to(context.project_root))
+            try:
+                data = json.loads(j_path.read_text("utf-8"))
+            except (ValueError, OSError):
+                continue
+
+            prompt = None
+            if "llm_policy" in data:
+                prompt = data["llm_policy"].get("prompt")
+            elif "llmPolicy" in data:
+                prompt = data["llmPolicy"].get("prompt")
+
+            if prompt and ("{{" in prompt or "{%" in prompt):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            "Jinja tokens {{...}} or {% ... %} found"
+                            " inside llmPolicy.prompt."
+                        ),
+                        fix=(
+                            "Use CES @@...@@ placeholder syntax or "
+                            "explicit string"
+                            " interpolation instead of Jinja templates."
+                        ),
+                    )
+                )
+        return results
+
+
+@rule("structure")
+class CrosscheckLocalesContentBlocks(Rule):
+    id = "G002"
+    target = "deployment_config"
+    name = "crosscheck-locales-content-blocks"
+    description = (
+        "Cross-checks (brandId, country, lang) across"
+        " deployments and content_blocks."
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+        content_blocks_path = None
+        if context.app_root:
+            content_blocks_path = (
+                context.app_root
+                / "manifests"
+                / "locales"
+                / "content_blocks.yaml"
+            )
+            if not content_blocks_path.exists() and context.project_root:
+                content_blocks_path = (
+                    context.project_root
+                    / "manifests"
+                    / "locales"
+                    / "content_blocks.yaml"
+                )
+
+        if not content_blocks_path or not content_blocks_path.exists():
+            return []
+
+        try:
+            blocks = yaml.safe_load(content_blocks_path.read_text("utf-8"))
+            blocks_data = blocks.get("blocks", {})
+        except (ValueError, OSError, yaml.YAMLError):
+            return []
+
+        try:
+            dep = yaml.safe_load(content)
+        except (ValueError, OSError, yaml.YAMLError):
+            return []
+
+        brand = dep.get("brandId")
+        countries = dep.get("supportedCountries", [])
+        langs = dep.get("supportedLanguages", [])
+
+        results = []
+        for c in countries:
+            for lang_code in langs:
+                if (
+                    brand not in blocks_data
+                    or c not in blocks_data[brand]
+                    or lang_code not in blocks_data[brand][c]
+                ):
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message=(
+                                f"Tuple (brandId={brand}, country={c},"
+                                f" lang={lang_code}) missing from "
+                                "content_blocks.yaml."
+                            ),
+                            fix=(
+                                "Ensure content_blocks.yaml declares this"
+                                " combination or remove it from deployments."
+                            ),
+                        )
+                    )
         return results

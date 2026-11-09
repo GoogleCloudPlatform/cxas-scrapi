@@ -28,6 +28,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from cxas_scrapi.cli.build_cli import register as register_build_subparsers
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
 from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
@@ -2793,6 +2794,11 @@ def get_parser() -> argparse.ArgumentParser:
             "will be deleted"
         ),
     )
+    parser_push.add_argument(
+        "--native-python-env",
+        action="store_true",
+        help="Synthesize pythonEnvFiles.yaml without mutating python_code.py",
+    )
     parser_push.set_defaults(func=app_push)
 
     # Parser for 'lint'
@@ -3396,6 +3402,7 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'trace' — observability/debugging for past conversations.
     register_trace_subparser(subparsers)
+    register_build_subparsers(subparsers)
 
     return parser
 

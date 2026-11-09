@@ -24,6 +24,10 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!src/cxas_scrapi/build/
+!src/cxas_scrapi/build/**
+src/cxas_scrapi/build/__pycache__/
+!tests/**/build/
 develop-eggs/
 dist/
 downloads/
@@ -85,6 +89,10 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+!src/cxas_scrapi/build/
+!src/cxas_scrapi/build/**
+src/cxas_scrapi/build/__pycache__/
+!tests/**/build/
 
 # PyBuilder
 .pybuilder/
