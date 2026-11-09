@@ -694,6 +694,7 @@ def _lint_args(
     """Build an argparse.Namespace with all lint flags defaulted."""
     defaults = dict(
         app_dir=str(tmp_path) if tmp_path else ".",
+        env_file=None,
         list_rules=False,
         json_output=False,
         validate_only=False,
@@ -1100,3 +1101,306 @@ def test_app_init_headless_failure(
     )
     assert expected_msg in captured.err
     assert "Use --force to overwrite." in captured.err
+
+
+def test_app_push_resolves_env_var_declarations_without_mutating_source(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    app_dir = tmp_path / "agent_src"
+    app_dir.mkdir()
+    source_app_json = app_dir / "app.json"
+    source_app_json.write_text(
+        json.dumps(
+            {
+                "name": "test-app",
+                "displayName": "Support Agent",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    },
+                    {
+                        "name": "max_retries",
+                        "schema": {"type": "INTEGER", "default": "$env_var"},
+                    },
+                    {
+                        "name": "static_greeting",
+                        "schema": {"type": "STRING", "default": "welcome"},
+                    },
+                ],
+            }
+        )
+    )
+    (app_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_authentication",
+                            "schema": {"default": False},
+                        },
+                        {"name": "max_retries", "schema": {"default": 1}},
+                    ]
+                }
+            }
+        )
+    )
+
+    uat_env_file = tmp_path / "env.uat.json"
+    uat_env_file.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_authentication",
+                            "schema": {"default": True},
+                        },
+                        {"name": "max_retries", "schema": {"default": 4}},
+                    ]
+                }
+            }
+        )
+    )
+
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/uat-id", []
+    )
+
+    args = argparse.Namespace(
+        app_dir=str(app_dir),
+        to=None,
+        env_file=str(uat_env_file),
+        display_name="Support Agent UAT",
+        project_id="test-project",
+        location="us",
+    )
+    cli_app.app_push(args)
+
+    zip_bytes = mock_apps_client.import_as_new_app.call_args[1]["app_content"]
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        pushed_app = json.loads(zf.read("agent/app.json").decode("utf-8"))
+
+    pushed_defaults = {
+        d["name"]: d["schema"]["default"]
+        for d in pushed_app["variableDeclarations"]
+    }
+    assert pushed_defaults == {
+        "enable_authentication": True,
+        "max_retries": 4,
+        "static_greeting": "welcome",
+    }
+
+    local_after = json.loads(source_app_json.read_text())
+    assert (
+        local_after["variableDeclarations"][0]["schema"]["default"]
+        == "$env_var"
+    )
+    assert (
+        local_after["variableDeclarations"][1]["schema"]["default"]
+        == "$env_var"
+    )
+    captured = capsys.readouterr()
+    assert "Resolved 2 '$env_var' variable default(s)" in captured.out
+
+
+def test_app_push_fails_when_explicit_env_file_missing_for_env_var(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    (tmp_path / "app.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Support Agent",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    }
+                ],
+            }
+        )
+    )
+    (tmp_path / "environment.json").write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_authentication",
+                            "schema": {"default": False},
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        env_file=str(tmp_path / "missing_prod_env.json"),
+        display_name="Support Agent Prod",
+        project_id="test-project",
+        location="us",
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_push(args)
+    assert excinfo.value.code == 1
+    mock_apps_client.import_as_new_app.assert_not_called()
+    captured = capsys.readouterr()
+    assert "Failed to push app:" in captured.out
+    assert "missing_prod_env.json" in captured.out
+
+
+def test_app_pull_preserves_env_var_placeholders_and_syncs_env_json(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    local_app_dir = tmp_path / "My_App"
+    local_app_dir.mkdir(parents=True)
+    (local_app_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "displayName": "My App",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    },
+                    {
+                        "name": "static_mode",
+                        "schema": {"type": "STRING", "default": "standard"},
+                    },
+                ],
+            }
+        )
+    )
+
+    export_buf = io.BytesIO()
+    with zipfile.ZipFile(export_buf, "w") as zf:
+        zf.writestr(
+            "My_App/app.json",
+            json.dumps(
+                {
+                    "displayName": "My App",
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_authentication",
+                            "schema": {"type": "BOOLEAN", "default": True},
+                        },
+                        {
+                            "name": "static_mode",
+                            "schema": {
+                                "type": "STRING",
+                                "default": "updated_static",
+                            },
+                        },
+                    ],
+                }
+            ),
+        )
+        zf.writestr(
+            "My_App/environment.json",
+            json.dumps(
+                {"tools": {"crm_api": {"url": "https://uat.example.com"}}}
+            ),
+        )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    mock_lro = mock.MagicMock()
+    mock_lro.result.return_value = mock.MagicMock(
+        app_content=export_buf.getvalue()
+    )
+    mock_apps_client.export_app.return_value = mock_lro
+
+    args = argparse.Namespace(
+        app="My App",
+        target_dir=str(tmp_path),
+        project_id="test-project",
+        location="us",
+        overwrite=True,
+    )
+    cli_app.app_pull(args)
+
+    pulled_app = json.loads((local_app_dir / "app.json").read_text())
+    decls = {
+        d["name"]: d["schema"]["default"]
+        for d in pulled_app["variableDeclarations"]
+    }
+    assert decls == {
+        "enable_authentication": "$env_var",
+        "static_mode": "updated_static",
+    }
+
+    pulled_env = json.loads((local_app_dir / "environment.json").read_text())
+    assert pulled_env["tools"]["crm_api"]["url"] == "https://uat.example.com"
+    assert pulled_env["app"]["variableDeclarations"] == [
+        {
+            "name": "enable_authentication",
+            "schema": {"type": "BOOLEAN", "default": True},
+        }
+    ]
+
+
+def test_app_lint_with_env_file_flag(
+    capsys: typing.Any, tmp_path: typing.Any
+) -> None:
+    import json  # noqa: PLC0415
+
+    _make_lint_app(tmp_path)
+    (tmp_path / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "test-app",
+                "displayName": "Test App",
+                "rootAgent": "root_agent",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    }
+                ],
+            }
+        )
+    )
+    bad_env = tmp_path / "bad_env.json"
+    bad_env.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_authentication",
+                            "schema": {"default": "not-a-bool"},
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    args = _lint_args(
+        tmp_path, env_file=str(bad_env), json_output=True, only="config"
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_lint(args)
+
+    assert excinfo.value.code == 1
+    results = json.loads(capsys.readouterr().out)
+    assert any(r["rule_id"] == "A017" for r in results)

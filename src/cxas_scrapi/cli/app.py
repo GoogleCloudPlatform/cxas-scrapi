@@ -16,6 +16,7 @@
 
 import argparse
 import io
+import json
 import logging
 import os
 import shutil
@@ -32,6 +33,11 @@ from cxas_scrapi.core.python_bundler import (
     strip_shared_bundles,
 )
 from cxas_scrapi.core.versions import Versions
+from cxas_scrapi.utils.env_vars import (
+    collect_env_var_declaration_names,
+    extract_env_variable_defaults,
+    preserve_env_var_placeholders_on_pull,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +203,25 @@ def _app_pull(
                 )
                 top_dir = first_part if has_top_dir else ""
 
+            pulled_app_root = (
+                dest_app_root
+                if dest_app_root is not None
+                else (
+                    os.path.join(target_dir, top_dir) if top_dir else target_dir
+                )
+            )
+            prev_env_vars = collect_env_var_declaration_names(pulled_app_root)
+            prev_env_defaults: dict[str, Any] = {}
+            prev_env_path = os.path.join(pulled_app_root, "environment.json")
+            if prev_env_vars and os.path.isfile(prev_env_path):
+                try:
+                    with open(prev_env_path, encoding="utf-8") as ef:
+                        prev_env_defaults, _ = extract_env_variable_defaults(
+                            json.load(ef)
+                        )
+                except (OSError, ValueError):
+                    prev_env_defaults = {}
+
             if dest_app_root is not None:
                 os.makedirs(dest_app_root, exist_ok=True)
                 abs_dest_root = os.path.abspath(dest_app_root)
@@ -321,6 +346,19 @@ def _app_pull(
         force_strip = getattr(args, "force", False) if args else False
         strip_shared_bundles(Path(app_root_for_strip), force=force_strip)
 
+        if prev_env_vars:
+            preserved = preserve_env_var_placeholders_on_pull(
+                pulled_app_root,
+                prev_env_vars,
+                previous_env_defaults=prev_env_defaults,
+            )
+            if preserved:
+                print(
+                    "Preserved $env_var placeholders for "
+                    f"{len(preserved)} variable(s) in app config and updated "
+                    "environment.json."
+                )
+
         print("Successfully pulled app.")
 
     except Exception as e:
@@ -370,22 +408,49 @@ def _app_push(
     args: argparse.Namespace | None = None,
 ) -> str | None:
     """Helper to push an app to CXAS."""
-    temp_zip = tempfile.mktemp(suffix=".zip")
     from cxas_scrapi.core.packaging import package_app_archive
 
+    temp_zip = tempfile.mktemp(suffix=".zip")
     native_python_env = (
         getattr(args, "native_python_env", False) if args else False
     )
 
-    package_app_archive(
-        Path(app_dir),
-        Path(temp_zip),
-        Path(env_file) if env_file else None,
-        native_python_env=native_python_env,
-        wrapper_dir="agent",
-    )
-
     try:
+        # Inject explicit env_file if provided
+        env_path: Path | None = None
+        if env_file:
+            if os.path.exists(env_file):
+                env_path = Path(env_file)
+                print(
+                    f"Included custom environment file "
+                    f"from {env_file} as environment.json"
+                )
+            else:
+                print(
+                    f"Warning: Custom environment file "
+                    f"'{env_file}' not found. Skipping."
+                )
+                if collect_env_var_declaration_names(app_dir):
+                    raise FileNotFoundError(
+                        f"Custom environment file '{env_file}' not found; "
+                        "required to resolve '$env_var' variableDeclarations"
+                    )
+
+        resolved_vars: list[str] = []
+        package_app_archive(
+            Path(app_dir),
+            Path(temp_zip),
+            env_path,
+            native_python_env=native_python_env,
+            wrapper_dir="agent",
+            resolved_env_vars=resolved_vars,
+        )
+        if resolved_vars:
+            print(
+                f"Resolved {len(resolved_vars)} '$env_var' variable "
+                f"default(s) from environment.json: {', '.join(resolved_vars)}"
+            )
+
         with open(temp_zip, "rb") as f:
             app_content = f.read()
 
@@ -694,8 +759,15 @@ def app_lint(args: argparse.Namespace) -> None:
             )
         sys.exit(1)
 
+    env_file_arg = getattr(args, "env_file", None)
+    resolved_env_file = Path(env_file_arg).resolve() if env_file_arg else None
+
     context = build_context(
-        project_root, config, discovery, model_override=model_override
+        project_root,
+        config,
+        discovery,
+        model_override=model_override,
+        env_file=resolved_env_file,
     )
 
     if not json_output:

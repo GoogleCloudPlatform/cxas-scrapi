@@ -23,6 +23,7 @@ import pytest
 from cxas_scrapi.utils.lint_rules.config import (
     AgentMissingInstruction,
     AppRootAgentValidation,
+    AppVariableDefaultsAndEnvVars,
     RootAgentMissingEndSession,
 )
 from cxas_scrapi.utils.linter import LintContext, build_registry
@@ -264,3 +265,185 @@ def test_v006_scenario_with_evaluation_expectations_passes(
 
     results = rule.check(eval_dir, "", context)
     assert results == []
+
+
+def test_v001_and_a017_accept_env_var_placeholder_without_env_file(
+    tmp_path: Path, context: LintContext
+) -> None:
+    registry = build_registry()
+    v001 = registry.get("V001")
+    a017 = AppVariableDefaultsAndEnvVars()
+
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+    app_json = app_dir / "app.json"
+    app_json.write_text(
+        json.dumps(
+            {
+                "displayName": "MyApp",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    }
+                ],
+            }
+        )
+    )
+
+    assert v001.check(app_dir, "", context) == []
+    assert a017.check(app_json, app_json.read_text(), context) == []
+
+
+def test_a017_flags_static_type_mismatch_in_app_json(
+    tmp_path: Path, context: LintContext
+) -> None:
+    a017 = AppVariableDefaultsAndEnvVars()
+    app_json = tmp_path / "app.json"
+    app_json.write_text(
+        json.dumps(
+            {
+                "displayName": "MyApp",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"type": "BOOLEAN", "default": "true"},
+                    }
+                ],
+            }
+        )
+    )
+
+    results = a017.check(app_json, app_json.read_text(), context)
+    assert len(results) == 1
+    assert results[0].rule_id == "A017"
+    assert "expected BOOLEAN, got string" in results[0].message
+
+
+def test_a017_validates_against_environment_json_and_explicit_env_file(
+    tmp_path: Path,
+) -> None:
+    a017 = AppVariableDefaultsAndEnvVars()
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    app_json = app_dir / "app.json"
+    app_json.write_text(
+        json.dumps(
+            {
+                "displayName": "MyApp",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    },
+                    {
+                        "name": "max_attempts",
+                        "schema": {"type": "INTEGER", "default": "$env_var"},
+                    },
+                ],
+            }
+        )
+    )
+
+    # Top-level variableDeclarations trap + missing max_attempts
+    (app_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"default": True},
+                    }
+                ]
+            }
+        )
+    )
+    ctx_default = LintContext(
+        project_root=tmp_path, app_dir=app_dir, evals_dir=tmp_path
+    )
+    errs = a017.check(app_json, app_json.read_text(), ctx_default)
+    messages = [r.message for r in errs]
+    assert any("top-level 'variableDeclarations'" in m for m in messages)
+    assert any(
+        "Variable 'enable_authentication'" in m and "missing" in m
+        for m in messages
+    )
+
+    # Valid external --env-file outside app_dir passes cleanly
+    external_env = tmp_path / "secrets" / "env.uat.json"
+    external_env.parent.mkdir()
+    external_env.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_authentication",
+                            "schema": {"type": "BOOLEAN", "default": True},
+                        },
+                        {
+                            "name": "max_attempts",
+                            "schema": {"default": 3},
+                        },
+                    ]
+                }
+            }
+        )
+    )
+    ctx_ext = LintContext(
+        project_root=tmp_path,
+        app_dir=app_dir,
+        evals_dir=tmp_path,
+        env_file=external_env,
+    )
+    assert a017.check(app_json, app_json.read_text(), ctx_ext) == []
+
+
+def test_a017_flags_undeclared_or_non_placeholder_override_in_env_file(
+    tmp_path: Path,
+) -> None:
+    a017 = AppVariableDefaultsAndEnvVars()
+    app_json = tmp_path / "app.json"
+    app_json.write_text(
+        json.dumps(
+            {
+                "displayName": "MyApp",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"type": "BOOLEAN", "default": False},
+                    }
+                ],
+            }
+        )
+    )
+    (tmp_path / "environment.json").write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_authentication",
+                            "schema": {"default": True},
+                        },
+                        {
+                            "name": "unknown_flag",
+                            "schema": {"default": "x"},
+                        },
+                    ]
+                }
+            }
+        )
+    )
+    ctx = LintContext(
+        project_root=tmp_path, app_dir=tmp_path, evals_dir=tmp_path
+    )
+    results = a017.check(app_json, app_json.read_text(), ctx)
+    messages = [r.message for r in results]
+    assert any(
+        "Variable 'enable_authentication'" in m and "not '$env_var'" in m
+        for m in messages
+    )
+    assert any(
+        "Variable 'unknown_flag'" in m and "not declared" in m for m in messages
+    )

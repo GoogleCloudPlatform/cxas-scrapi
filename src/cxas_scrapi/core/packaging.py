@@ -54,11 +54,17 @@ def package_app_archive(
     *,
     native_python_env: bool = False,
     wrapper_dir: str | None = None,
+    resolved_env_vars: list[str] | None = None,
 ) -> Path:
     """Creates a deterministic ZIP archive from app_dir.
 
     Includes only directories and files matching VALID_ARCHIVE_ROOTS at the
     top level of app_dir. Sorts entries to ensure deterministic output.
+
+    If `resolved_env_vars` is a list, `"$env_var"` variable defaults in the
+    staged app config are resolved from the staged `environment.json` (after
+    `env_file` is applied) and the resolved names are appended to it. Raises
+    `ValueError` if a placeholder cannot be resolved.
     """
     app_dir = app_dir.resolve()
 
@@ -97,6 +103,15 @@ def package_app_archive(
         if env_file:
             dst_env = temp_dir / "environment.json"
             shutil.copy2(env_file, dst_env)
+
+        if resolved_env_vars is not None:
+            # Local import: cxas_scrapi.utils imports core.apps, which imports
+            # this module.
+            from cxas_scrapi.utils.env_vars import (  # noqa: PLC0415
+                resolve_app_env_variables_in_dir,
+            )
+
+            resolved_env_vars.extend(resolve_app_env_variables_in_dir(temp_dir))
 
         synthesize_python_env_files(temp_dir)
 

@@ -193,7 +193,7 @@ cxas push \
   --to projects/my-gcp-project/locations/us-central1/apps/my-support-agent-qa
 ```
 
-The exact same pattern promotes QA to Prod; only the `--to` resource name changes.
+The exact same pattern promotes QA to Prod; only the `--to` resource name changes. If your app uses stage-specific resource bindings or `"$env_var"` defaults in `app.json` `variableDeclarations`, pass `--env-file ./env-qa.json` (or `--env-file ./env-prod.json`) to both `cxas lint` and `cxas push` so stage overrides are validated and resolved during staging without modifying Git-tracked `app.json`.
 
 !!! warning "Pull before you promote"
     Always pull the source stage immediately before promoting. Otherwise you risk pushing a stale local copy from a previous session and overwriting fixes that landed in between.
