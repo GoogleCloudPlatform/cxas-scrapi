@@ -535,6 +535,68 @@ def test_diff_dashboards_all_in_sync() -> None:
     assert "All 1 dashboard(s) are in sync" in diff["report"]
 
 
+@pytest.mark.parametrize(
+    ("local_quantity", "expect_update"),
+    [(2, False), (3, True)],
+)
+def test_diff_dashboards_int64_quantity_returned_as_string(
+    local_quantity: int, expect_update: bool
+) -> None:
+    """The API returns int64 fields as JSON strings, e.g. quantity "2".
+
+    That alone must not count as a change, but a different value must.
+    """
+    local_data = {
+        "dashboards": [
+            {
+                "dashboard_id": "d1",
+                "display_name": "Dash 1",
+                "root_container": {
+                    "widgets": [
+                        {
+                            "container": {
+                                "displayName": "Tab",
+                                "date_range": {
+                                    "relative": {
+                                        "quantity": local_quantity,
+                                        "unit": "WEEK",
+                                    }
+                                },
+                                "widgets": [],
+                            }
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+    remote = [
+        {
+            "name": "projects/p/locations/l/dashboards/d1",
+            "displayName": "Dash 1",
+            "rootContainer": {
+                "widgets": [
+                    {
+                        "container": {
+                            "displayName": "Tab",
+                            "dateRangeConfig": {
+                                "relativeDateRange": {
+                                    "quantity": "2",
+                                    "unit": "WEEK",
+                                }
+                            },
+                            "widgets": [],
+                        }
+                    }
+                ]
+            },
+        }
+    ]
+    diff = diff_dashboards(local_data, remote)
+    assert bool(diff["to_update"]) is expect_update
+    assert diff["unchanged"] == ([] if expect_update else ["d1"])
+
+
 def test_sync_dashboards(tmp_path: typing.Any) -> None:
     """Test sync_dashboards in dry-run, force, and non-force modes."""
     file_path = tmp_path / "dashboards.yaml"
