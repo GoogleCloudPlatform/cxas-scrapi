@@ -49,6 +49,8 @@ my-agent/<AppName>/
 
 This structure is what `cxas push` expects when you upload changes back. Point `--app-dir` at the exported app directory containing `app.json`.
 
+If the destination directory already contains an `app.json` or `app.yaml` where `variableDeclarations` entries use `"default": "$env_var"`, `cxas pull` preserves the `"$env_var"` placeholders in `app.json` / `app.yaml` and writes the exported default values into `environment.json` under `app.variableDeclarations`.
+
 ## Examples
 
 **Pull an app by display name under a folder called `my-agent`:**

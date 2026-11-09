@@ -19,7 +19,16 @@ Validates app.json and agent JSON configuration files.
 
 import json
 from pathlib import Path
+from typing import Any
 
+import yaml
+
+from cxas_scrapi.utils.env_vars import (
+    ENV_VAR_PLACEHOLDER,
+    infer_schema_type,
+    parse_env_variable_declarations,
+    validate_value_for_schema,
+)
 from cxas_scrapi.utils.linter import (
     LintContext,
     LintResult,
@@ -923,5 +932,227 @@ class CompositeSamplingTemperature(Rule):
                     fix="Change modelSettings.temperature to 1.0",
                 )
             )
+
+        return results
+
+
+def _rel_or_str(path: Path, root: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path)
+
+
+@rule("config")
+class AppVariableDefaultsAndEnvVars(Rule):
+    id = "A017"
+    name = "variable-defaults-and-env-vars"
+    description = (
+        "Validates variableDeclarations default types and cross-checks "
+        "$env_var placeholders against environment.json"
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if file_path.name not in ("app.json", "app.yaml"):
+            return []
+
+        rel = _rel_or_str(file_path, context.project_root)
+        try:
+            if file_path.suffix == ".yaml":
+                data = yaml.safe_load(content)
+            else:
+                data = json.loads(content)
+        except (json.JSONDecodeError, yaml.YAMLError):
+            return []
+
+        if not isinstance(data, dict):
+            return []
+
+        raw_decls = (
+            data.get("variableDeclarations")
+            if "variableDeclarations" in data
+            else data.get("variable_declarations")
+        )
+        results: list[LintResult] = []
+        app_vars: dict[str, dict[str, Any]] = {}
+        placeholder_vars: set[str] = set()
+
+        if isinstance(raw_decls, list):
+            for decl in raw_decls:
+                if not isinstance(decl, dict):
+                    continue
+                name = decl.get("name")
+                schema = decl.get("schema")
+                if (
+                    not isinstance(name, str)
+                    or not name
+                    or not isinstance(schema, dict)
+                ):
+                    continue
+                app_vars[name] = schema
+                if "default" not in schema:
+                    continue
+                default_val = schema["default"]
+                if default_val == ENV_VAR_PLACEHOLDER:
+                    placeholder_vars.add(name)
+                    continue
+                type_err = validate_value_for_schema(default_val, schema)
+                if type_err:
+                    expected = infer_schema_type(schema) or "matching"
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message=(
+                                f"Variable '{name}' has invalid schema.default "
+                                f"({type_err})"
+                            ),
+                            fix=(
+                                f"Set schema.default for '{name}' to a valid "
+                                f"{expected} value or '{ENV_VAR_PLACEHOLDER}'"
+                            ),
+                        )
+                    )
+
+        env_path: Path | None = None
+        if context.env_file is not None:
+            env_path = context.env_file
+            env_rel = _rel_or_str(env_path, context.project_root)
+            if not env_path.is_file():
+                results.append(
+                    self.make_result(
+                        file=env_rel,
+                        message=f"Environment file '{env_path}' not found",
+                        fix="Provide an existing JSON file to --env-file",
+                    )
+                )
+                return results
+        else:
+            candidate = file_path.parent / "environment.json"
+            if candidate.is_file():
+                env_path = candidate
+                env_rel = _rel_or_str(env_path, context.project_root)
+
+        if env_path is None:
+            return results
+
+        try:
+            env_data = json.loads(env_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            results.append(
+                self.make_result(
+                    file=env_rel,
+                    message=f"Invalid JSON in {env_path.name}: {e}",
+                )
+            )
+            return results
+
+        parsed = parse_env_variable_declarations(env_data)
+        for err in parsed.errors:
+            results.append(
+                self.make_result(
+                    file=env_rel,
+                    message=err,
+                    fix=(
+                        "Declare environment variable defaults under "
+                        "'app.variableDeclarations' as "
+                        "{'name': '<var>', 'schema': {'default': <value>}}"
+                    ),
+                )
+            )
+
+        for var_name in sorted(placeholder_vars):
+            if var_name not in parsed.defaults and (
+                var_name not in parsed.seen_names
+            ):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Variable '{var_name}' has schema.default="
+                            f"'{ENV_VAR_PLACEHOLDER}' in {file_path.name} but "
+                            f"is missing from {env_path.name} under "
+                            "'app.variableDeclarations'"
+                        ),
+                        fix=(
+                            f"Add {{'name': '{var_name}', 'schema': "
+                            f"{{'default': ...}}}} under "
+                            f"'app.variableDeclarations' in {env_path.name}"
+                        ),
+                    )
+                )
+
+        for var_name, val in parsed.defaults.items():
+            if var_name not in app_vars:
+                results.append(
+                    self.make_result(
+                        file=env_rel,
+                        message=(
+                            f"Variable '{var_name}' in {env_path.name} "
+                            "'app.variableDeclarations' is not declared in "
+                            f"{file_path.name} 'variableDeclarations'"
+                        ),
+                        fix=(
+                            f"Declare '{var_name}' in {file_path.name} with "
+                            f"schema.default='{ENV_VAR_PLACEHOLDER}' or remove "
+                            f"it from {env_path.name}"
+                        ),
+                    )
+                )
+                continue
+
+            app_schema = app_vars[var_name]
+            app_type = infer_schema_type(app_schema)
+            env_type = parsed.declared_types.get(var_name)
+            if app_type and env_type and env_type.upper() != app_type.upper():
+                results.append(
+                    self.make_result(
+                        file=env_rel,
+                        message=(
+                            f"Variable '{var_name}' in {env_path.name} "
+                            f"declares schema.type '{env_type}', which does "
+                            f"not match '{app_type}' in {file_path.name}"
+                        ),
+                        fix=(
+                            f"Change schema.type to '{app_type}' or omit "
+                            f"schema.type in {env_path.name}"
+                        ),
+                    )
+                )
+
+            type_err = validate_value_for_schema(val, app_schema)
+            if type_err:
+                results.append(
+                    self.make_result(
+                        file=env_rel,
+                        message=(
+                            f"Variable '{var_name}' in {env_path.name} has "
+                            f"invalid schema.default ({type_err})"
+                        ),
+                        fix=(
+                            f"Update schema.default for '{var_name}' in "
+                            f"{env_path.name} to match {file_path.name}"
+                        ),
+                    )
+                )
+
+            if var_name not in placeholder_vars:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Variable '{var_name}' has an environment "
+                            f"override in {env_path.name}, but schema.default "
+                            f"in {file_path.name} is not "
+                            f"'{ENV_VAR_PLACEHOLDER}'"
+                        ),
+                        fix=(
+                            f"Set schema.default to '{ENV_VAR_PLACEHOLDER}' "
+                            f"for '{var_name}' in {file_path.name}"
+                        ),
+                    )
+                )
 
         return results
