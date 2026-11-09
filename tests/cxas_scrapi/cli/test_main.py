@@ -722,3 +722,49 @@ def test_deployments_update_func(mock_deps_cls: typing.Any) -> None:
         persona_property="CHATTY",
         noise_suppression_level="moderate",
     )
+
+
+def test_parser_lint_and_branch_and_promote_env_file() -> None:
+    """Test --env-file flag parsing across lint, branch, and deployments promote."""
+    parser = get_parser()
+
+    lint_args = parser.parse_args(
+        ["lint", "--app-dir", "./my-agent", "--env-file", "./env.prod.json"]
+    )
+    assert lint_args.command == "lint"
+    assert lint_args.app_dir == "./my-agent"
+    assert lint_args.env_file == "./env.prod.json"
+
+    branch_args = parser.parse_args(
+        [
+            "branch",
+            "Source App",
+            "--new-name",
+            "UAT App",
+            "--env-file",
+            "./env.uat.json",
+            "--project-id",
+            "p",
+            "--location",
+            "us",
+        ]
+    )
+    assert branch_args.command == "branch"
+    assert branch_args.env_file == "./env.uat.json"
+
+    promote_args = parser.parse_args(
+        [
+            "deployments",
+            "promote",
+            "--app-resource-name",
+            "projects/p/locations/us/apps/a",
+            "--app-dir",
+            "./my-agent",
+            "--env-file",
+            "./env.prod.json",
+            "--live-deployment-resource-name",
+            "projects/p/locations/us/apps/a/deployments/d",
+        ]
+    )
+    assert promote_args.deployments_command == "promote"
+    assert promote_args.env_file == "./env.prod.json"

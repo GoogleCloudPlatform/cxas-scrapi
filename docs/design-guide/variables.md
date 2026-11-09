@@ -173,3 +173,48 @@ Both contexts read from and write to the same underlying session state. A value 
 
 !!! note "State written in a tool is available immediately"
     If a tool writes to `context.state` and then a callback runs in the same turn, the callback will see the updated value. State is shared within the turn, not just across turns.
+
+---
+
+## Environment-specific variable defaults (`$env_var`)
+
+When a session variable needs different initial defaults across environments (for example, `enable_authentication: false` in `dev` and `true` in `uat`/`prod`), set `"default": "$env_var"` on the declaration in `app.json` and supply the typed default under `app.variableDeclarations` in each stage's `environment.json`:
+
+=== "app.json"
+
+    ```json
+    {
+      "variableDeclarations": [
+        {
+          "name": "enable_authentication",
+          "description": "Enforce caller authentication before account actions.",
+          "schema": {
+            "type": "BOOLEAN",
+            "default": "$env_var"
+          }
+        }
+      ]
+    }
+    ```
+
+=== "environment.prod.json"
+
+    ```json
+    {
+      "app": {
+        "variableDeclarations": [
+          {
+            "name": "enable_authentication",
+            "schema": {
+              "type": "BOOLEAN",
+              "default": true
+            }
+          }
+        ]
+      }
+    }
+    ```
+
+- **Validate per stage:** `cxas lint --app-dir ./my-agent --env-file ./environment.prod.json` (rule `A017` verifies presence and schema types).
+- **Deploy per stage:** `cxas push --app-dir ./my-agent --env-file ./environment.prod.json --to <prod-app>` resolves `"$env_var"` in a temporary staging copy without mutating your working tree.
+- **Pull safely:** `cxas pull` preserves existing `"$env_var"` placeholders in `app.json` and syncs exported defaults into `environment.json`.
