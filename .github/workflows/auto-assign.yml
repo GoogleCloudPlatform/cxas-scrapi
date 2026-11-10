@@ -1,8 +1,9 @@
 name: Auto Assign Reviewer
 
 # Use pull_request_target to ensure the workflow has write permissions
-# even when the PR originates from a fork.
-on:
+# even when the PR originates from a fork. No PR head code is checked out
+# or executed; only base-branch maintainers.txt is read.
+on: # zizmor: ignore[dangerous-triggers]
   pull_request_target:
     types: [opened, ready_for_review, reopened]
 
