@@ -4,4 +4,5 @@
 # CODEOWNERS owns itself so the gate cannot be edited away without approval.
 
 /.github/root-allowlist.txt @kmaphoenix @ygupta89
+/.github/workflows/ @kmaphoenix @ygupta89 @svetakvsundhar
 /.github/CODEOWNERS @kmaphoenix @ygupta89
