@@ -1,0 +1,10 @@
+{
+  "name": "set_next_agent_actions",
+  "pythonFunction": {
+    "name": "set_next_agent_actions",
+    "pythonCode": "tools/set_next_agent_actions/python_function/python_code.py",
+    "description": "Queues the agent's next reply and actions so they play without calling the model."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "set_next_agent_actions"
+}

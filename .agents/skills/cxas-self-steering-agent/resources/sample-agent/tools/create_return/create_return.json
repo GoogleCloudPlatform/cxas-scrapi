@@ -1,0 +1,10 @@
+{
+  "name": "create_return",
+  "pythonFunction": {
+    "name": "create_return",
+    "pythonCode": "tools/create_return/python_function/python_code.py",
+    "description": "Starts a return for a delivered order and emails the customer a return label.\n\nArgs:\n  order_number (str): The order number of the delivered order, as a string.\n  reason (str): The customer's reason for the return, in a few words.\n\nReturns:\n  dict[str, Any]: The return details, including how the label is sent and\n    when to expect the refund."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "create_return"
+}

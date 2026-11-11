@@ -1,0 +1,10 @@
+{
+  "name": "lookup_order",
+  "pythonFunction": {
+    "name": "lookup_order",
+    "pythonCode": "tools/lookup_order/python_function/python_code.py",
+    "description": "Looks up an order by its order number.\n\nArgs:\n  order_number (str): The order number the customer gave, as a string, e.g.\n    \"1001\".\n\nReturns:\n  dict[str, Any]: The order's status, item, and delivery details, or\n    found=False if no order has that number."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "lookup_order"
+}

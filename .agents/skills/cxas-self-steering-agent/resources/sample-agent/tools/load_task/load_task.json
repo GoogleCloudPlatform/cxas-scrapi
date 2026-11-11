@@ -1,0 +1,10 @@
+{
+  "name": "load_task",
+  "pythonFunction": {
+    "name": "load_task",
+    "pythonCode": "tools/load_task/python_function/python_code.py",
+    "description": "Loads the instructions for a task in the currently open playbook.\n\nArgs:\n  task_name (str): Exact name of the task to load.\n  rationale (str): Why this task is being loaded. Kept in the conversation\n    history so later turns know what prompted it. One short sentence (max 15\n    words) stating the customer's request or the tool result that led here,\n    e.g. \"Customer changed their mind and wants to cancel.\" Do not restate the\n    task name or include personal data.\n\nReturns:\n  dict[str, Any]: Success status and the loaded task."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "load_task"
+}
