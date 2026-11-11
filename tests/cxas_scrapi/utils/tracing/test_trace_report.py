@@ -129,6 +129,7 @@ def test_to_json_excludes_raw_by_default() -> None:
     n = tr.normalize(SAMPLE_DICT)
     out = json.loads(tr.to_json(n))
     assert "raw" not in out
+    assert all("raw_turn" not in m for m in out["turn_metrics"])
     assert out["conversation_id"] == "c1"
 
 
@@ -136,6 +137,7 @@ def test_to_json_with_raw_and_extras() -> None:
     n = tr.normalize(SAMPLE_DICT)
     out = json.loads(tr.to_json(n, include_raw=True, extras={"foo": "bar"}))
     assert "raw" in out
+    assert all("raw_turn" in m for m in out["turn_metrics"])
     assert out["extras"] == {"foo": "bar"}
 
 
@@ -408,3 +410,130 @@ def test_span_renderers_unknown_name() -> None:
     assert "Other" in tr._span_to_text(s)
     md = tr._span_to_markdown(s)
     assert "Other" in md
+
+
+def test_python_tool_and_callback_print_logs_and_raw_turn_json() -> None:
+    turn_with_logs = {
+        "messages": [
+            {"role": "user", "chunks": [{"text": "check status"}]},
+            {"role": "agent", "chunks": [{"text": "all good"}]},
+        ],
+        "root_span": {
+            "name": "root",
+            "duration": "0.5s",
+            "attributes": {"perceived latency (ms)": 480.0},
+            "child_spans": [
+                {
+                    "name": "Callback",
+                    "duration": "0.1s",
+                    "attributes": {
+                        "agent": "root_agent",
+                        "stage": "BeforeTool",
+                        "stdout": "callback print line 1\ncallback print line 2\n",
+                        "logs": ["cb_log_entry"],
+                    },
+                    "child_spans": [],
+                },
+                {
+                    "name": "Tool",
+                    "duration": "0.2s",
+                    "attributes": {
+                        "name": "python_lookup",
+                        "type": "PythonFunctionTool",
+                        "args": {"query": "abc"},
+                        "response": {"result": "ok"},
+                        "stdout": "tool print debug: query=abc\n",
+                        "stderr": "tool warning on stderr\n",
+                        "error": "transient warning",
+                    },
+                    "child_spans": [],
+                },
+            ],
+        },
+    }
+    normalized = tr.normalize({"name": "p/c_logs", "turns": [turn_with_logs]})
+    tm = normalized["turn_metrics"][0]
+
+    # Issue #350: per-turn raw JSON preserved on each turn metric entry
+    assert "raw_turn" in tm
+    assert tm["raw_turn"]["messages"][0]["chunks"][0]["text"] == "check status"
+
+    # Issue #485: Python tool & callback stdout/stderr/logs/error extracted
+    cb_span, tool_span = tm["spans"]
+    assert cb_span["stdout"] == "callback print line 1\ncallback print line 2\n"
+    assert cb_span["logs"] == ["cb_log_entry"]
+    assert tool_span["stdout"] == "tool print debug: query=abc\n"
+    assert tool_span["stderr"] == "tool warning on stderr\n"
+    assert tool_span["error"] == "transient warning"
+    assert tool_span["attributes"]["type"] == "PythonFunctionTool"
+
+    # Text rendering includes stdout, stderr, log, and error lines
+    txt = tr.to_text(normalized)
+    assert "stdout: callback print line 1" in txt
+    assert "stdout: tool print debug: query=abc" in txt
+    assert "stderr: tool warning on stderr" in txt
+    assert "log: cb_log_entry" in txt
+    assert "error: transient warning" in txt
+
+    # Markdown omits Raw turn JSON unless include_raw=True
+    md = tr.to_markdown(normalized)
+    assert "**Callback `BeforeTool` stdout:**" in md
+    assert "callback print line 1" in md
+    assert "**Tool `python_lookup` stdout:**" in md
+    assert "tool print debug: query=abc" in md
+    assert "**Tool `python_lookup` stderr:**" in md
+    assert "tool warning on stderr" in md
+    assert "**Callback `BeforeTool` logs:**" in md
+    assert "cb_log_entry" in md
+    assert "**Tool `python_lookup` error:** `transient warning`" in md
+    assert "<details><summary>Raw turn JSON</summary>" not in md
+    md_with_raw = tr.to_markdown(normalized, include_raw=True)
+    assert "<details><summary>Raw turn JSON</summary>" in md_with_raw
+
+    # HTML omits Raw turn JSON unless include_raw=True
+    html = tr.to_html(normalized)
+    assert "tool print debug: query=abc" in html
+    assert "tool warning on stderr" in html
+    assert "Raw turn JSON" not in html
+    html_with_raw = tr.to_html(normalized, include_raw=True)
+    assert "Raw turn JSON" in html_with_raw
+
+    # JSON omits raw_turn unless include_raw=True
+    json_default = json.loads(tr.to_json(normalized))
+    assert "raw_turn" not in json_default["turn_metrics"][0]
+    assert (
+        json_default["turn_metrics"][0]["spans"][1]["stdout"]
+        == "tool print debug: query=abc\n"
+    )
+    json_raw = json.loads(tr.to_json(normalized, include_raw=True))
+    assert (
+        json_raw["turn_metrics"][0]["raw_turn"]["messages"][0]["role"] == "user"
+    )
+
+
+def test_span_logs_markdown_fences_backticks_and_multiline_errors() -> None:
+    """Span Markdown logs dynamically expand fences and handle multiline err."""
+    span = {
+        "name": "Tool",
+        "tool": "run_code",
+        "stdout": "a\n```\n# HEADING injected\n",
+        "stderr": "err with ```` four backticks\n",
+        "logs": ["log with ``` triple"],
+        "error": "line 1\n```\nline 2",
+    }
+    rendered = "\n".join(tr._span_logs_to_markdown(span))
+    assert "  ````text\n  a\n  ```\n  # HEADING injected\n  ````" in rendered
+    assert "  `````text\n  err with ```` four backticks\n  `````" in rendered
+    assert "  ````text\n  log with ``` triple\n  ````" in rendered
+    assert (
+        "  **Tool `run_code` error:**\n  ````text\n  line 1\n  ```\n"
+        "  line 2\n  ````" in rendered
+    )
+
+    inline_backtick_span = {
+        "name": "Tool",
+        "tool": "check",
+        "error": "bad `key` value",
+    }
+    inline_rendered = "\n".join(tr._span_logs_to_markdown(inline_backtick_span))
+    assert "**Tool `check` error:** `` bad `key` value ``" in inline_rendered
