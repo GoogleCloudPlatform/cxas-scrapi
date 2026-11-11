@@ -1507,7 +1507,7 @@ def deployments_promote(args: argparse.Namespace) -> None:
         to=args.app_resource_name,
         app_name=None,
         display_name=None,
-        env_file=None,
+        env_file=getattr(args, "env_file", None),
         project_id=None,
         location=None,
         create_version=True,
@@ -2806,6 +2806,14 @@ def get_parser() -> argparse.ArgumentParser:
         help="Path to the app directory to lint (default: current directory).",
     )
     parser_lint.add_argument(
+        "--env-file",
+        default=None,
+        help=(
+            "Optional: Path to an environment JSON file to validate '$env_var' "
+            "variableDeclarations against."
+        ),
+    )
+    parser_lint.add_argument(
         "--model",
         type=str,
         default=None,
@@ -2978,6 +2986,14 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_branch.add_argument(
         "--new-name", required=True, help="Display name of the new branch app."
+    )
+    parser_branch.add_argument(
+        "--env-file",
+        default=None,
+        help=(
+            "Optional: Path to a specific environment JSON file to include "
+            "as environment.json when pushing the branched app."
+        ),
     )
     _add_project_location_args(parser_branch)
     parser_branch.set_defaults(func=app_branch)
@@ -3173,6 +3189,14 @@ def get_parser() -> argparse.ArgumentParser:
         "--app-dir",
         required=False,
         help="Path to the CXAS app directory.",
+    )
+    parser_deps_promote.add_argument(
+        "--env-file",
+        required=False,
+        help=(
+            "Optional: Path to a specific environment JSON file to include "
+            "as environment.json during promotion push."
+        ),
     )
     parser_deps_promote.add_argument(
         "--live-deployment-resource-name",

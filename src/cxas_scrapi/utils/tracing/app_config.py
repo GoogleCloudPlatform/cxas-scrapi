@@ -379,6 +379,20 @@ class AppConfig:
         return {}
 
 
+_APP_VAR_DECL_KEYS: frozenset[str] = frozenset(
+    {"variableDeclarations", "variable_declarations"}
+)
+
+_COMPONENT_CATEGORIES: tuple[str, ...] = (
+    "tools",
+    "toolsets",
+    "agents",
+    "guardrails",
+    "evaluations",
+    "evaluationExpectations",
+)
+
+
 def _merge_env_booleans_into_dict(
     target: dict[str, Any],
     env_node: dict[str, Any],
@@ -428,7 +442,19 @@ def _merge_env_booleans_into_dict(
         ):
             val_field = field.message_type.fields_by_name["value"]
             target_map = target.get(target_key)
-            if (
+            if val_field.type == FieldDescriptor.TYPE_BOOL and isinstance(
+                target_map, dict
+            ):
+                for map_key, map_env_val in list(env_val.items()):
+                    coerced_bool = _coerce_bool(map_env_val)
+                    if coerced_bool is not None:
+                        if env_val[map_key] is not coerced_bool:
+                            env_val[map_key] = coerced_bool
+                            env_modified = True
+                        if target_map.get(map_key) is not coerced_bool:
+                            target_map[map_key] = coerced_bool
+                            target_modified = True
+            elif (
                 val_field.type == FieldDescriptor.TYPE_MESSAGE
                 and val_field.message_type is not None
                 and not val_field.message_type.full_name.startswith(
@@ -453,13 +479,39 @@ def _merge_env_booleans_into_dict(
         if field.is_repeated:
             target_list = target.get(target_key)
             if isinstance(env_val, list) and isinstance(target_list, list):
-                for t_item, e_item in zip(target_list, env_val, strict=False):
-                    if isinstance(t_item, dict) and isinstance(e_item, dict):
-                        t_mod, e_mod = _merge_env_booleans_into_dict(
-                            t_item, e_item, field.message_type
+                named_targets = {
+                    t_item["name"]: t_item
+                    for t_item in target_list
+                    if isinstance(t_item, dict)
+                    and isinstance(t_item.get("name"), str)
+                    and t_item["name"]
+                }
+                if named_targets and any(
+                    isinstance(e_item, dict)
+                    and isinstance(e_item.get("name"), str)
+                    for e_item in env_val
+                ):
+                    pairs = [
+                        (named_targets[e_item["name"]], e_item)
+                        for e_item in env_val
+                        if isinstance(e_item, dict)
+                        and isinstance(e_item.get("name"), str)
+                        and e_item["name"] in named_targets
+                    ]
+                else:
+                    pairs = [
+                        (t_item, e_item)
+                        for t_item, e_item in zip(
+                            target_list, env_val, strict=False
                         )
-                        target_modified |= t_mod
-                        env_modified |= e_mod
+                        if isinstance(t_item, dict) and isinstance(e_item, dict)
+                    ]
+                for t_item, e_item in pairs:
+                    t_mod, e_mod = _merge_env_booleans_into_dict(
+                        t_item, e_item, field.message_type
+                    )
+                    target_modified |= t_mod
+                    env_modified |= e_mod
             continue
 
         if isinstance(env_val, dict):
@@ -481,6 +533,117 @@ def _merge_env_booleans_into_dict(
                     target_modified = True
 
     return target_modified, env_modified
+
+
+def _dict_has_bool_placeholders(
+    target: dict[str, Any],
+    desc: Descriptor,
+    skip_keys: frozenset[str] = frozenset(),
+) -> bool:
+    """Returns True if `target` has any `"$env_var"` on a proto `bool` field."""
+    for key, val in target.items():
+        if key in skip_keys:
+            continue
+        field = _resolve_proto_field(desc, key)
+        if field is None:
+            continue
+        if (
+            field.type == FieldDescriptor.TYPE_BOOL
+            and not field.is_repeated
+            and val == ENV_VAR_PLACEHOLDER
+        ):
+            return True
+        if (
+            field.type == FieldDescriptor.TYPE_MESSAGE
+            and field.message_type is not None
+            and not field.message_type.full_name.startswith("google.protobuf.")
+        ):
+            if field.message_type.GetOptions().map_entry and isinstance(
+                val, dict
+            ):
+                val_field = field.message_type.fields_by_name["value"]
+                if val_field.type == FieldDescriptor.TYPE_BOOL:
+                    if any(v == ENV_VAR_PLACEHOLDER for v in val.values()):
+                        return True
+                elif (
+                    val_field.type == FieldDescriptor.TYPE_MESSAGE
+                    and val_field.message_type is not None
+                ):
+                    for map_val in val.values():
+                        if isinstance(
+                            map_val, dict
+                        ) and _dict_has_bool_placeholders(
+                            map_val, val_field.message_type
+                        ):
+                            return True
+            elif field.is_repeated and isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict) and _dict_has_bool_placeholders(
+                        item, field.message_type
+                    ):
+                        return True
+            elif not field.is_repeated and isinstance(val, dict):
+                if _dict_has_bool_placeholders(val, field.message_type):
+                    return True
+    return False
+
+
+def _iter_component_manifests(cat_dir: str) -> list[tuple[str, str, bool]]:
+    """Yields `(entry_name, file_path, is_yaml)` under a category directory."""
+    manifests: list[tuple[str, str, bool]] = []
+    if not os.path.isdir(cat_dir):
+        return manifests
+    for entry in sorted(os.listdir(cat_dir)):
+        entry_path = os.path.join(cat_dir, entry)
+        if os.path.isdir(entry_path):
+            for ext in (".json", ".yaml", ".yml"):
+                fpath = os.path.join(entry_path, f"{entry}{ext}")
+                if os.path.isfile(fpath):
+                    manifests.append((entry, fpath, ext in (".yaml", ".yml")))
+        elif os.path.isfile(entry_path):
+            stem, ext = os.path.splitext(entry)
+            if ext in (".json", ".yaml", ".yml") and stem:
+                manifests.append((stem, entry_path, ext in (".yaml", ".yml")))
+    return manifests
+
+
+def has_bool_env_var_placeholders(agent_dir: str) -> bool:
+    """Returns True if any staged manifest in `agent_dir` has a boolean
+    `"$env_var"` placeholder.
+    """
+    app_desc = _RESOURCE_DESCRIPTORS["app"]
+    for fname, is_yaml in (("app.json", False), ("app.yaml", True)):
+        fpath = os.path.join(agent_dir, fname)
+        if not os.path.isfile(fpath):
+            continue
+        try:
+            with open(fpath, encoding="utf-8") as f:
+                data = yaml.safe_load(f) if is_yaml else json.load(f)
+            if isinstance(data, dict):
+                target = (
+                    data["app"] if isinstance(data.get("app"), dict) else data
+                )
+                if _dict_has_bool_placeholders(
+                    target, app_desc, skip_keys=_APP_VAR_DECL_KEYS
+                ):
+                    return True
+        except Exception:
+            continue
+
+    for category in _COMPONENT_CATEGORIES:
+        cat_dir = os.path.join(agent_dir, category)
+        cat_desc = _RESOURCE_DESCRIPTORS[category]
+        for _, fpath, is_yaml in _iter_component_manifests(cat_dir):
+            try:
+                with open(fpath, encoding="utf-8") as f:
+                    comp_data = yaml.safe_load(f) if is_yaml else json.load(f)
+                if isinstance(comp_data, dict) and _dict_has_bool_placeholders(
+                    comp_data, cat_desc
+                ):
+                    return True
+            except Exception:
+                continue
+    return False
 
 
 def _replace_bool_placeholders_with_default(
@@ -506,7 +669,11 @@ def _replace_bool_placeholders_with_default(
                 val, dict
             ):
                 val_field = field.message_type.fields_by_name["value"]
-                if (
+                if val_field.type == FieldDescriptor.TYPE_BOOL:
+                    for map_key, map_val in list(val.items()):
+                        if map_val == ENV_VAR_PLACEHOLDER:
+                            val[map_key] = False
+                elif (
                     val_field.type == FieldDescriptor.TYPE_MESSAGE
                     and val_field.message_type is not None
                 ):
@@ -530,10 +697,11 @@ def resolve_env_booleans_for_lint(
     category: str,
     resource_name: str,
     app_root: Path,
+    env_file: Path | None = None,
 ) -> None:
     """Resolves boolean `$env_var` placeholders in-memory for `cxas lint`.
 
-    When `environment.json` is present in `app_root`, resolves boolean values
+    When `env_file` or `environment.json` is present, resolves boolean values
     from it so invalid or missing values are still caught. When no
     `environment.json` exists on disk (e.g. supplied via `--env-file` at push
     time), substitutes `False` for literal `"$env_var"` on proto `bool` fields.
@@ -542,7 +710,11 @@ def resolve_env_booleans_for_lint(
     if desc is None or not isinstance(data, dict):
         return
 
-    env_path = app_root / "environment.json"
+    env_path = (
+        env_file
+        if env_file is not None and env_file.is_file()
+        else app_root / "environment.json"
+    )
     if not env_path.is_file():
         _replace_bool_placeholders_with_default(data, desc)
         return
@@ -560,9 +732,17 @@ def resolve_env_booleans_for_lint(
     if category == "app":
         target_app = data["app"] if isinstance(data.get("app"), dict) else data
         if isinstance(env_copy.get("app"), dict):
-            _merge_env_booleans_into_dict(target_app, env_copy["app"], desc)
+            _merge_env_booleans_into_dict(
+                target_app,
+                env_copy["app"],
+                desc,
+                skip_keys=_APP_VAR_DECL_KEYS,
+            )
         _merge_env_booleans_into_dict(
-            target_app, env_copy, desc, skip_keys=_ENV_CATEGORY_KEYS
+            target_app,
+            env_copy,
+            desc,
+            skip_keys=_ENV_CATEGORY_KEYS | _APP_VAR_DECL_KEYS,
         )
     else:
         cat_env = env_copy.get(category)
@@ -618,7 +798,10 @@ def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
                 app_mod = False
                 if isinstance(env_data.get("app"), dict):
                     t_mod, e_mod = _merge_env_booleans_into_dict(
-                        target_app, env_data["app"], app_desc
+                        target_app,
+                        env_data["app"],
+                        app_desc,
+                        skip_keys=_APP_VAR_DECL_KEYS,
                     )
                     app_mod |= t_mod
                     env_modified |= e_mod
@@ -626,7 +809,7 @@ def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
                     target_app,
                     env_data,
                     app_desc,
-                    skip_keys=_ENV_CATEGORY_KEYS,
+                    skip_keys=_ENV_CATEGORY_KEYS | _APP_VAR_DECL_KEYS,
                 )
                 app_mod |= t_mod
                 env_modified |= e_mod
@@ -653,7 +836,10 @@ def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
                 yaml_mod = False
                 if isinstance(env_data.get("app"), dict):
                     t_mod, e_mod = _merge_env_booleans_into_dict(
-                        target_app, env_data["app"], app_desc
+                        target_app,
+                        env_data["app"],
+                        app_desc,
+                        skip_keys=_APP_VAR_DECL_KEYS,
                     )
                     yaml_mod |= t_mod
                     env_modified |= e_mod
@@ -661,7 +847,7 @@ def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
                     target_app,
                     env_data,
                     app_desc,
-                    skip_keys=_ENV_CATEGORY_KEYS,
+                    skip_keys=_ENV_CATEGORY_KEYS | _APP_VAR_DECL_KEYS,
                 )
                 yaml_mod |= t_mod
                 env_modified |= e_mod
@@ -674,54 +860,42 @@ def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
                 f"Failed to resolve booleans in {app_yaml_path}: {e}"
             )
 
-    # 2. Resolve into `<category>/<name>/<name>.{json,yaml,yml}` manifests
-    for category in ("tools", "toolsets", "agents", "guardrails"):
+    # 2. Resolve into component manifests (nested or flat)
+    for category in _COMPONENT_CATEGORIES:
         cat_env = env_data.get(category)
         cat_dir = os.path.join(agent_dir, category)
         cat_desc = _RESOURCE_DESCRIPTORS[category]
-        if not isinstance(cat_env, dict) or not os.path.isdir(cat_dir):
+        if not isinstance(cat_env, dict):
             continue
-        for entry in sorted(os.listdir(cat_dir)):
-            comp_dir = os.path.join(cat_dir, entry)
-            if not os.path.isdir(comp_dir):
-                continue
-            for ext in (".json", ".yaml", ".yml"):
-                fpath = os.path.join(comp_dir, f"{entry}{ext}")
-                if not os.path.isfile(fpath):
+        for entry, fpath, is_yaml in _iter_component_manifests(cat_dir):
+            try:
+                with open(fpath, encoding="utf-8") as f:
+                    comp_data = yaml.safe_load(f) if is_yaml else json.load(f)
+                if not isinstance(comp_data, dict):
                     continue
-                is_yaml = ext in (".yaml", ".yml")
-                try:
-                    with open(fpath, encoding="utf-8") as f:
-                        comp_data = (
-                            yaml.safe_load(f) if is_yaml else json.load(f)
-                        )
-                    if not isinstance(comp_data, dict):
-                        continue
-                    disp = comp_data.get("displayName") or comp_data.get(
-                        "display_name"
-                    )
-                    spec = (
-                        cat_env.get(disp)
-                        if isinstance(disp, str) and disp
-                        else None
-                    ) or cat_env.get(entry)
-                    if not isinstance(spec, dict):
-                        continue
-                    t_mod, e_mod = _merge_env_booleans_into_dict(
-                        comp_data, spec, cat_desc
-                    )
-                    env_modified |= e_mod
-                    if t_mod:
-                        with open(fpath, "w", encoding="utf-8") as f:
-                            if is_yaml:
-                                yaml.safe_dump(comp_data, f, sort_keys=False)
-                            else:
-                                json.dump(comp_data, f, indent=2)
-                        any_modified = True
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to resolve booleans in {fpath}: {e}"
-                    )
+                disp = comp_data.get("displayName") or comp_data.get(
+                    "display_name"
+                )
+                spec = (
+                    cat_env.get(disp)
+                    if isinstance(disp, str) and disp
+                    else None
+                ) or cat_env.get(entry)
+                if not isinstance(spec, dict):
+                    continue
+                t_mod, e_mod = _merge_env_booleans_into_dict(
+                    comp_data, spec, cat_desc
+                )
+                env_modified |= e_mod
+                if t_mod:
+                    with open(fpath, "w", encoding="utf-8") as f:
+                        if is_yaml:
+                            yaml.safe_dump(comp_data, f, sort_keys=False)
+                        else:
+                            json.dump(comp_data, f, indent=2)
+                    any_modified = True
+            except Exception as e:
+                logger.warning(f"Failed to resolve booleans in {fpath}: {e}")
 
     # Write back environment.json only if stringified/int booleans normalized
     if env_modified:

@@ -18,7 +18,7 @@ cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
 |--------|----------|---------|-------------|
 | `--app-dir DIR` | No | `.` (current directory) | Path to the local agent directory to upload. |
 | `--to TARGET` | No | — | Target app to overwrite. Accepts a full resource name or display name. When provided, the existing app is updated in place. |
-| `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json` before uploading. Useful for supplying environment-specific secrets or variables without committing them. |
+| `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json` before uploading. Useful for supplying environment-specific resource bindings and resolving `"$env_var"` defaults in `app.json` / `app.yaml` `variableDeclarations` without committing secrets or per-stage overrides. |
 | `--app-name APP` | No | — | Explicit app resource name to push to (v1beta API). Use this when you want to overwrite a specific app and already know its full ID. |
 | `--display-name NAME` | No | `"Pushed Agent"` | Display name for the new app when no target is specified and a new app will be created. |
 | `--create-version` | No | `false` | Automatically create a version snapshot after a successful push. |
@@ -40,6 +40,47 @@ The CLI bundles the following top-level items from `--app-dir` into a ZIP archiv
 - `.github/workflows/`
 
 Everything else in the directory (e.g. `.git`, local test output) is ignored.
+
+## Environment-Specific Variable Defaults (`$env_var`)
+
+When a variable in `app.json` (or `app.yaml`) sets `"default": "$env_var"`, `cxas push` resolves its typed default from `environment.json` (or `--env-file`) inside a temporary staging directory before uploading — leaving your local working tree untouched.
+
+Declare the placeholder in `app.json`:
+
+```json
+{
+  "variableDeclarations": [
+    {
+      "name": "enable_authentication",
+      "description": "Whether caller authentication is enforced.",
+      "schema": {
+        "type": "BOOLEAN",
+        "default": "$env_var"
+      }
+    }
+  ]
+}
+```
+
+Supply the per-environment value under `app.variableDeclarations` in `environment.json` (or `--env-file`):
+
+```json
+{
+  "app": {
+    "variableDeclarations": [
+      {
+        "name": "enable_authentication",
+        "schema": {
+          "type": "BOOLEAN",
+          "default": true
+        }
+      }
+    ]
+  }
+}
+```
+
+`cxas push` fails fast before uploading if `--env-file` is missing, a `"$env_var"` variable is absent from `app.variableDeclarations`, `variableDeclarations` is mistakenly placed at the top level of `environment.json`, or the supplied value does not match the declared schema type.
 
 ## Examples
 

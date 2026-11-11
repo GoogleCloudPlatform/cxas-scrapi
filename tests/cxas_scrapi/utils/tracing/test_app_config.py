@@ -734,3 +734,75 @@ def test_schema_lint_accepts_boolean_env_var_placeholders(
     errs = v001.check(tmp_path / "app.json", "", ctx)
     assert len(errs) == 1
     assert "Proto schema validation failed" in errs[0].message
+
+    # 4. Explicit --env-file overrides environment.json during lint
+    stage_env = tmp_path / "environment.prod.json"
+    _write(
+        stage_env,
+        {
+            "app": {
+                "pinned": "true",
+                "loggingSettings": {
+                    "bigqueryExportSettings": {"enabled": True}
+                },
+            }
+        },
+    )
+    ctx_env = build_context(
+        tmp_path,
+        LintConfig(),
+        Discovery(tmp_path, tmp_path / "evals"),
+        env_file=stage_env,
+    )
+    assert v001.check(tmp_path / "app.json", "", ctx_env) == []
+
+
+def test_resolve_env_booleans_skips_variable_declarations(
+    tmp_path: typing.Any,
+) -> None:
+    """app.variableDeclarations in environment.json does not clobber earlier
+    declarations via positional zip."""
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "displayName": "Combined App",
+            "pinned": ENV_VAR_PLACEHOLDER,
+            "variableDeclarations": [
+                {
+                    "name": "first_var",
+                    "schema": {
+                        "type": "STRING",
+                        "nullable": False,
+                        "default": "hi",
+                    },
+                },
+                {
+                    "name": "second_var",
+                    "schema": {
+                        "type": "BOOLEAN",
+                        "nullable": True,
+                        "default": ENV_VAR_PLACEHOLDER,
+                    },
+                },
+            ],
+        },
+        env={
+            "app": {
+                "pinned": "true",
+                "variableDeclarations": [
+                    {
+                        "name": "second_var",
+                        "schema": {
+                            "type": "BOOLEAN",
+                            "nullable": True,
+                            "default": True,
+                        },
+                    }
+                ],
+            }
+        },
+    )
+    assert resolve_env_booleans_in_dir(app_dir) is True
+    updated_app = json.loads((tmp_path / "app.json").read_text())
+    assert updated_app["pinned"] is True
+    assert updated_app["variableDeclarations"][0]["schema"]["nullable"] is False

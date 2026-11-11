@@ -486,7 +486,11 @@ class SchemaValid(Rule):
             ):
                 app_root = context.app_dir
             resolve_env_booleans_for_lint(
-                data, cat, resource_dir.name, app_root
+                data,
+                cat,
+                resource_dir.name,
+                app_root,
+                env_file=context.env_file if context else None,
             )
 
         try:

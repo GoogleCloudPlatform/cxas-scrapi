@@ -336,6 +336,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | E010 | `eval-tool-test-wrong-key` | Error | Tool test uses `test_cases` instead of `tests` |
     | E011 | `eval-invalid-match-type` | Error | Invalid `$matchType` value in golden `tool_calls` |
     | E012 | `eval-shadow-structure` | Error | Shadow eval needs `conversation_id` and non-empty `expectations`, a valid `replay_mode`, and only known keys (unknown keys are warnings) |
+    | E013 | `eval-simulation-structure` | Error | Simulation / CXAS 2.0 Milestone eval needs a `name`, a non-empty `steps` list, an actionable key per step (`goal`, `static_utterance`, or `event`), `inject_variables` only on step 1, and only known keys |
 
     ---
 
@@ -369,6 +370,12 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     Applies to YAML files under `evals/shadows/`. Each shadow eval needs a `conversation_id` and at least one natural-language expectation. `replay_mode` (on the case or in `config:`) must be `hybrid` or `exact`. Unknown keys in a case or in the `config:` block are reported as warnings with a *did you mean* suggestion, because ShadowEvals would otherwise ignore them silently (for example `session_params` instead of `session_parameters`).
 
+    ---
+
+    **E013 — eval-simulation-structure**
+
+    Applies to simulation and CXAS 2.0 Milestone evaluation YAML files under `evals/simulations/`. Each test case under `evals:` must define a `name` and a non-empty `steps` list where every step contains at least one actionable field (`goal`, `static_utterance`, or `event`), `inject_variables` only appears on step 1, `event` mappings specify `event` or `name`, and eval/step keys match the supported simulation and milestone schemas.
+
 === "A — Config"
 
     Rules in the `A` category check `app.json` and agent JSON configuration files.
@@ -385,6 +392,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A014 | `async-tool-missing-inactivity-timeout` | Error | Apps with `ASYNCHRONOUS` tools must configure `audioProcessingConfig.inactivityTimeout` |
     | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100) |
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
+    | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
 
     ---
 
@@ -408,6 +416,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Fix:* Add or fix the `rootAgent` field in `app.json` and ensure the agent directory and config file exist.
 
+    ---
+
+    **A017 — variable-defaults-and-env-vars**
+
+    Validates `variableDeclarations[].schema.default` types (`BOOLEAN`, `STRING`, `INTEGER`, `NUMBER`, `OBJECT`, `ARRAY`) in `app.json` / `app.yaml` and cross-validates `"$env_var"` placeholders against `environment.json` (or `--env-file` when provided).
+
+    *Triggers:* A static `schema.default` does not match its declared `schema.type` (e.g. `"true"` on a `BOOLEAN`), `variableDeclarations` is placed at the top level of `environment.json` instead of under `app.variableDeclarations`, a `"$env_var"` variable is missing or has a mismatched type in `environment.json`, or `environment.json` overrides a variable that is undeclared or lacks `"default": "$env_var"` in `app.json`.
+
+    *Fix:* Ensure `schema.default` values match the declared schema type, set `"default": "$env_var"` in `app.json` for environment-specific variables, and nest per-environment values under `app.variableDeclarations` in `environment.json`.
+
 === "S — Structure"
 
     Rules in the `S` category perform cross-reference checks between multiple files.
@@ -422,6 +440,10 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S007 | `sub-agent-single-parent` | Error | Sub-agents must have at most one parent agent (tree constraint) |
     | S008 | `singleton-guardrail-types` | Error | At most one guardrail of each singleton type (`llmPromptSecurity`) per app |
     | S009 | `guardrail-re2-quantifier-spacing` | Error | Guardrail `contentFilter` regex contains spaces inside RE2 repetition quantifiers (`{m, n}`) |
+    | S010 | `app-resource-references` | Error | App JSON references guardrails or `globalInstruction` files that don't exist |
+    | S011 | `agent-resource-references` | Error | Agent JSON references guardrails, toolsets, or `instruction` files that don't exist |
+    | S012 | `tool-file-references` | Error | Tool JSON references `pythonCode` or `openApiSchema` files that don't exist |
+    | S013 | `toolset-file-references` | Error | Toolset JSON references `openApiSchema` files that don't exist |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 
@@ -434,6 +456,30 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* More than one directory under `guardrails/` declares the same singleton guardrail type (`llmPromptSecurity` or `llm_prompt_security`).
 
     *Fix:* Keep a single guardrail of that type and remove the others.
+
+    ---
+
+    **S010 — app-resource-references**
+
+    Validates that every guardrail referenced in `app.json` `guardrails` resolves to an existing guardrail directory/file stem or `displayName` under `guardrails/`, and that an explicit `globalInstruction` file path exists on disk.
+
+    ---
+
+    **S011 — agent-resource-references**
+
+    Validates that every guardrail in `<agent>.json` `guardrails`, every toolset in `<agent>.json` `toolsets`, and any explicit `instruction` file path in `<agent>.json` exist on disk.
+
+    ---
+
+    **S012 — tool-file-references**
+
+    Validates that `pythonFunction.pythonCode` and `openApiTool.openApiSchema` file paths in `<tool>.json` exist on disk when non-inline paths are specified.
+
+    ---
+
+    **S013 — toolset-file-references**
+
+    Validates that `openApiToolset.openApiSchema` file paths in `<toolset>.json` exist on disk when non-inline paths are specified.
 
 === "V — Schema"
 
