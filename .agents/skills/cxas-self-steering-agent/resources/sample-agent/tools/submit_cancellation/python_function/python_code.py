@@ -1,36 +1,44 @@
 # pylint: disable=missing-module-docstring,undefined-variable
-import re
-from typing import Any
+from typing import Any, Literal
 
 
-def submit_cancellation(order_number: str, reason: str) -> dict[str, Any]:
-  """Cancels an order that hasn't shipped yet.
+def submit_cancellation(
+    reason: Literal[
+        "changed_mind", "ordered_by_mistake", "found_better_price", "other"
+    ],
+    confirmed: bool = False,
+) -> dict[str, Any]:
+  """Cancels the currently loaded order after ZIP verification and confirmation.
 
   Args:
-    order_number (str): The order number to cancel, as a string.
-    reason (str): The customer's reason for canceling, in a few words.
+    reason (str): Why the customer is canceling, one of "changed_mind",
+      "ordered_by_mistake", "found_better_price", or "other".
+    confirmed (bool): True once the customer explicitly confirms canceling the
+      order.
 
   Returns:
-    dict[str, Any]: Whether the order was canceled, and the refund timeline.
+    dict[str, Any]: Cancellation status, order number, and refund timeline, or
+      an error code when prerequisites are not met.
   """
-  number = re.sub(r"\D", "", order_number or "")
-  if (
-      number != context.state.get("order_id")
-      or context.state.get("order_status") != "Processing"
-  ):
+  order_id = context.state.get("order_id") or ""
+  if not order_id:
+    return {"status": "error", "error": "no_active_order"}
+  order_status = context.state.get("order_status") or ""
+  if order_status != "Processing":
     return {
-        "success": False,
-        "error": (
-            "Only an order that was looked up in this conversation and hasn't"
-            " shipped can be canceled."
-        ),
+        "status": "error",
+        "error": "order_not_cancelable",
+        "order_status": order_status,
     }
+  if not context.state.get("zip_verified"):
+    return {"status": "error", "error": "zip_not_verified"}
+  if not confirmed:
+    return {"status": "error", "error": "confirmation_required"}
 
   context.state["order_status"] = "Canceled"
   return {
-      "success": True,
-      "order_number": number,
-      "status": "Canceled",
+      "status": "canceled",
+      "order_number": order_id,
       "reason": reason,
-      "refund_timeline": "3 to 5 business days",
+      "refund_business_days": "3 to 5",
   }

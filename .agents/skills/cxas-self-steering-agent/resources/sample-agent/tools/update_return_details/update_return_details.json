@@ -1,0 +1,10 @@
+{
+  "name": "update_return_details",
+  "pythonFunction": {
+    "name": "update_return_details",
+    "pythonCode": "tools/update_return_details/python_function/python_code.py",
+    "description": "Records or updates return pickup details in session state.\n\nSupports initial slot collection, early details volunteered by the customer,\nand edits during the pre-booking summary review. Modifying any detail resets\nreturn_summary_confirmed so the updated summary is confirmed before booking.\n\nArgs:\n  reason (Optional[str]): Why the customer is returning the item, one of\n    \"damaged\", \"wrong_item\", \"changed_mind\", or \"other\".\n  pickup_day (Optional[str]): Selected pickup day from\n    check_return_pickup_availability (e.g. 'Thursday', 'Friday', or 'Monday').\n  pickup_window (Optional[Literal[\"morning\", \"afternoon\"]]): Selected courier\n    time window ('morning' or 'afternoon').\n  contact_phone (Optional[str]): Customer's 10-digit US callback phone number\n    for the courier.\n  summary_confirmed (Optional[bool]): True when the customer confirms the\n    pre-booking summary; False when they reject it.\n\nReturns:\n  dict[str, Any]: Validation status, the fields updated in this call, and\n    not_recorded for any fields skipped because availability was not checked\n    yet, or pickup_already_booked once the pickup has been booked."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "update_return_details"
+}
