@@ -288,7 +288,7 @@ class Deployments(Apps):
 
         deployment.channel_profile = channel_profile
 
-        if traffic_split:
+        if traffic_split is not None:
             if len(traffic_split) < 2:
                 raise ValueError(
                     "Traffic split requires at least two versions."
@@ -422,8 +422,8 @@ class Deployments(Apps):
 
             deployment.channel_profile = channel_profile
 
-        if "traffic_split" in kwargs:
-            traffic_split = kwargs.pop("traffic_split")
+        traffic_split = kwargs.pop("traffic_split", None)
+        if traffic_split is not None:
             if len(traffic_split) < 2:
                 raise ValueError(
                     "Traffic split requires at least two versions."
@@ -465,8 +465,9 @@ class Deployments(Apps):
         elif "app_version" in kwargs:
             # If promoting a new version without a traffic split,
             # clear any existing experiment
-            deployment.experiment_config = types.ExperimentConfig()
-            mask_paths.append("experiment_config")
+            if hasattr(types, "ExperimentConfig"):
+                deployment.experiment_config = types.ExperimentConfig()
+                mask_paths.append("experiment_config")
 
         # Handle remaining kwargs as top-level fields
         for key, value in kwargs.items():

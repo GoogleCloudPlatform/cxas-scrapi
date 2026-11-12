@@ -308,6 +308,10 @@ async def interactive_review(
         The caller (typically ``MigrationService.run_stage_1``) is
         responsible for committing the consolidation.
     """
+    if inquirer is None or Choice is None:
+        raise RuntimeError(
+            "InquirerPy is required for interactive grouping review."
+        )
     console = console or Console()
     if not sys.stdin.isatty():
         console.print(

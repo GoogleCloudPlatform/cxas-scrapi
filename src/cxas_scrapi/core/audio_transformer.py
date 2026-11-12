@@ -204,6 +204,9 @@ def load_background_noise_segment(
     Returns:
         AudioSegment formatted to mono 16-bit PCM at sample_rate.
     """
+    if duration_ms <= 0:
+        raise ValueError(f"duration_ms must be positive, got {duration_ms}")
+
     if AudioSegment is None:
         raise ImportError(
             "background_noise_file was provided, but pydub is not installed "
@@ -275,24 +278,39 @@ def load_background_noise_segment(
                 channels=AUDIO_CHANNELS,
             )
 
-        # 2. For the 10 real-world presets, load the verified bundled recording
+        # 2. For the 10 real-world presets, load the verified bundled recording.
+        # Check relative to __file__ before resolving symlinks so symlinked or
+        # packaged resource layouts find sibling resources/noise/*.wav files.
         bundled_path = (
-            pathlib.Path(__file__).resolve().parent.parent
+            pathlib.Path(__file__).parent.parent
             / "resources"
             / "noise"
             / f"{preset}.wav"
         )
-        if bundled_path.is_file():
-            segment = AudioSegment.from_file(str(bundled_path))
-            segment = (
-                segment.set_frame_rate(sample_rate)
-                .set_channels(AUDIO_CHANNELS)
-                .set_sample_width(AUDIO_SAMPLE_WIDTH)
+        if not bundled_path.is_file():
+            resolved_path = (
+                pathlib.Path(__file__).resolve().parent.parent
+                / "resources"
+                / "noise"
+                / f"{preset}.wav"
             )
-            if len(segment) < duration_ms:
-                repeats = math.ceil(duration_ms / len(segment))
-                segment = segment * repeats
-            return segment[:duration_ms]
+            if resolved_path.is_file():
+                bundled_path = resolved_path
+        if not bundled_path.is_file():
+            raise FileNotFoundError(
+                f"Bundled background noise preset file not found: "
+                f"{bundled_path}"
+            )
+        segment = AudioSegment.from_file(str(bundled_path))
+        segment = (
+            segment.set_frame_rate(sample_rate)
+            .set_channels(AUDIO_CHANNELS)
+            .set_sample_width(AUDIO_SAMPLE_WIDTH)
+        )
+        if len(segment) < duration_ms:
+            repeats = math.ceil(duration_ms / len(segment))
+            segment = segment * repeats
+        return segment[:duration_ms]
 
     segment = AudioSegment.from_file(noise_source)
     return (
