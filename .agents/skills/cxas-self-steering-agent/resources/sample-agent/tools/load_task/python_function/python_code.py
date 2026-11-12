@@ -7,8 +7,10 @@ PLAYBOOK_TASKS = {
         "cancel_order",
         "text_order_summary",
     ),
-    "returns": ("start_return",),
-    "live_agent": ("live_agent_escalation",),
+    "returns": (
+        "start_mail_return",
+        "schedule_return_pickup",
+    ),
 }
 
 
@@ -24,13 +26,14 @@ def load_task(task_name: str, rationale: str) -> dict[str, Any]:
       task name or include personal data.
 
   Returns:
-    dict[str, Any]: Success status and the loaded task.
+    dict[str, Any]: Status and the loaded task, or an error code with the
+      required playbook or valid tasks.
   """
   playbook = context.state.get("current_playbook") or ""
   if playbook not in PLAYBOOK_TASKS:
     return {
-        "error": "NO_ACTIVE_PLAYBOOK",
-        "message": "No playbook is open. Call open_playbook first.",
+        "status": "error",
+        "error": "no_active_playbook",
     }
 
   name = task_name.strip()
@@ -38,24 +41,19 @@ def load_task(task_name: str, rationale: str) -> dict[str, Any]:
     for other_playbook, tasks in PLAYBOOK_TASKS.items():
       if name in tasks:
         return {
-            "error": "TASK_IN_DIFFERENT_PLAYBOOK",
-            "message": (
-                f"Task '{name}' is in the '{other_playbook}' playbook. Call"
-                f" open_playbook with '{other_playbook}' first."
-            ),
+            "status": "error",
+            "error": "task_in_different_playbook",
+            "required_playbook": other_playbook,
         }
     return {
-        "error": "INVALID_TASK",
-        "message": (
-            f"Invalid task name '{name}'. Valid tasks in '{playbook}' are:"
-            f" {list(PLAYBOOK_TASKS[playbook])}."
-        ),
+        "status": "error",
+        "error": "invalid_task",
+        "valid_tasks": list(PLAYBOOK_TASKS[playbook]),
     }
 
   context.state["current_task"] = name
   return {
-      "success": True,
+      "status": "ok",
+      "current_playbook": playbook,
       "current_task": name,
-      "playbook": playbook,
-      "message": f"Loaded task '{name}'.",
   }

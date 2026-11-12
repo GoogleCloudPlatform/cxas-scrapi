@@ -49,6 +49,12 @@ from cxas_scrapi.utils import callback_libs
 COMMENT = re.compile(r"\{\{#.*?#\}\}", re.S)
 SINGLE_COMMENT = re.compile(r"(?<!\{)\{#.*?#\}(?!\})", re.S)
 DOUBLE_BLOCK = re.compile(r"\{\{%(-?)(.*?)(-?)%\}\}", re.S)
+OUTPUT_TAG = re.compile(r"(?<!\{)\{\{(?![%#])(.*?)\}\}(?!\})", re.S)
+VALID_OUTPUT_EXPR = re.compile(
+    r"^\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*$"
+    r"|^\s*(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\|\s*)?default\s*\([^)]*\)\s*$",
+    re.S,
+)
 
 
 class ToolResponse:
@@ -177,6 +183,14 @@ class Runner:
         )
         source = SINGLE_COMMENT.sub(
             lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
+        )
+        source = OUTPUT_TAG.sub(
+            lambda m: (
+                m.group(0)
+                if VALID_OUTPUT_EXPR.match(m.group(1))
+                else "{% raw %}" + m.group(0) + "{% endraw %}"
+            ),
+            source,
         )
         rendered = jinja2.Environment().from_string(source).render(**self.state)
         cl = callback_libs
