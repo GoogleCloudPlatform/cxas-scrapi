@@ -442,10 +442,18 @@ def _app_push(
                     f"'{env_file}' not found. Skipping."
                 )
 
-        if env_file_missing and collect_env_var_declaration_names(inner_dir):
+        from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
+            has_bool_env_var_placeholders,
+            resolve_env_booleans_in_dir,
+        )
+
+        if env_file_missing and (
+            collect_env_var_declaration_names(inner_dir)
+            or has_bool_env_var_placeholders(inner_dir)
+        ):
             raise FileNotFoundError(
                 f"Custom environment file '{env_file}' not found; required to "
-                "resolve '$env_var' variableDeclarations"
+                "resolve '$env_var' placeholders"
             )
 
         resolved_vars = resolve_app_env_variables_in_dir(inner_dir)
@@ -454,6 +462,10 @@ def _app_push(
                 f"Resolved {len(resolved_vars)} '$env_var' variable "
                 f"default(s) from environment.json: {', '.join(resolved_vars)}"
             )
+
+        # Resolve boolean $env_var placeholders and boolean environment
+        # overrides in the staged inner_dir before creating the zip archive.
+        resolve_env_booleans_in_dir(inner_dir)
 
         # ZIP does not support timestamps before 1980.
         # Touch files and directories in temp_dir with timestamps before 1980.

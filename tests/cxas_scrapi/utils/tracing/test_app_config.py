@@ -18,7 +18,11 @@ import typing
 
 import pytest
 
-from cxas_scrapi.utils.tracing.app_config import ENV_VAR_PLACEHOLDER, AppConfig
+from cxas_scrapi.utils.tracing.app_config import (
+    ENV_VAR_PLACEHOLDER,
+    AppConfig,
+    resolve_env_booleans_in_dir,
+)
 
 
 def _write(path: typing.Any, payload: typing.Any) -> None:
@@ -334,3 +338,471 @@ def test_no_environment_file_no_default_present(tmp_path: typing.Any) -> None:
     # No env file resolved at all.
     assert cfg.env_path is None
     assert cfg.audio_bucket() == "gs://concrete"
+
+
+def test_boolean_env_var_substitution_and_coercion(
+    tmp_path: typing.Any,
+) -> None:
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": ENV_VAR_PLACEHOLDER,
+                    "dataset": ENV_VAR_PLACEHOLDER,
+                    "enabled": ENV_VAR_PLACEHOLDER,
+                },
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": ENV_VAR_PLACEHOLDER,
+                },
+            }
+        },
+        env={
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": "my-proj",
+                    "dataset": "my-ds",
+                    "enabled": "false",
+                },
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": "true",
+                },
+            }
+        },
+    )
+    cfg = AppConfig.load(app_dir=app_dir)
+    assert cfg.cloud_logging_enabled() is True
+    assert cfg.bigquery_export() == {
+        "project": "my-proj",
+        "dataset": "my-ds",
+        "enabled": False,
+    }
+
+
+def test_boolean_env_override_without_placeholder(
+    tmp_path: typing.Any,
+) -> None:
+    """When app.json has a concrete bool (`true`), environment.json can override
+    it per environment (e.g. `false` in dev)."""
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": "p",
+                    "dataset": "d",
+                    "enabled": True,
+                },
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": True,
+                },
+            }
+        },
+        env={
+            "app": {
+                "loggingSettings": {
+                    "bigqueryExportSettings": {
+                        "enabled": False,
+                    },
+                    "cloudLoggingSettings": {
+                        "enableCloudLogging": False,
+                    },
+                }
+            }
+        },
+    )
+    cfg = AppConfig.load(app_dir=app_dir)
+    assert cfg.cloud_logging_enabled() is False
+    assert cfg.bigquery_export() == {
+        "project": "p",
+        "dataset": "d",
+        "enabled": False,
+    }
+
+
+def test_resolve_env_booleans_in_dir_updates_app_and_tool_manifests(
+    tmp_path: typing.Any,
+) -> None:
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "displayName": "Test App",
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": ENV_VAR_PLACEHOLDER,
+                    "dataset": ENV_VAR_PLACEHOLDER,
+                    "enabled": ENV_VAR_PLACEHOLDER,
+                },
+                "cloudLoggingSettings": {
+                    "enableCloudLogging": True,
+                },
+            },
+        },
+        env={
+            "app": {
+                "loggingSettings": {
+                    "bigqueryExportSettings": {
+                        "project": "prod-proj",
+                        "dataset": "prod-ds",
+                        "enabled": "false",
+                    },
+                    "cloudLoggingSettings": {
+                        "enableCloudLogging": False,
+                    },
+                }
+            },
+            "tools": {
+                "lookup_order": {
+                    "openApiTool": {
+                        "ignoreUnknownFields": "true",
+                    }
+                }
+            },
+        },
+    )
+    tools_dir = tmp_path / "tools" / "lookup_order"
+    tools_dir.mkdir(parents=True)
+    tool_json = tools_dir / "lookup_order.json"
+    _write(
+        tool_json,
+        {
+            "displayName": "lookup_order",
+            "openApiTool": {
+                "url": ENV_VAR_PLACEHOLDER,
+                "ignoreUnknownFields": ENV_VAR_PLACEHOLDER,
+            },
+        },
+    )
+
+    modified = resolve_env_booleans_in_dir(app_dir)
+    assert modified is True
+
+    with open(tmp_path / "app.json") as f:
+        updated_app = json.load(f)
+    bq = updated_app["loggingSettings"]["bigqueryExportSettings"]
+    assert bq["enabled"] is False
+    # String $env_var placeholders remain untouched for server-side resolution
+    assert bq["project"] == ENV_VAR_PLACEHOLDER
+    assert (
+        updated_app["loggingSettings"]["cloudLoggingSettings"][
+            "enableCloudLogging"
+        ]
+        is False
+    )
+
+    with open(tool_json) as f:
+        updated_tool = json.load(f)
+    assert updated_tool["openApiTool"]["ignoreUnknownFields"] is True
+    assert updated_tool["openApiTool"]["url"] == ENV_VAR_PLACEHOLDER
+
+
+def test_proto_bool_descriptors_full_paths_and_non_bool_untouched(
+    tmp_path: typing.Any,
+) -> None:
+    """Proto bool fields (pinned, locked, disableConversationLogging,
+    enableRedaction) resolve, while string $env_var and defaultVariables maps
+    are untouched."""
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "displayName": "Strict Paths App",
+            "description": ENV_VAR_PLACEHOLDER,
+            "pinned": ENV_VAR_PLACEHOLDER,
+            "locked": ENV_VAR_PLACEHOLDER,
+            "defaultVariables": {"feature": {"enabled": "yes"}},
+            "loggingSettings": {
+                "conversationLoggingSettings": {
+                    "disableConversationLogging": ENV_VAR_PLACEHOLDER
+                },
+                "redactionConfig": {"enableRedaction": ENV_VAR_PLACEHOLDER},
+            },
+        },
+        env={
+            "description": "false",
+            "pinned": "false",
+            "locked": 1,
+            "defaultVariables": {"feature": {"enabled": "yes"}},
+            "loggingSettings": {
+                "conversationLoggingSettings": {
+                    "disableConversationLogging": "true"
+                },
+                "redactionConfig": {"enableRedaction": 0},
+            },
+        },
+    )
+
+    assert resolve_env_booleans_in_dir(app_dir) is True
+
+    with open(tmp_path / "app.json") as f:
+        updated_app = json.load(f)
+    with open(tmp_path / "environment.json") as f:
+        updated_env = json.load(f)
+
+    assert updated_app["pinned"] is False
+    assert updated_app["locked"] is True
+    assert (
+        updated_app["loggingSettings"]["conversationLoggingSettings"][
+            "disableConversationLogging"
+        ]
+        is True
+    )
+    assert (
+        updated_app["loggingSettings"]["redactionConfig"]["enableRedaction"]
+        is False
+    )
+    # String field with $env_var and env "false" must NOT be coerced to bool
+    assert updated_app["description"] == ENV_VAR_PLACEHOLDER
+    assert updated_env["description"] == "false"
+    # User variable map under defaultVariables must NOT be coerced
+    assert updated_app["defaultVariables"]["feature"]["enabled"] == "yes"
+    assert updated_env["defaultVariables"]["feature"]["enabled"] == "yes"
+
+
+def test_missing_parent_dict_materialized_and_read_by_app_config(
+    tmp_path: typing.Any,
+) -> None:
+    """When app.json omits cloudLoggingSettings, env override still applies."""
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={"displayName": "No Logging Parent"},
+        env={
+            "app": {
+                "loggingSettings": {
+                    "cloudLoggingSettings": {"enableCloudLogging": "true"},
+                    "audioRecordingConfig": {"gcsBucket": "gs://only-env"},
+                }
+            }
+        },
+    )
+    cfg = AppConfig.load(app_dir=app_dir)
+    assert cfg.cloud_logging_enabled() is True
+
+    assert resolve_env_booleans_in_dir(app_dir) is True
+    with open(tmp_path / "app.json") as f:
+        updated_app = json.load(f)
+    assert (
+        updated_app["loggingSettings"]["cloudLoggingSettings"][
+            "enableCloudLogging"
+        ]
+        is True
+    )
+    # Non-boolean missing parent is not materialized
+    assert "audioRecordingConfig" not in updated_app["loggingSettings"]
+
+
+def test_yaml_components_display_name_lookup_and_no_nested_walk(
+    tmp_path: typing.Any,
+) -> None:
+    """Component lookup supports YAML, keys by displayName first, skips nested
+    files, and avoids unnecessary writes when nothing changed."""
+    import yaml  # noqa: PLC0415
+
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={"displayName": "Comp App"},
+        env={
+            "tools": {
+                "Lookup Order": {"openApiTool": {"ignoreUnknownFields": "true"}}
+            },
+            "guardrails": {"safety_guard": {"enabled": 0}},
+        },
+    )
+    # JSON tool keyed by displayName ("Lookup Order" != dir "lookup_order")
+    tool_dir = tmp_path / "tools" / "lookup_order"
+    tool_dir.mkdir(parents=True)
+    _write(
+        tool_dir / "lookup_order.json",
+        {
+            "displayName": "Lookup Order",
+            "openApiTool": {"ignoreUnknownFields": ENV_VAR_PLACEHOLDER},
+        },
+    )
+    # YAML guardrail
+    gr_dir = tmp_path / "guardrails" / "safety_guard"
+    gr_dir.mkdir(parents=True)
+    gr_yaml = gr_dir / "safety_guard.yaml"
+    gr_yaml.write_text(
+        yaml.safe_dump(
+            {"displayName": "Safety Guard", "enabled": ENV_VAR_PLACEHOLDER},
+            sort_keys=False,
+        )
+    )
+    # Nested schema JSON under toolsets/ must NOT be touched
+    nested_dir = tmp_path / "toolsets" / "ts" / "schema"
+    nested_dir.mkdir(parents=True)
+    nested_json = nested_dir / "enabled_flags.json"
+    _write(nested_json, {"enabled": "yes"})
+    env_data = json.loads((tmp_path / "environment.json").read_text())
+    env_data["toolsets"] = {"enabled_flags": {"enabled": "true"}}
+    _write(tmp_path / "environment.json", env_data)
+
+    assert resolve_env_booleans_in_dir(app_dir) is True
+
+    updated_tool = json.loads((tool_dir / "lookup_order.json").read_text())
+    assert updated_tool["openApiTool"]["ignoreUnknownFields"] is True
+    updated_gr = yaml.safe_load(gr_yaml.read_text())
+    assert updated_gr["enabled"] is False
+    assert json.loads(nested_json.read_text()) == {"enabled": "yes"}
+
+    # Second run with already-normalized booleans must not rewrite files
+    env_mtime_before = (tmp_path / "environment.json").stat().st_mtime_ns
+    os.utime(
+        tmp_path / "environment.json",
+        ns=(env_mtime_before - 10_000_000, env_mtime_before - 10_000_000),
+    )
+    mtime_expected = (tmp_path / "environment.json").stat().st_mtime_ns
+    assert resolve_env_booleans_in_dir(app_dir) is False
+    assert (tmp_path / "environment.json").stat().st_mtime_ns == mtime_expected
+
+
+def test_schema_lint_accepts_boolean_env_var_placeholders(
+    tmp_path: typing.Any,
+) -> None:
+    """cxas lint V001/V003/V005 accepts boolean $env_var placeholders."""
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
+        Discovery,
+        LintConfig,
+        build_context,
+        build_registry,
+    )
+
+    _write(
+        tmp_path / "app.json",
+        {
+            "name": "test_app",
+            "displayName": "Test App",
+            "pinned": ENV_VAR_PLACEHOLDER,
+            "loggingSettings": {
+                "bigqueryExportSettings": {
+                    "project": ENV_VAR_PLACEHOLDER,
+                    "dataset": ENV_VAR_PLACEHOLDER,
+                    "enabled": ENV_VAR_PLACEHOLDER,
+                }
+            },
+        },
+    )
+    tool_dir = tmp_path / "tools" / "lookup_order"
+    tool_dir.mkdir(parents=True)
+    _write(
+        tool_dir / "lookup_order.json",
+        {
+            "displayName": "Lookup Order",
+            "openApiTool": {
+                "openApiSchema": (
+                    "openapi: 3.0.0\ninfo:\n  title: T\n  version: '1'\n"
+                    "paths: {}\n"
+                ),
+                "ignoreUnknownFields": ENV_VAR_PLACEHOLDER,
+            },
+        },
+    )
+
+    reg = build_registry()
+    v001 = next(r for r in reg.all_rules() if r.id == "V001")
+    v003 = next(r for r in reg.all_rules() if r.id == "V003")
+    ctx = build_context(
+        tmp_path, LintConfig(), Discovery(tmp_path, tmp_path / "evals")
+    )
+
+    # 1. Without environment.json (external --env-file workflow): passes
+    assert v001.check(tmp_path / "app.json", "", ctx) == []
+    assert v003.check(tool_dir / "lookup_order.json", "", ctx) == []
+
+    # 2. With valid environment.json keyed by displayName: passes
+    _write(
+        tmp_path / "environment.json",
+        {
+            "app": {
+                "pinned": "false",
+                "loggingSettings": {
+                    "bigqueryExportSettings": {"enabled": "true"}
+                },
+            },
+            "tools": {
+                "Lookup Order": {"openApiTool": {"ignoreUnknownFields": "true"}}
+            },
+        },
+    )
+    assert v001.check(tmp_path / "app.json", "", ctx) == []
+    assert v003.check(tool_dir / "lookup_order.json", "", ctx) == []
+
+    # 3. With invalid boolean in environment.json: V001 catches it!
+    _write(
+        tmp_path / "environment.json",
+        {"app": {"pinned": "not-a-bool"}},
+    )
+    errs = v001.check(tmp_path / "app.json", "", ctx)
+    assert len(errs) == 1
+    assert "Proto schema validation failed" in errs[0].message
+
+    # 4. Explicit --env-file overrides environment.json during lint
+    stage_env = tmp_path / "environment.prod.json"
+    _write(
+        stage_env,
+        {
+            "app": {
+                "pinned": "true",
+                "loggingSettings": {
+                    "bigqueryExportSettings": {"enabled": True}
+                },
+            }
+        },
+    )
+    ctx_env = build_context(
+        tmp_path,
+        LintConfig(),
+        Discovery(tmp_path, tmp_path / "evals"),
+        env_file=stage_env,
+    )
+    assert v001.check(tmp_path / "app.json", "", ctx_env) == []
+
+
+def test_resolve_env_booleans_skips_variable_declarations(
+    tmp_path: typing.Any,
+) -> None:
+    """app.variableDeclarations in environment.json does not clobber earlier
+    declarations via positional zip."""
+    app_dir = _make_app_dir(
+        tmp_path,
+        app={
+            "displayName": "Combined App",
+            "pinned": ENV_VAR_PLACEHOLDER,
+            "variableDeclarations": [
+                {
+                    "name": "first_var",
+                    "schema": {
+                        "type": "STRING",
+                        "nullable": False,
+                        "default": "hi",
+                    },
+                },
+                {
+                    "name": "second_var",
+                    "schema": {
+                        "type": "BOOLEAN",
+                        "nullable": True,
+                        "default": ENV_VAR_PLACEHOLDER,
+                    },
+                },
+            ],
+        },
+        env={
+            "app": {
+                "pinned": "true",
+                "variableDeclarations": [
+                    {
+                        "name": "second_var",
+                        "schema": {
+                            "type": "BOOLEAN",
+                            "nullable": True,
+                            "default": True,
+                        },
+                    }
+                ],
+            }
+        },
+    )
+    assert resolve_env_booleans_in_dir(app_dir) is True
+    updated_app = json.loads((tmp_path / "app.json").read_text())
+    assert updated_app["pinned"] is True
+    assert updated_app["variableDeclarations"][0]["schema"]["nullable"] is False
