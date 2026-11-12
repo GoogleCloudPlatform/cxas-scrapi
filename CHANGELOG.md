@@ -1,6 +1,20 @@
 # Changelog
 
 
+## [1.12.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.11.0...v1.12.0) (2026-11-12)
+
+
+### Features
+
+* **env:** support boolean templating and overrides in environment configs ([eebf50f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/eebf50f59e8fef900e1bc13b682cf289e80725ee))
+* **skills:** add cxas-self-steering-agent skill ([810c33a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/810c33a18632fb45a3a58b442e18f7436aee8257))
+* **trace:** surface Python tool/callback span logs and per-turn raw JSON ([f9683cb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f9683cbd8e3e5440cf215c461fc73bd02c72e35b))
+
+
+### Bug Fixes
+
+* harden CES SDK compatibility, lazy package imports, and non-TTY/symlink guards ([64de29d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/64de29d243bee16d3f99e5edbd66f237c0ab9af7))
+
 ## [1.11.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.10.0...v1.11.0) (2026-11-09)
 
 
