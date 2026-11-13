@@ -1,0 +1,15 @@
+{
+  "displayName": "routing_agent",
+  "beforeModelCallbacks": [
+    {
+      "description": "before_model_callbacks_01",
+      "pythonCode": "before_model_callbacks/before_model_callbacks_01/python_code.py",
+      "disabled": false
+    },
+    {
+      "description": "before_model_callbacks_02",
+      "pythonCode": "before_model_callbacks/before_model_callbacks_02/python_code.py",
+      "disabled": false
+    }
+  ]
+}
