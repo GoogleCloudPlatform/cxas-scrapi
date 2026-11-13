@@ -300,18 +300,43 @@ class AppConfig:
                 return coerced_res
         return resolved
 
-    def audio_bucket(self) -> str | None:
-        """Returns the GCS bucket configured for audio recording."""
-        # Apps store the bucket at
-        # app.loggingSettings.audioRecordingConfig.gcsBucket. Some apps wrap
-        # the whole app config under an "app" key; support both.
+    def _logging_gcs_bucket(self, config_key: str) -> str | None:
+        """Resolves `loggingSettings.<config_key>.gcsBucket`, if configured.
+
+        Apps store logging settings either at the top level or wrapped under an
+        `app` key; both layouts are checked.
+
+        Args:
+            config_key: Key under `loggingSettings` (for example,
+                `audioRecordingConfig` or `evaluationAudioRecordingConfig`).
+
+        Returns:
+            The configured GCS bucket string, or `None` when unset or when an
+            environment placeholder cannot be resolved.
+        """
         for prefix in ("app.", ""):
-            v = self._get(
-                f"{prefix}loggingSettings.audioRecordingConfig.gcsBucket"
-            )
+            v = self._get(f"{prefix}loggingSettings.{config_key}.gcsBucket")
             if v:
                 return v
         return None
+
+    def audio_bucket(self) -> str | None:
+        """Returns the GCS bucket configured for live audio recording.
+
+        Returns:
+            The `loggingSettings.audioRecordingConfig.gcsBucket` string, or
+            `None` when unset or unresolved.
+        """
+        return self._logging_gcs_bucket("audioRecordingConfig")
+
+    def evaluation_audio_bucket(self) -> str | None:
+        """Returns the GCS bucket configured for evaluation audio recording.
+
+        Returns:
+            The `loggingSettings.evaluationAudioRecordingConfig.gcsBucket`
+            string, or `None` when unset or unresolved.
+        """
+        return self._logging_gcs_bucket("evaluationAudioRecordingConfig")
 
     def cloud_logging_enabled(self) -> bool:
         for prefix in ("app.", ""):

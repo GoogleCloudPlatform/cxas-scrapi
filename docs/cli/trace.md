@@ -198,7 +198,7 @@ bug_report:
 `cxas trace` reads the same `app.json` and `environment.json` files that `cxas
 pull` writes — no extra setup required. From `app.loggingSettings`:
 
-- `audioRecordingConfig.gcsBucket` → audio download source
+- `audioRecordingConfig.gcsBucket` and `evaluationAudioRecordingConfig.gcsBucket`: audio download and turn-discovery sources (`EVAL` conversations prefer `evaluationAudioRecordingConfig.gcsBucket` when both buckets are configured)
 - `cloudLoggingSettings.enableCloudLogging` → gates `--with-logs`
 - `bigqueryExportSettings` → surfaced in metadata (informational)
 

@@ -38,7 +38,10 @@ import urllib.parse
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from statistics import median
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from google import genai
 from google.cloud import bigquery
@@ -130,6 +133,9 @@ class Traces(Common):
             app_name=app_name,
             **kwargs,
         )
+        self._remote_audio_buckets_cache: (
+            tuple[str | None, str | None] | None
+        ) = None
         self.history = ConversationHistory(
             app_name=app_name,
             creds_path=creds_path,
@@ -402,10 +408,15 @@ class Traces(Common):
 
     # ------------------------------- audio ----------------------------------
 
-    def _get_remote_audio_bucket(self) -> str | None:
-        """Resolves audio bucket from remote App logging settings if needed."""
+    def _get_remote_audio_buckets(self) -> tuple[str | None, str | None]:
+        """Resolves (live_bucket, eval_bucket) from remote logging settings."""
+        if self._remote_audio_buckets_cache is not None:
+            return self._remote_audio_buckets_cache
         if not self.app_name or not self.project_id or not self.location:
-            return None
+            self._remote_audio_buckets_cache = (None, None)
+            return self._remote_audio_buckets_cache
+        live_bucket: str | None = None
+        eval_bucket: str | None = None
         try:
             apps = Apps(
                 project_id=self.project_id,
@@ -421,27 +432,92 @@ class Traces(Common):
                 if audio_config:
                     bucket = getattr(audio_config, "gcs_bucket", None)
                     if isinstance(bucket, str) and bucket.startswith("gs://"):
-                        return bucket
+                        live_bucket = bucket
+                eval_audio_config = getattr(
+                    logging_settings, "evaluation_audio_recording_config", None
+                )
+                if eval_audio_config:
+                    eb = getattr(eval_audio_config, "gcs_bucket", None)
+                    if isinstance(eb, str) and eb.startswith("gs://"):
+                        eval_bucket = eb
         except Exception as e:
-            logger.debug(f"Failed to fetch remote app audio bucket: {e}")
-        return None
+            logger.debug("Failed to fetch remote app audio bucket: %s", e)
+        self._remote_audio_buckets_cache = (live_bucket, eval_bucket)
+        return self._remote_audio_buckets_cache
 
-    def _get_audio_bucket(self) -> str | None:
-        """Resolves the audio recording GCS bucket.
+    def _get_remote_audio_bucket(self) -> str | None:
+        """Resolves audio bucket from remote App logging settings if needed."""
+        live_bucket, eval_bucket = self._get_remote_audio_buckets()
+        return live_bucket or eval_bucket
+
+    def _iter_candidate_audio_buckets(
+        self,
+        *,
+        prefer_eval: bool = False,
+    ) -> Iterator[str]:
+        """Yields ordered, deduplicated candidate GCS audio buckets lazily."""
+        if self.trace_config.audio.bucket_override:
+            yield self.trace_config.audio.bucket_override
+            return
+
+        local_live = self.app_config.audio_bucket() if self.app_config else None
+        local_eval = (
+            self.app_config.evaluation_audio_bucket()
+            if self.app_config
+            else None
+        )
+
+        seen: set[str] = set()
+        if (local_live or local_eval) and not (prefer_eval and not local_eval):
+            local_order = (
+                (local_eval, local_live)
+                if prefer_eval
+                else (local_live, local_eval)
+            )
+            for bucket in local_order:
+                if bucket and bucket not in seen:
+                    seen.add(bucket)
+                    yield bucket
+
+        remote_live, remote_eval = self._get_remote_audio_buckets()
+        fallback_order = (
+            (remote_eval, local_eval, local_live, remote_live)
+            if prefer_eval
+            else (local_live, remote_live, local_eval, remote_eval)
+        )
+        for bucket in fallback_order:
+            if bucket and bucket not in seen:
+                seen.add(bucket)
+                yield bucket
+
+    def _get_audio_bucket(
+        self,
+        *,
+        prefer_eval: bool = False,
+    ) -> str | None:
+        """Resolves the primary audio recording GCS bucket.
 
         Order of precedence:
           1. `audio.bucket_override` (from `trace.yaml`)
-          2. `app.loggingSettings.audioRecordingConfig.gcsBucket` (from local
-          `app.json`)
-          3. Remote app `loggingSettings.audioRecordingConfig.gcsBucket`
+          2. Local `app.json` (`audioRecordingConfig.gcsBucket` and
+             `evaluationAudioRecordingConfig.gcsBucket`, ordered by
+             `prefer_eval`)
+          3. Remote app `loggingSettings` (`audio_recording_config.gcs_bucket`
+             and `evaluation_audio_recording_config.gcs_bucket`, ordered by
+             `prefer_eval`)
+
+        Args:
+            prefer_eval: When True, prefer `evaluationAudioRecordingConfig`
+                before `audioRecordingConfig` if both buckets are configured.
+
+        Returns:
+            The resolved `gs://...` bucket URI, or `None` when neither
+            `audio.bucket_override`, local `app.json`, nor remote
+            `loggingSettings` defines a recording bucket.
         """
-        if self.trace_config.audio.bucket_override:
-            return self.trace_config.audio.bucket_override
-        if self.app_config:
-            bucket = self.app_config.audio_bucket()
-            if bucket:
-                return bucket
-        return self._get_remote_audio_bucket()
+        return next(
+            self._iter_candidate_audio_buckets(prefer_eval=prefer_eval), None
+        )
 
     def _get_remote_bigquery_export_settings(self) -> dict[str, Any] | None:
         """Resolves BigQuery export settings from remote App logging
@@ -481,6 +557,16 @@ class Traces(Common):
             logger.debug(f"Failed to fetch remote app BQ settings: {e}")
         return None
 
+    def _format_audio_uri(self, bucket: str, conversation_id: str) -> str:
+        """Formats a candidate recording URI from `audio.uri_pattern`."""
+        return self.trace_config.audio.uri_pattern.format(
+            bucket=bucket.rstrip("/"),
+            project=self.project_id or "",
+            location=self.location or "",
+            app=(self.app_name or "").split("/")[-1],
+            conversation_id=conversation_id,
+        )
+
     def resolve_audio_uri(
         self,
         conversation_id: str,
@@ -505,34 +591,37 @@ class Traces(Common):
             if isinstance(payload, dict) and payload.get("audioUri"):
                 return payload["audioUri"]
 
-        bucket = self._get_audio_bucket()
-        if not bucket:
-            return None
-        pattern = self.trace_config.audio.uri_pattern
-        candidate = pattern.format(
-            bucket=bucket.rstrip("/"),
-            project=self.project_id or "",
-            location=self.location or "",
-            app=(self.app_name or "").split("/")[-1],
-            conversation_id=conversation_id,
-        )
+        prefer_eval = normalized.get("source") == "EVAL"
+        if not self.trace_config.audio.search_bucket:
+            bucket = self._get_audio_bucket(prefer_eval=prefer_eval)
+            if not bucket:
+                return None
+            return self._format_audio_uri(bucket, conversation_id)
 
-        if self.trace_config.audio.search_bucket:
-            gcs = GCSUtils(creds=self.creds)
+        gcs: GCSUtils | None = None
+        suffix = f"/{conversation_id}/{self.trace_config.audio.search_filename}"
+        for bucket in self._iter_candidate_audio_buckets(
+            prefer_eval=prefer_eval
+        ):
+            if gcs is None:
+                gcs = GCSUtils(creds=self.creds)
+            candidate = self._format_audio_uri(bucket, conversation_id)
             try:
                 if gcs.exists(candidate):
                     return candidate
-            except Exception:
-                pass
-            suffix = (
-                f"/{conversation_id}/{self.trace_config.audio.search_filename}"
-            )
-            found = gcs.find_first(bucket, suffix=suffix)
+            except Exception as exc:
+                logger.debug(
+                    "GCS exists check failed for %s: %s", candidate, exc
+                )
+            try:
+                found = gcs.find_first(bucket, suffix=suffix)
+            except Exception as exc:
+                logger.debug("GCS bucket search failed for %s: %s", bucket, exc)
+                continue
             if found:
-                logger.info(f"Resolved audio via bucket search: {found}")
+                logger.info("Resolved audio via bucket search: %s", found)
                 return found
-            return None
-        return candidate
+        return None
 
     def download_audio(
         self,
@@ -545,8 +634,9 @@ class Traces(Common):
         if not gcs_uri:
             logger.warning(
                 "No audio URI could be resolved. Set "
-                "`loggingSettings.audioRecordingConfig.gcsBucket` in app.json "
-                "or `audio.bucket_override` in .cxas/trace.yaml."
+                "`loggingSettings.audioRecordingConfig.gcsBucket` or "
+                "`loggingSettings.evaluationAudioRecordingConfig.gcsBucket` "
+                "in app.json, or `audio.bucket_override` in .cxas/trace.yaml."
             )
             return None
 
@@ -596,39 +686,72 @@ class Traces(Common):
         self,
         conversation_id: str,
         start_time: datetime.datetime | str | None = None,
+        *,
+        prefer_eval: bool = False,
+        infer_context: bool = False,
     ) -> list[str]:
-        """Returns the list of GCS URIs of every audio file recorded for a
-        conversation.
+        """Returns GCS URIs for all audio files recorded for a conversation.
 
         Conversations are stored as a directory of files
         (`METADATA.json`, `full-session.wav`, `agent-turn-N.wav`,
         `user-turn-N.wav`); this method discovers the directory in the
-        configured audio bucket, then lists everything under that prefix.
+        configured audio buckets, then lists everything under that prefix.
 
         Args:
             conversation_id: The conversation ID.
             start_time: When the conversation started, if known. Recording
                 directories are partitioned by date, so supplying this makes
                 discovery a direct lookup instead of a guess around today.
+            prefer_eval: When True, probe `evaluationAudioRecordingConfig`
+                before `audioRecordingConfig` if both buckets are set.
+            infer_context: When True, best-effort fetches the conversation
+                metadata so `start_time` and `prefer_eval` reflect the stored
+                conversation record.
         """
-        bucket = self._get_audio_bucket()
-        if not bucket:
-            return []
-        gcs = GCSUtils(creds=self.creds)
-        prefix = gcs.find_dir_for_conversation(
-            bucket,
-            conversation_id=conversation_id,
-            prefix_hints=self._recording_prefix_hints(start_time),
-        )
-        if not prefix:
-            return []
-        return gcs.list_with_prefix(bucket, prefix=prefix)
+        if infer_context:
+            try:
+                norm = self.get_normalized(conversation_id)
+                if start_time is None:
+                    start_time = norm.get("start_time")
+                if not prefer_eval and norm.get("source") == "EVAL":
+                    prefer_eval = True
+            except Exception as exc:
+                logger.debug(
+                    "Could not infer conversation metadata for %s: %s",
+                    conversation_id,
+                    exc,
+                )
+
+        gcs: GCSUtils | None = None
+        hints: list[str] | None = None
+        for bucket in self._iter_candidate_audio_buckets(
+            prefer_eval=prefer_eval
+        ):
+            if gcs is None:
+                gcs = GCSUtils(creds=self.creds)
+            if hints is None:
+                hints = self._recording_prefix_hints(start_time)
+            try:
+                prefix = gcs.find_dir_for_conversation(
+                    bucket,
+                    conversation_id=conversation_id,
+                    prefix_hints=hints,
+                )
+                if prefix:
+                    files = gcs.list_with_prefix(bucket, prefix=prefix)
+                    if files:
+                        return files
+            except Exception as exc:
+                logger.debug("GCS audio listing failed for %s: %s", bucket, exc)
+        return []
 
     def _turn_audio_uris(
         self,
         conversation_id: str,
         role: str,
         start_time: datetime.datetime | str | None = None,
+        *,
+        prefer_eval: bool = False,
     ) -> dict[int, str]:
         """Maps `{turn_number: gcs_uri}` for one role's per-turn recordings.
 
@@ -636,7 +759,11 @@ class Traces(Common):
         **1-based**, matching the platform's own numbering: `<role>-turn-N`
         corresponds to conversation turn `N - 1`.
         """
-        files = self.list_audio_files(conversation_id, start_time=start_time)
+        files = self.list_audio_files(
+            conversation_id,
+            start_time=start_time,
+            prefer_eval=prefer_eval,
+        )
         pattern = re.compile(rf"{re.escape(role)}-turn-(\d+)\.wav$")
         audio_map: dict[int, str] = {}
         for f in files:
@@ -649,6 +776,8 @@ class Traces(Common):
         self,
         conversation_id: str,
         start_time: datetime.datetime | str | None = None,
+        *,
+        prefer_eval: bool = False,
     ) -> dict[int, str]:
         """Returns a mapping of {turn_index: gcs_uri} for user turn recordings.
 
@@ -659,18 +788,25 @@ class Traces(Common):
             conversation_id: The conversation ID.
             start_time: When the conversation started, if known; speeds up
                 recording-directory discovery.
+            prefer_eval: When True, probe `evaluationAudioRecordingConfig`
+                before `audioRecordingConfig`.
 
         Returns:
             Dict mapping integer turn_index to GCS URI.
         """
         return self._turn_audio_uris(
-            conversation_id, "user", start_time=start_time
+            conversation_id,
+            "user",
+            start_time=start_time,
+            prefer_eval=prefer_eval,
         )
 
     def get_agent_audio_uris(
         self,
         conversation_id: str,
         start_time: datetime.datetime | str | None = None,
+        *,
+        prefer_eval: bool = False,
     ) -> dict[int, str]:
         """Returns a mapping of {turn_index: gcs_uri} for agent turn
         recordings.
@@ -685,12 +821,17 @@ class Traces(Common):
             conversation_id: The conversation ID.
             start_time: When the conversation started, if known; speeds up
                 recording-directory discovery.
+            prefer_eval: When True, probe `evaluationAudioRecordingConfig`
+                before `audioRecordingConfig`.
 
         Returns:
             Dict mapping integer turn_index to GCS URI.
         """
         return self._turn_audio_uris(
-            conversation_id, "agent", start_time=start_time
+            conversation_id,
+            "agent",
+            start_time=start_time,
+            prefer_eval=prefer_eval,
         )
 
     def transcribe_user_turns(
@@ -717,7 +858,11 @@ class Traces(Common):
             and WER metrics.
         """
         normalized = self.get_normalized(conversation_id)
-        user_audio_map = self.get_user_audio_uris(conversation_id)
+        user_audio_map = self.get_user_audio_uris(
+            conversation_id,
+            start_time=normalized.get("start_time"),
+            prefer_eval=normalized.get("source") == "EVAL",
+        )
 
         transcriber = AudioTranscriber(
             project_id=self.project_id or "",
@@ -1224,7 +1369,14 @@ class Traces(Common):
         Returns `{analysis_name: {result: PASS|FAIL|SKIP|ERROR, justification,
         files_analyzed}}`.
         """
-        files = self.list_audio_files(conversation_id)
+        if normalized is not None:
+            files = self.list_audio_files(
+                conversation_id,
+                start_time=normalized.get("start_time"),
+                prefer_eval=normalized.get("source") == "EVAL",
+            )
+        else:
+            files = self.list_audio_files(conversation_id, infer_context=True)
         if not files:
             return {"error": "No audio files found for this conversation."}
 
@@ -1285,6 +1437,8 @@ class Traces(Common):
         conversation_id: str,
         dest_dir: str | None = None,
         start_time: datetime.datetime | str | None = None,
+        *,
+        prefer_eval: bool = False,
     ) -> dict[str, Any]:
         """Numeric voice-consistency metrics over the agent's turn audio.
 
@@ -1302,7 +1456,12 @@ class Traces(Common):
         Returns `{"call": {...}, "turns": [...]}`, or `{"error": ...}`
         when the conversation has no agent turn recordings.
         """
-        files = self.list_audio_files(conversation_id, start_time=start_time)
+        files = self.list_audio_files(
+            conversation_id,
+            start_time=start_time,
+            prefer_eval=prefer_eval,
+            infer_context=(start_time is None and not prefer_eval),
+        )
         agent_files = [f for f in files if "agent-turn" in os.path.basename(f)]
         if not agent_files:
             return {
@@ -1365,7 +1524,10 @@ class Traces(Common):
         # The start time makes recording-folder discovery a direct lookup;
         # without it, a call from a previous (UTC) day is simply not found.
         measured = self.measure_audio(
-            conversation_id, dest_dir=dest_dir, start_time=_ts("start_time")
+            conversation_id,
+            dest_dir=dest_dir,
+            start_time=_ts("start_time"),
+            prefer_eval=normalized.get("source") == "EVAL",
         )
         if "error" in measured:
             return measured

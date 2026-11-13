@@ -4466,11 +4466,17 @@ def test_resolve_recordings_bucket_and_enrich_html_report(
     mock_traces._get_audio_bucket.return_value = (
         "gs://auto-discovered-bkt/audio-rec"
     )
-    with patch("cxas_scrapi.core.traces.Traces", return_value=mock_traces):
+    with patch(
+        "cxas_scrapi.core.traces.Traces", return_value=mock_traces
+    ) as mock_traces_cls:
         assert (
             enricher.resolve_recordings_bucket("projects/p/locations/us/apps/a")
             == "auto-discovered-bkt/audio-rec"
         )
+    mock_traces_cls.assert_called_once_with(
+        app_name="projects/p/locations/us/apps/a"
+    )
+    mock_traces._get_audio_bucket.assert_called_once_with(prefer_eval=True)
 
     out_file = tmp_path / "report_enriched.html"
     written = enricher.enrich_html_report(

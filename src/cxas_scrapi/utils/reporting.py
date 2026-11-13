@@ -6837,8 +6837,8 @@ def resolve_recordings_bucket(
     try:
         from cxas_scrapi.core.traces import Traces  # noqa: PLC0415
 
-        traces_client = Traces(agent_id=target_app)
-        discovered = traces_client._get_audio_bucket(target_app)
+        traces_client = Traces(app_name=target_app)
+        discovered = traces_client._get_audio_bucket(prefer_eval=True)
         if discovered:
             return str(discovered).strip().removeprefix("gs://").strip("/")
     except Exception as exc:  # noqa: BLE001
