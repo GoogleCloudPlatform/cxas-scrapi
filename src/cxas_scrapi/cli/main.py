@@ -944,28 +944,77 @@ def test_tools(args: argparse.Namespace) -> None:
     """Handles the 'test-tools' command."""
     from cxas_scrapi.evals.tool_evals import ToolEvals
 
-    print(
-        f"Running tool tests for App: {args.app_name} "
-        f"using file: {args.test_file}"
+    app_name = getattr(args, "app_name", None)
+    app_dir = getattr(args, "app_dir", None)
+    offline = bool(
+        getattr(args, "offline", False) or (app_dir and not app_name)
     )
-    tool_evals = ToolEvals(app_name=args.app_name)
+
+    if not app_name and not app_dir:
+        print(
+            "Error: Either --app-name or --app-dir (for offline execution) "
+            "must be provided."
+        )
+        sys.exit(1)
+
+    if offline and not app_dir:
+        print(
+            "Error: --app-dir is required when running test-tools with "
+            "--offline."
+        )
+        sys.exit(1)
+
+    target_label = (
+        f"App Dir (offline): {app_dir}" if offline else f"App: {app_name}"
+    )
+    print(f"Running tool tests for {target_label} using file: {args.test_file}")
 
     try:
-        test_cases = tool_evals.load_tool_test_cases_from_file(args.test_file)
+        tool_evals = ToolEvals(
+            app_name=app_name,
+            app_dir=app_dir,
+            offline=offline,
+        )
+        if os.path.isdir(args.test_file):
+            test_cases = tool_evals.load_tool_tests_from_dir(args.test_file)
+        else:
+            test_cases = tool_evals.load_tool_test_cases_from_file(
+                args.test_file
+            )
         if not test_cases:
             print(f"No valid test cases found in {args.test_file}")
             sys.exit(1)
 
-        results = tool_evals.run_tool_tests(test_cases, debug=args.debug)
+        results = tool_evals.run_tool_tests(
+            test_cases,
+            debug=args.debug,
+            offline=offline,
+            app_dir=app_dir,
+        )
 
-        # Check overall status
-        failed_count = sum(1 for r in results["status"] if r != "PASSED")
+        # Check overall status (FAILED and ERROR count as failures;
+        # SKIPPED non-Python tools in offline mode do not fail if at least one
+        # test ran and passed, unless all tests were skipped)
+        failed_count = sum(
+            1 for r in results["status"] if r in ("FAILED", "ERROR")
+        )
+        passed_count = sum(1 for r in results["status"] if r == "PASSED")
+        skipped_count = sum(1 for r in results["status"] if r == "SKIPPED")
 
         if failed_count > 0:
             print(f"\nFINAL RESULT: FAIL ({failed_count} tools failed)")
             sys.exit(1)
+        elif passed_count == 0 and len(results) > 0:
+            print(
+                f"\nFINAL RESULT: FAIL (0 tools passed, "
+                f"{skipped_count} skipped)"
+            )
+            sys.exit(1)
         else:
-            print(f"\nFINAL RESULT: PASS (All {len(results)} tools passed)")
+            print(
+                f"\nFINAL RESULT: PASS ({passed_count}/{len(results)} tools "
+                f"passed)"
+            )
             sys.exit(0)
 
     except Exception as e:
@@ -1012,6 +1061,15 @@ def test_single_callback(args: argparse.Namespace) -> None:
     """Handles the 'test-single-callback' command."""
     from cxas_scrapi.evals.callback_evals import CallbackEvals
 
+    app_name = getattr(args, "app_name", None)
+    app_dir = getattr(args, "app_dir", None)
+    if not app_name and not app_dir:
+        print(
+            "Error: Either --app-name or --app-dir must be provided for "
+            "test-single-callback."
+        )
+        sys.exit(1)
+
     print(
         f"Running single callback test for "
         f"Agent: {args.agent_name}, "
@@ -1021,12 +1079,13 @@ def test_single_callback(args: argparse.Namespace) -> None:
 
     try:
         results = callback_evals.test_single_callback_for_agent(
-            app_name=args.app_name,
+            app_name=app_name,
             agent_name=args.agent_name,
             callback_type=args.callback_type,
             test_file_path=args.test_file_path,
             log_file=args.log_file,
             pytest_args=args.pytest_args,
+            app_dir=app_dir,
         )
         if results.empty:
             print(f"No valid callback tests found at {args.test_file_path}")
@@ -2344,12 +2403,22 @@ def get_parser() -> argparse.ArgumentParser:
 
     parser_test_tools = subparsers.add_parser(
         "test-tools",
-        help="Run local tool unit tests against the deployed agent.",
+        help="Run local tool unit tests against the deployed or local agent.",
     )
     parser_test_tools.add_argument(
         "--app-name",
-        required=True,
+        required=False,
         help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_test_tools.add_argument(
+        "--app-dir",
+        required=False,
+        help="Path to the local app directory for offline tool testing.",
+    )
+    parser_test_tools.add_argument(
+        "--offline",
+        action="store_true",
+        help="Run tool tests offline against local Python tools in --app-dir.",
     )
     parser_test_tools.add_argument(
         "--test-file",
@@ -2405,22 +2474,27 @@ def get_parser() -> argparse.ArgumentParser:
     # Parser for 'test-single-callback'
     parser_test_single_callback = subparsers.add_parser(
         "test-single-callback",
-        help="Run local callback unit tests against the deployed agent.",
+        help="Run local callback unit tests against a deployed or local agent.",
     )
     parser_test_single_callback.add_argument(
         "--app-name",
-        required=True,
+        required=False,
         help="The CXAS App ID (projects/.../locations/.../apps/...).",
+    )
+    parser_test_single_callback.add_argument(
+        "--app-dir",
+        required=False,
+        help="Path to the local app directory for offline callback testing.",
     )
     parser_test_single_callback.add_argument(
         "--agent-name",
         required=True,
-        help="Optional: The name of the agent to run callback tests for.",
+        help="The name of the agent to run callback tests for.",
     )
     parser_test_single_callback.add_argument(
         "--callback-type",
         required=True,
-        help="Optional: The type of callback to run tests for.",
+        help="The type of callback to run tests for.",
     )
     parser_test_single_callback.add_argument(
         "--test-file-path",
