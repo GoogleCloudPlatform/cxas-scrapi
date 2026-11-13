@@ -24,6 +24,31 @@ import sys
 # and must not eagerly import `cxas_scrapi.evals` (or `pytest`, `pandas`, etc.)
 # as a side effect of computing `__all__`.
 def test_qa_008_import_cxas_scrapi_preserves_lazy_subpackage_loading() -> None:
+    if not sys.executable:
+        import importlib  # noqa: PLC0415
+
+        saved = {
+            k: sys.modules.pop(k)
+            for k in list(sys.modules)
+            if k == "cxas_scrapi" or k.startswith("cxas_scrapi.")
+        }
+        try:
+            mod = importlib.import_module("cxas_scrapi")
+            submodules = sorted(
+                m for m in sys.modules if m.startswith("cxas_scrapi.")
+            )
+            assert "CallbackEvals" in mod.__all__
+            assert submodules == []
+        finally:
+            for k in [
+                m
+                for m in list(sys.modules)
+                if m == "cxas_scrapi" or m.startswith("cxas_scrapi.")
+            ]:
+                sys.modules.pop(k, None)
+            sys.modules.update(saved)
+        return
+
     proc = subprocess.run(
         [
             sys.executable,
@@ -63,6 +88,32 @@ def test_qa_008_stripped_package_filters_missing_modules_from_all(
     # Synthesize an empty evals/__init__.py with NO callback_evals.py and NO
     # migration/ subpackage, mirroring stripped production distributions.
     (pkg_dir / "evals" / "__init__.py").write_text("", encoding="utf-8")
+
+    if not sys.executable:
+        import importlib  # noqa: PLC0415
+
+        saved = {
+            k: sys.modules.pop(k)
+            for k in list(sys.modules)
+            if k == "cxas_scrapi" or k.startswith("cxas_scrapi.")
+        }
+        sys.path.insert(0, str(tmp_path))
+        try:
+            mod = importlib.import_module("cxas_scrapi")
+            assert "Apps" in mod.__all__
+            assert "CallbackEvals" not in mod.__all__
+            assert "DFCXAgents" not in mod.__all__
+            assert mod.Apps.__name__ == "Apps"
+        finally:
+            sys.path.remove(str(tmp_path))
+            for k in [
+                m
+                for m in list(sys.modules)
+                if m == "cxas_scrapi" or m.startswith("cxas_scrapi.")
+            ]:
+                sys.modules.pop(k, None)
+            sys.modules.update(saved)
+        return
 
     proc = subprocess.run(
         [
