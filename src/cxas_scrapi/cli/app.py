@@ -918,3 +918,61 @@ def _prompt_overwrite(name: str, no_input: bool = False) -> str:
             return "skip"
         if choice in ("q", "quit"):
             return "abort"
+
+
+def app_generate_stubs(args: argparse.Namespace) -> None:
+    """Handles the 'generate-stubs' command."""
+    from cxas_scrapi.utils.stub_generator import generate_stubs
+
+    app_dir = getattr(args, "app_dir", None) or "."
+    output_path = getattr(args, "output", None)
+    check = bool(getattr(args, "check", False))
+    stdout = bool(getattr(args, "stdout", False))
+
+    app_dir_path = Path(app_dir)
+    if not app_dir_path.exists() or not app_dir_path.is_dir():
+        print(
+            "ERROR: Application directory not found or not a directory: "
+            f"{app_dir}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    should_write = not check and (not stdout or output_path is not None)
+    try:
+        result = generate_stubs(
+            app_dir=app_dir_path,
+            output_path=output_path,
+            check=check,
+            write=should_write,
+        )
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if stdout:
+        print(result.content, end="")
+
+    if check:
+        if result.up_to_date:
+            if not stdout:
+                print(
+                    f"Stubs are up to date: {result.output_path} "
+                    f"({result.variables_count} variable(s), "
+                    f"{result.tools_count} tool(s))."
+                )
+            sys.exit(0)
+        print(
+            f"ERROR: Stubs at {result.output_path} are out of date or "
+            f"missing. Run 'cxas generate-stubs --app-dir {app_dir}' "
+            "to regenerate.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if should_write and not stdout:
+        print(
+            f"Generated typed stubs at {result.output_path} "
+            f"({result.variables_count} variable(s), "
+            f"{result.tools_count} tool(s))."
+        )
