@@ -17,6 +17,7 @@
 
 import argparse
 import io
+import json
 import os
 import sys
 import time
@@ -685,6 +686,7 @@ _LINT_RESOURCE_DEFAULTS = dict(
     guardrail=None,
     evaluation=None,
     evaluation_expectations=None,
+    evaluation_datasets=None,
 )
 
 
@@ -925,6 +927,71 @@ def test_app_lint_model_only(capsys: typing.Any, tmp_path: typing.Any) -> None:
     # Model-agnostic rules should be excluded
     assert "I008" not in rule_ids
     assert "A001" not in rule_ids
+
+
+def test_app_lint_single_evaluation_datasets_flag(
+    capsys: typing.Any, tmp_path: typing.Any
+) -> None:
+    ds_dir = tmp_path / "evaluationDatasets" / "Core_Dataset"
+    ds_dir.mkdir(parents=True)
+    (ds_dir / "Core_Dataset.json").write_text(
+        '{"displayName": "Core Dataset", "evaluations": ["Eval_One"]}',
+        encoding="utf-8",
+    )
+
+    args = _lint_args(evaluation_datasets=str(ds_dir))
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_lint(args)
+    assert excinfo.value.code == 0
+    assert "Lint PASSED" in capsys.readouterr().out
+
+    (ds_dir / "Core_Dataset.json").write_text(
+        '{"evaluations": ["Eval_One"]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit) as excinfo_bad:
+        cli_app.app_lint(args)
+    assert excinfo_bad.value.code == 1
+    assert "V008" in capsys.readouterr().out
+
+
+def test_app_lint_single_agent_flag_runs_a019(
+    capsys: typing.Any, tmp_path: typing.Any
+) -> None:
+    agent_dir = tmp_path / "agents" / "voice_sub"
+    agent_dir.mkdir(parents=True)
+    cfg_file = agent_dir / "voice_sub.yaml"
+    cfg_file.write_text(
+        "displayName: voice_sub\n"
+        "modelSettings:\n"
+        "  model: gemini-composite-v2\n",
+        encoding="utf-8",
+    )
+
+    # Directory path reports app-relative path and triggers A019
+    args = _lint_args(agent=str(agent_dir), json_output=True)
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_lint(args)
+    assert excinfo.value.code == 1
+    results = json.loads(capsys.readouterr().out)
+    a019_hits = [r for r in results if r["rule_id"] == "A019"]
+    assert len(a019_hits) == 1
+    assert a019_hits[0]["file"] == "agents/voice_sub/voice_sub.yaml"
+
+    # Direct config file path and cxaslint.yaml severity overrides also work
+    (tmp_path / "cxaslint.yaml").write_text(
+        "rules:\n  A019: warning\n",
+        encoding="utf-8",
+    )
+    file_args = _lint_args(agent=str(cfg_file), json_output=True)
+    with pytest.raises(SystemExit) as excinfo_file:
+        cli_app.app_lint(file_args)
+    assert excinfo_file.value.code == 0
+    file_results = json.loads(capsys.readouterr().out)
+    assert any(
+        r["rule_id"] == "A019" and r["severity"] == "warning"
+        for r in file_results
+    )
 
 
 def test_app_push_zip_timestamp_touch(

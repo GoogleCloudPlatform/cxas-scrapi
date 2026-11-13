@@ -21,9 +21,13 @@ from pathlib import Path
 from cxas_scrapi.utils.lint_rules import schema as schema_mod
 from cxas_scrapi.utils.linter import (
     Discovery,
+    LintConfig,
     LintContext,
+    LintReport,
+    build_context,
     build_registry,
     get_toolset_tools,
+    run_rules,
 )
 
 
@@ -440,3 +444,111 @@ def test_qa_003_v003_rejects_malformed_or_conflicting_remote_agent_tool(
         encoding="utf-8",
     )
     assert len(rule.check(collision_dir, "", ctx)) >= 1
+
+
+def test_discover_and_validate_exported_eval_expectations_and_datasets(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "demo_app",
+                "displayName": "Demo App",
+                "rootAgent": "root_agent",
+            }
+        ),
+        encoding="utf-8",
+    )
+    agent_dir = tmp_path / "agents" / "root_agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "instruction.txt").write_text(
+        "Help the caller on {current_date}.", encoding="utf-8"
+    )
+    (agent_dir / "root_agent.json").write_text(
+        json.dumps({"displayName": "root_agent", "tools": ["end_session"]}),
+        encoding="utf-8",
+    )
+
+    exp_valid = tmp_path / "evaluationExpectations" / "Empathy_Check"
+    exp_valid.mkdir(parents=True)
+    (exp_valid / "Empathy_Check.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Empathy Check",
+                "llmCriteria": {"prompt": "Agent responds politely."},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exp_invalid = tmp_path / "evaluationExpectations" / "Bad_Check"
+    exp_invalid.mkdir(parents=True)
+    (exp_invalid / "Bad_Check.json").write_text(
+        json.dumps({"unknownField": True}),
+        encoding="utf-8",
+    )
+
+    exp_legacy = tmp_path / "evaluation_expectations" / "Legacy_Check"
+    exp_legacy.mkdir(parents=True)
+    (exp_legacy / "Legacy_Check.json").write_text(
+        json.dumps({"displayName": "Legacy Check"}),
+        encoding="utf-8",
+    )
+
+    ds_legacy = tmp_path / "evaluation_datasets" / "Legacy_Dataset"
+    ds_legacy.mkdir(parents=True)
+
+    ds_valid = tmp_path / "evaluationDatasets" / "Smoke_Suite"
+    ds_valid.mkdir(parents=True)
+    (ds_valid / "Smoke_Suite.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Smoke Suite",
+                "evaluations": ["Order_Lookup_Golden"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ds_invalid = tmp_path / "evaluationDatasets" / "Broken_Suite"
+    ds_invalid.mkdir(parents=True)
+    (ds_invalid / "Broken_Suite.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Broken Suite",
+                "notAProtoField": 123,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    disc = Discovery(tmp_path, tmp_path / "evals")
+    assert set(disc.discover_evaluation_expectations()) == {
+        "Empathy_Check",
+        "Bad_Check",
+    }
+    assert set(disc.discover_evaluation_datasets()) == {
+        "Smoke_Suite",
+        "Broken_Suite",
+    }
+
+    registry = build_registry()
+    cfg = LintConfig()
+    ctx = build_context(tmp_path, cfg, disc)
+    report = LintReport()
+    run_rules(
+        registry,
+        cfg,
+        ctx,
+        disc,
+        report,
+        specific_rules={"V007", "V008", "S014"},
+    )
+
+    by_rule = {(Path(r.file).name, r.rule_id) for r in report.results}
+    assert ("Bad_Check", "V007") in by_rule
+    assert ("Broken_Suite", "V008") in by_rule
+    assert ("evaluation_expectations", "S014") in by_rule
+    assert ("evaluation_datasets", "S014") in by_rule
+    assert ("Empathy_Check", "V007") not in by_rule
+    assert ("Smoke_Suite", "V008") not in by_rule

@@ -19,6 +19,7 @@ cxas lint [--app-dir DIR]
           [--guardrail DIR]
           [--evaluation DIR]
           [--evaluation-expectations DIR]
+          [--evaluation-datasets DIR]
 ```
 
 ## Options
@@ -26,19 +27,20 @@ cxas lint [--app-dir DIR]
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--app-dir DIR` | No | `.` (current directory) | Path to the root of the app directory to lint. The linter discovers the app structure automatically. |
-| `--env-file FILE` | No | `<app-dir>/environment.json` (if present) | Path to an environment JSON file used by rule `A017` to validate `"$env_var"` placeholders and `app.variableDeclarations` types. |
+| `--env-file FILE` | No | `<app-dir>/environment.json` (if present) | Path to an environment JSON file used by rule `A017` and schema rules (`V001` through `V008`) to validate `"$env_var"` placeholders and `app.variableDeclarations` types. |
 | `--fix` | No | `false` | Print fix suggestions alongside each issue. Does not automatically modify files. |
 | `--only CATEGORY` | No | — | Limit linting to a single category. See [Rule Categories](#rule-categories) below. |
 | `--rule IDS` | No | — | Run only specific rules. Accepts a comma-separated list of rule IDs (e.g., `I003,C005`). |
 | `--json` | No | `false` | Output results as a JSON array instead of the human-readable format. Useful for integrating with other tools. |
 | `--list-rules` | No | `false` | Print all available lint rules with their IDs, categories, and descriptions, then exit. |
 | `--validate-only` | No | `false` | Run only `structure`, `config`, and `schema` rules. Skips instruction quality and eval checks. |
-| `--agent DIR` | No | — | Validate a single agent directory against the CES schema instead of linting the whole app. |
+| `--agent DIR` | No | - | Validate a single agent directory against the CES schema (`V002`) and composite model placement (`A019`) instead of linting the whole app. |
 | `--tool DIR` | No | — | Validate a single tool directory. |
 | `--toolset DIR` | No | — | Validate a single toolset directory. |
 | `--guardrail DIR` | No | — | Validate a single guardrail directory. |
 | `--evaluation DIR` | No | — | Validate a single evaluation directory. |
 | `--evaluation-expectations DIR` | No | — | Validate a single evaluation expectations directory. |
+| `--evaluation-datasets DIR` | No | - | Validate a single evaluation datasets directory. |
 
 ## Rule Categories
 

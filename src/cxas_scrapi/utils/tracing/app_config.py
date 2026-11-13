@@ -48,6 +48,7 @@ _RESOURCE_DESCRIPTORS: dict[str, Descriptor] = {
     "guardrails": ces_types.Guardrail.pb().DESCRIPTOR,
     "evaluations": ces_types.Evaluation.pb().DESCRIPTOR,
     "evaluationExpectations": ces_types.EvaluationExpectation.pb().DESCRIPTOR,
+    "evaluationDatasets": ces_types.EvaluationDataset.pb().DESCRIPTOR,
 }
 
 _ENV_CATEGORY_KEYS: frozenset[str] = frozenset(
@@ -60,6 +61,7 @@ _ENV_CATEGORY_KEYS: frozenset[str] = frozenset(
         "examples",
         "evaluations",
         "evaluationExpectations",
+        "evaluationDatasets",
     }
 )
 
@@ -390,6 +392,7 @@ _COMPONENT_CATEGORIES: tuple[str, ...] = (
     "guardrails",
     "evaluations",
     "evaluationExpectations",
+    "evaluationDatasets",
 )
 
 
