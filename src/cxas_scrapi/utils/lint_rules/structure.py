@@ -33,7 +33,9 @@ from cxas_scrapi.utils.linter import (
     Rule,
     Severity,
     ToolsetValidationBehavior,
+    find_agent_config,
     get_toolset_tools,
+    load_structured_config,
     rule,
 )
 
@@ -60,25 +62,24 @@ class AgentToolReferences(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         agent_dir = file_path.parent
-        agent_json = agent_dir / f"{agent_dir.name}.json"
-        if not agent_json.exists():
+        agent_cfg = find_agent_config(agent_dir)
+        if agent_cfg is None:
             return []
 
-        try:
-            agent_config = json.loads(agent_json.read_text())
-        except (json.JSONDecodeError, OSError):
+        agent_config = load_structured_config(agent_cfg)
+        if agent_config is None:
             return []
 
         app_root = file_path.parent.parent.parent
 
         known_tools = (
-            set(agent_config.get("tools", [])) | context.platform_tools
+            set(agent_config.get("tools") or []) | context.platform_tools
         )
 
         bypass_prefixes = set()
 
         # Resolve toolsets and add their tools to known_tools
-        for ts_entry in agent_config.get("toolsets", []):
+        for ts_entry in agent_config.get("toolsets") or []:
             if isinstance(ts_entry, dict):
                 toolset_name = ts_entry.get("toolset")
                 allowed_tool_ids = ts_entry.get("toolIds") or ts_entry.get(
@@ -134,7 +135,7 @@ class AgentToolReferences(Rule):
                     fix=(
                         f"Add '{tool_name}' to"
                         " the tools list in"
-                        f" {agent_json.name},"
+                        f" {agent_cfg.name},"
                         " or remove the"
                         " reference from the"
                         " instruction."
@@ -178,16 +179,16 @@ class CallbackFileReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        try:
-            agent_config = json.loads(content)
-        except json.JSONDecodeError:
+        agent_config = load_structured_config(file_path, content)
+        if agent_config is None:
             return []
 
         results = []
         code_paths = [
             cb.get("pythonCode", "")
             for cb_type in _CALLBACK_TYPES
-            for cb in agent_config.get(cb_type, [])
+            for cb in (agent_config.get(cb_type) or [])
+            if isinstance(cb, dict)
         ]
         for code_path in filter(None, code_paths):
             resolved = _resolve_path(context.app_dir, code_path)
@@ -221,13 +222,16 @@ class ChildAgentReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        try:
-            agent_config = json.loads(content)
-        except json.JSONDecodeError:
+        agent_config = load_structured_config(file_path, content)
+        if agent_config is None:
             return []
 
         results = []
-        child_agents = agent_config.get("childAgents", [])
+        child_agents = (
+            agent_config.get("childAgents")
+            or agent_config.get("child_agents")
+            or []
+        )
         valid_agents = context.all_agent_names | context.all_agent_display_names
         for child_name in child_agents:
             if child_name not in valid_agents:
@@ -262,9 +266,8 @@ class StrictAgentPathLayout(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         agent_name = file_path.stem
-        try:
-            agent_config = json.loads(content)
-        except json.JSONDecodeError:
+        agent_config = load_structured_config(file_path, content)
+        if agent_config is None:
             return []
 
         results = []
@@ -291,8 +294,10 @@ class StrictAgentPathLayout(Rule):
 
         # 2. Check callbacks paths
         for cb_type in _CALLBACK_TYPES:
-            callbacks = agent_config.get(cb_type, [])
+            callbacks = agent_config.get(cb_type) or []
             for i, cb in enumerate(callbacks):
+                if not isinstance(cb, dict):
+                    continue
                 code_path = cb.get("pythonCode")
                 if code_path:
                     expected_prefix = f"agents/{agent_name}/"
@@ -732,11 +737,8 @@ class AgentResourceReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        try:
-            agent_config = json.loads(content)
-        except json.JSONDecodeError:
-            return []
-        if not isinstance(agent_config, dict):
+        agent_config = load_structured_config(file_path, content)
+        if agent_config is None:
             return []
 
         app_root = _find_app_root_for_path(file_path, context)
@@ -956,4 +958,50 @@ class ToolsetFileReferences(Rule):
                 )
             )
 
+        return results
+
+
+@rule("structure")
+class EvalResourceDirCasing(Rule):
+    """Evaluation expectation and dataset directories must use camelCase."""
+
+    id = "S014"
+    name = "eval-resource-dir-casing"
+    description = (
+        "Evaluation expectation and dataset directories must use camelCase "
+        "(evaluationExpectations/ and evaluationDatasets/)"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        del content
+        app_root = _find_app_root_for_path(file_path, context)
+        results: list[LintResult] = []
+        for snake_name, camel_name in (
+            ("evaluation_expectations", "evaluationExpectations"),
+            ("evaluation_datasets", "evaluationDatasets"),
+        ):
+            snake_dir = app_root / snake_name
+            if snake_dir.is_dir():
+                try:
+                    rel = str(snake_dir.relative_to(context.project_root))
+                except ValueError:
+                    rel = str(snake_dir)
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Directory '{snake_name}/' uses snake_case and "
+                            "is ignored by 'cxas push' and CES ImportApp; "
+                            f"use '{camel_name}/' instead"
+                        ),
+                        fix=(
+                            f"Rename '{snake_name}/' to '{camel_name}/' (or "
+                            f"merge its contents into '{camel_name}/')."
+                        ),
+                    )
+                )
         return results

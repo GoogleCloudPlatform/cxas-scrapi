@@ -31,6 +31,8 @@ from cxas_scrapi.utils.linter import (
     LintResult,
     Rule,
     Severity,
+    find_agent_config,
+    load_structured_config,
     rule,
 )
 
@@ -465,16 +467,19 @@ class ToolDisplayNameUnreferenced(Rule):
             return []
 
         candidate_names = {display_name, json_path.parent.name}
-        referenced = any(
-            bool(
-                candidate_names
-                & set(json.loads(agent_json.read_text()).get("tools", []))
-            )
-            for agent_dir in agents_dir.iterdir()
-            if agent_dir.is_dir()
-            for agent_json in [agent_dir / f"{agent_dir.name}.json"]
-            if agent_json.exists()
-        )
+        referenced = False
+        for agent_dir in agents_dir.iterdir():
+            if not agent_dir.is_dir():
+                continue
+            agent_cfg = find_agent_config(agent_dir)
+            if agent_cfg is None:
+                continue
+            agent_data = load_structured_config(agent_cfg)
+            if agent_data and (
+                candidate_names & set(agent_data.get("tools") or [])
+            ):
+                referenced = True
+                break
         if not referenced:
             referenced = _is_tool_referenced_in_code_or_guardrails(
                 app_root, candidate_names, json_path.parent
