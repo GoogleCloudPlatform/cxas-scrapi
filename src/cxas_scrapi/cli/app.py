@@ -918,3 +918,119 @@ def _prompt_overwrite(name: str, no_input: bool = False) -> str:
             return "skip"
         if choice in ("q", "quit"):
             return "abort"
+
+
+def _print_impact_list(label: str, items: list[str]) -> None:
+    print(f"\n  {label} ({len(items)}):")
+    if not items:
+        print("    (none)")
+        return
+    for item in items:
+        print(f"    - {item}")
+
+
+def app_impact(args: argparse.Namespace) -> None:
+    """Handles the 'impact' command for dependency and blast-radius analysis."""
+    import json
+
+    from cxas_scrapi.utils.impact_analyzer import (
+        analyze_app_summary,
+        analyze_git_diff,
+        analyze_target,
+    )
+
+    app_dir = Path(getattr(args, "app_dir", ".") or ".").resolve()
+    target = getattr(args, "target", None)
+    git_ref = getattr(args, "diff", None)
+    json_output = bool(
+        getattr(args, "json_output", False) or getattr(args, "json", False)
+    )
+
+    if target and git_ref:
+        err_msg = "Cannot specify both --target and --diff simultaneously."
+        if json_output:
+            print(json.dumps({"error": err_msg}, indent=2))
+        else:
+            print(f"ERROR: {err_msg}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        if target:
+            res = analyze_target(app_dir, target)
+            if json_output:
+                print(json.dumps(res.to_dict(), indent=2))
+            else:
+                print(f"CXAS Impact Analysis — Target: {res.target}")
+                print("=" * 60)
+                if res.defined_in:
+                    print(f"  Defined in: {', '.join(res.defined_in)}")
+                _print_impact_list("Affected Agents", res.affected_agents)
+                _print_impact_list("Affected Callbacks", res.affected_callbacks)
+                _print_impact_list("Affected Tools", res.affected_tools)
+                _print_impact_list(
+                    "Affected Instructions", res.affected_instructions
+                )
+                _print_impact_list(
+                    "Affected Evaluations", res.affected_evaluations
+                )
+            sys.exit(0)
+
+        if git_ref:
+            diff_res = analyze_git_diff(app_dir, git_ref=git_ref)
+            if json_output:
+                print(json.dumps(diff_res.to_dict(), indent=2))
+            else:
+                print(f"CXAS Impact Analysis — Git Diff vs {diff_res.git_ref}")
+                print("=" * 60)
+                _print_impact_list("Changed Files", diff_res.changed_files)
+                _print_impact_list(
+                    "Changed Resources", diff_res.changed_resources
+                )
+                _print_impact_list("Affected Agents", diff_res.affected_agents)
+                _print_impact_list(
+                    "Affected Callbacks", diff_res.affected_callbacks
+                )
+                _print_impact_list("Affected Tools", diff_res.affected_tools)
+                _print_impact_list(
+                    "Affected Instructions", diff_res.affected_instructions
+                )
+                _print_impact_list(
+                    "Affected Evaluations", diff_res.affected_evaluations
+                )
+            sys.exit(0)
+
+        summary = analyze_app_summary(app_dir)
+        if json_output:
+            print(json.dumps(summary.to_dict(), indent=2))
+        else:
+            print(f"CXAS Dependency & Impact Summary — {app_dir.name}")
+            print("=" * 60)
+            print("  Resource Counts:")
+            for k, count in summary.resource_counts.items():
+                print(f"    {k:14s}: {count}")
+            print("\n  Top High-Impact Resources:")
+            top_items = [
+                r
+                for r in summary.high_impact_resources
+                if r["dependent_count"] > 0
+            ][:10]
+            if not top_items:
+                print("    (none)")
+            else:
+                for item in top_items:
+                    print(
+                        f"    - {item['target']} "
+                        f"(dependents: {item['dependent_count']}, "
+                        f"evals: {len(item['affected_evaluations'])})"
+                    )
+            _print_impact_list(
+                "Orphan / Unreferenced Resources", summary.orphan_resources
+            )
+        sys.exit(0)
+
+    except Exception as exc:
+        if json_output:
+            print(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)

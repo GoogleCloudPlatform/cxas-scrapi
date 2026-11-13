@@ -56,6 +56,7 @@ When you pass a display name (e.g., `"My Support Agent"`) instead of a resource 
 | [`cxas init-github-action`](init-github-action.md) | Generate a GitHub Actions workflow file for your agent. |
 | [`cxas lint`](lint.md) | Fast, deterministic structural and configuration linter across 60+ rules. |
 | [`cxas llm-lint`](llm-lint.md) | AI-driven semantic natural language prompt linter for sub-agent instructions using Gemini. |
+| [`cxas impact`](#dependency-impact-analysis-cxas-impact) | Static dependency graph and blast-radius analyzer across variables, tools, toolsets, guardrails, agents, and evaluations. |
 | [`cxas help`](index.md) | Show detailed help for the CLI or any specific subcommand. |
 | [`cxas init`](init.md) | Bootstrap a project with AI agent development skills. |
 | [`cxas insights`](insights.md) | Manage QA scorecards via the Insights API. |
@@ -74,3 +75,22 @@ CXAS provides two complementary linting tools designed for different stages of y
 2. **`cxas llm-lint` (AI Semantic Linter)**
    - **What it does:** Uses Gemini to review the *actual meaning, tone, persona adherence, and logical consistency* of your natural language prompts (`instruction.txt`, `global_instruction.txt`, and dynamic state instructions in `before_agent_callbacks`).
    - **When to run:** When authoring or refactoring prompt engineering instructions, conducting thorough prompt quality reviews, or preparing for high-stakes production deployments.
+
+---
+
+## Dependency & Impact Analysis (`cxas impact`)
+
+`cxas impact` builds a static dependency graph over an exported CXAS application directory and computes direct and transitive blast radius across agents, callbacks, tools, instructions, and evaluation files.
+
+```bash
+# Full app dependency summary (high-impact resources + unreferenced orphans)
+cxas impact --app-dir ./my_app
+
+# Blast radius for a specific resource (<type>:<name> or bare <name>)
+cxas impact --app-dir ./my_app --target variable:customer_id
+cxas impact --app-dir ./my_app --target tool:lookup_order --json
+
+# Blast radius and affected evaluations for files changed in git diff
+cxas impact --app-dir ./my_app --diff origin/main --json
+```
+
