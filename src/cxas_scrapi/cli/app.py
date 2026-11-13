@@ -412,6 +412,7 @@ def _app_push(
         "evaluationDatasets",
         "evaluationExpectations",
         ".github/workflows",
+        "pythonEnvFiles",
     ]
 
     try:

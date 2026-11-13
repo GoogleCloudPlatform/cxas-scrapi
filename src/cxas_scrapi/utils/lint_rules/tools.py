@@ -997,3 +997,290 @@ class CompositeToolConversationalPacing(Rule):
             ]
 
         return []
+
+
+@rule("tools")
+class DataStoreFilterTemplateSyntax(Rule):
+    id = "T017"
+    name = "data-store-filter-template"
+    description = "Detects template syntax in data store tools/sources filters."
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+        if (
+            not file_path.name.endswith(".json")
+            or "tools" not in file_path.parts
+        ):
+            return []
+
+        try:
+            data = json.loads(content)
+        except (ValueError, OSError):
+            return []
+
+        def _check_filter(f_str: str) -> bool:
+            return f_str and ("{" in f_str or "}" in f_str)
+
+        filters = []
+        ds_tool = data.get("dataStoreTool") or {}
+        if ds_tool:
+            if "filter" in ds_tool:
+                filters.append(ds_tool["filter"])
+            for s in ds_tool.get("dataStoreSources", []):
+                if s.get("filter"):
+                    filters.append(s["filter"])
+            if ds_tool.get("engineSource", {}).get("filter"):
+                filters.append(ds_tool["engineSource"]["filter"])
+
+        # Top-level fallback
+        for s in data.get("dataStoreSources", []):
+            if s.get("filter"):
+                filters.append(s["filter"])
+        if data.get("engineSource", {}).get("filter"):
+            filters.append(data["engineSource"]["filter"])
+
+        if any(_check_filter(f) for f in filters):
+            return [
+                self.make_result(
+                    file=rel,
+                    message=(
+                        "Template syntax {...} or {{...}} found in"
+                        " static filter of dataStoreTool."
+                    ),
+                    fix=(
+                        "Data store static filters do not support"
+                        " variable interpolation."
+                    ),
+                )
+            ]
+        return []
+
+
+@rule("tools")
+class DataStoreFilterParameterBehavior(Rule):
+    id = "T018"
+    name = "data-store-filter-parameter-behavior"
+    description = (
+        "Brand-scoped dataStoreTool without NEVER_INCLUDE parameter behavior."
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+        if (
+            not file_path.name.endswith(".json")
+            or "tools" not in file_path.parts
+        ):
+            return []
+
+        try:
+            data = json.loads(content)
+        except (ValueError, OSError):
+            return []
+
+        ds_tool = data.get("dataStoreTool") or {}
+
+        has_filter = False
+        if ds_tool.get("filter"):
+            has_filter = True
+        for s in ds_tool.get("dataStoreSources", []) + data.get(
+            "dataStoreSources", []
+        ):
+            if s.get("filter"):
+                has_filter = True
+        if ds_tool.get("engineSource", {}).get("filter") or data.get(
+            "engineSource", {}
+        ).get("filter"):
+            has_filter = True
+
+        if not ds_tool and not has_filter:
+            return []
+
+        tool_dir_name = file_path.parent.name
+        tool_display_name = data.get("displayName", "")
+
+        is_brand_scoped = (
+            has_filter
+            or tool_dir_name.startswith("ds_")
+            or tool_display_name.startswith("ds_")
+        )
+
+        if is_brand_scoped:
+            behavior = ds_tool.get("filterParameterBehavior") or ds_tool.get(
+                "filter_parameter_behavior"
+            )
+            if behavior not in ("NEVER_INCLUDE", 3):
+                return [
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            "Brand-scoped dataStoreTool (with static filter)"
+                            " must use NEVER_INCLUDE (or 3)."
+                        ),
+                        fix=(
+                            "Set"
+                            " dataStoreTool.filterParameterBehavior to "
+                            "NEVER_INCLUDE."
+                        ),
+                    )
+                ]
+        return []
+
+
+@rule("tools")
+class DataStoreVoiceModality(Rule):
+    id = "T019"
+    name = "data-store-voice-modality"
+    description = (
+        "Warns on voice deployments if dataStoreTool lacks AUDIO config."
+    )
+    default_severity = Severity.WARNING
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+        if (
+            not file_path.name.endswith(".json")
+            or "tools" not in file_path.parts
+        ):
+            return []
+
+        tool_name = file_path.parent.name
+        tool_display_name = ""
+
+        import yaml  # noqa: PLC0415
+
+        try:
+            data = json.loads(content)
+            tool_display_name = data.get("displayName", "")
+        except (ValueError, OSError):
+            return []
+
+        if (
+            context.all_tool_names
+            and tool_name not in context.all_tool_names
+            and tool_display_name not in context.all_tool_names
+        ):
+            return []
+
+        has_voice = False
+        if context.app_root:
+            for dep_file in context.app_root.glob("deployments/*.yaml"):
+                try:
+                    dep = yaml.safe_load(dep_file.read_text("utf-8"))
+                except Exception:
+                    continue
+                ct = dep.get("channelProfile", {}).get("channelType", "")
+                if ct in (
+                    "GOOGLE_TELEPHONY_PLATFORM",
+                    "CONTACT_CENTER_AS_A_SERVICE",
+                ):
+                    has_voice = True
+                    break
+
+        if not has_voice:
+            return []
+
+        ds_tool = data.get("dataStoreTool")
+        if not ds_tool:
+            return []
+
+        results = []
+        mod_configs = (
+            ds_tool.get("modalityConfigs")
+            or ds_tool.get("modality_configs")
+            or []
+        )
+
+        audio_conf = {}
+        if isinstance(mod_configs, dict):
+            audio_conf = mod_configs.get("AUDIO")
+        elif isinstance(mod_configs, list):
+            for mc in mod_configs:
+                mt = (
+                    mc.get("modalityType")
+                    or mc.get("modality_type")
+                    or mc.get("modality")
+                )
+                if mt == "AUDIO":
+                    audio_conf = mc
+                    break
+
+        if not audio_conf:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        "dataStoreTool missing AUDIO entry in"
+                        " modalityConfigs for a voice deployment."
+                    ),
+                    fix="Add an AUDIO configuration block to modalityConfigs.",
+                )
+            )
+        else:
+            snippets = (
+                audio_conf.get("snippetsConfig")
+                or audio_conf.get("snippets_config")
+                or {}
+            )
+            if not snippets:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            "dataStoreTool AUDIO modalityConfigs missing"
+                            " snippetsConfig/snippets_config."
+                        ),
+                        fix=(
+                            "Provide snippetsConfig inside the"
+                            " AUDIO modality config."
+                        ),
+                    )
+                )
+
+            rewriter = (
+                audio_conf.get("rewriterConfig")
+                or audio_conf.get("rewriter_config")
+                or {}
+            )
+            summarizer = (
+                audio_conf.get("summarizationConfig")
+                or audio_conf.get("summarization_config")
+                or {}
+            )
+
+            if rewriter.get("disabled") is not True:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            "rewriterConfig.disabled is not True in"
+                            " AUDIO modalityConfig."
+                        ),
+                        fix=(
+                            "Disable rewriter for Voice"
+                            " deployments inside AUDIO."
+                        ),
+                    )
+                )
+            if summarizer.get("disabled") is not True:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            "summarizationConfig.disabled is not True"
+                            " in AUDIO modalityConfig."
+                        ),
+                        fix=(
+                            "Disable summarization for Voice"
+                            " deployments inside AUDIO."
+                        ),
+                    )
+                )
+        return results

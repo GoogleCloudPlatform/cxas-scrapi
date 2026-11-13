@@ -21,13 +21,13 @@ mistyped nested children, or wrong parent objects after a flat→nested
 """
 
 import ast
-import json
+import json  # noqa: PLC0415
 import re
 import typing
 import warnings
 from pathlib import Path
 
-import yaml
+import yaml  # noqa: PLC0415
 
 from cxas_scrapi.utils.linter import (
     LintContext,

@@ -1140,9 +1140,25 @@ class VariableCountLimit(Rule):
             or data.get("variable_declarations")
             or []
         )
-        if not isinstance(decls, list) or (
-            len(decls) <= VARIABLE_COUNT_WARNING_LIMIT
+        a015_opts = context.options.get("A015")
+        custom_limit = (
+            a015_opts.get("max_variables_per_app")
+            if isinstance(a015_opts, dict)
+            else None
+        )
+        if custom_limit is None:
+            custom_limit = context.options.get("max_variables_per_app")
+
+        if isinstance(custom_limit, (int, float)) and not isinstance(
+            custom_limit, bool
         ):
+            platform_limit = int(custom_limit)
+            warning_limit = int(custom_limit * 0.95)
+        else:
+            platform_limit = 100
+            warning_limit = VARIABLE_COUNT_WARNING_LIMIT
+
+        if not isinstance(decls, list) or len(decls) <= warning_limit:
             return []
 
         rel = str(file_path.relative_to(context.project_root))
@@ -1151,8 +1167,8 @@ class VariableCountLimit(Rule):
                 file=rel,
                 message=(
                     f"App declares {len(decls)} top-level variables "
-                    f"(recommended ceiling: {VARIABLE_COUNT_WARNING_LIMIT}; "
-                    "platform limit: ~100)"
+                    f"(recommended ceiling: {warning_limit}; "
+                    f"platform limit: ~{platform_limit})"
                 ),
                 fix=(
                     "Group related scalar variables into typed OBJECT "
