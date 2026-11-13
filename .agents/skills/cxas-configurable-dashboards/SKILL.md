@@ -47,8 +47,9 @@ dashboards:
                   height: 3
                   data_source:
                     generative_insights:
-                      sql_query: "SELECT COUNT(DISTINCT conversation_id) AS total_calls FROM conversations"
+                      sql_query: "SELECT COUNT(DISTINCT conversation_id) AS total_calls FROM {INSIGHT_DASH_VIEW}"
                       chart_spec:
+                        data: {values: []}
                         mark: "text"
                         encoding:
                           text: {field: "total_calls", type: "quantitative"}
@@ -62,13 +63,17 @@ dashboards:
                   data_source:
                     generative_insights:
                       sql_query: >-
-                        SELECT issue_category, COUNT(1) AS volume
-                        FROM conversations
-                        WHERE issue_category IS NOT NULL
+                        SELECT
+                          issue.issue_display_name AS issue_category,
+                          COUNT(1) AS volume
+                        FROM {INSIGHT_DASH_VIEW}
+                        CROSS JOIN UNNEST(issue_dimension_metadata) AS issue
+                        WHERE issue.issue_display_name IS NOT NULL
                         GROUP BY 1
                         ORDER BY volume DESC
                         LIMIT 10
                       chart_spec:
+                        data: {values: []}
                         mark: "bar"
                         encoding:
                           x: {field: "volume", type: "quantitative", title: "Calls"}
@@ -80,18 +85,20 @@ dashboards:
 1. **Root Container Constraint** (`ValidateDashboardStructure`):
    - Every dashboard must have a `root_container`.
    - Direct widgets in `root_container` **must all be `Container` widgets** representing tabs/sections.
-2. **Widgets within Tabs**:
+   - Top-level tab containers inherit the dashboard's `date_range` and `filter` when they do not set their own override, preventing the CCAI Insights Console from defaulting unset tabs to 1 week or dropping root filters.
+1. **Widgets within Tabs**:
    - Each tab container contains child widgets (`container` for sub-grouping, `chart` for visualizations, or `chart_reference` for linked charts).
-3. **Chart Visualizations**:
+1. **Chart Visualizations**:
    - `chart_visualization_type`: `SCORE_CARD`, `BAR`, `LINE`, `AREA`, `PIE`, `SCATTER`, `TABLE`, `SANKEY`.
-   - `data_source`: Contains `generative_insights` with `sql_query` and Vega-Lite `chart_spec`.
+   - `data_source`: Contains `generative_insights` with `sql_query` targeting `FROM {INSIGHT_DASH_VIEW}` (bound automatically by CCAI Insights at query time) and a Vega-Lite `chart_spec` including `data: {values: []}` (`dashboard_sync` injects `$schema` and `data: {values: []}` onto non-empty `chart_spec` mappings when omitted, while direct REST calls require both).
 
 ______________________________________________________________________
 
 ## 2. Vega-Lite & SQL Recipes
 
 Refer to:
-- [Dashboard SQL Cookbook & Conversations Schema Reference](references/dashboard_sql_cookbook.md) for the complete BigQuery table schema column definitions, modes, descriptions, and SQL recipes.
+
+- [Dashboard SQL Cookbook & {INSIGHT_DASH_VIEW} Schema Reference](references/dashboard_sql_cookbook.md) for the complete BigQuery table schema column definitions, modes, descriptions, and SQL recipes.
 - [Vega-Lite Cookbook](references/vega_cookbook.md) for visualization marks, encodings, and chart templates.
 
 ### Common Patterns
@@ -101,8 +108,9 @@ Refer to:
   chart_visualization_type: "SCORE_CARD"
   data_source:
     generative_insights:
-      sql_query: "SELECT COUNT(1) AS total FROM conversations"
+      sql_query: "SELECT COUNT(1) AS total FROM {INSIGHT_DASH_VIEW}"
       chart_spec:
+        data: {values: []}
         mark: "text"
         encoding:
           text: {field: "total", type: "quantitative"}
@@ -112,8 +120,9 @@ Refer to:
   chart_visualization_type: "LINE"
   data_source:
     generative_insights:
-      sql_query: "SELECT DATE(start_time) AS date, COUNT(1) AS calls FROM conversations GROUP BY 1"
+      sql_query: "SELECT DATE(conversation_start_time) AS date, COUNT(1) AS calls FROM {INSIGHT_DASH_VIEW} GROUP BY 1 ORDER BY date ASC"
       chart_spec:
+        data: {values: []}
         mark: "line"
         encoding:
           x: {field: "date", type: "temporal"}
@@ -125,33 +134,42 @@ ______________________________________________________________________
 ## 3. Step-by-Step Workflow
 
 ### Step 1: Ingest Requirements
+
 - Ask the user what operational metrics, KPIs, or tabs they need (e.g. Agent QA performance, Containment %, Top Contact Drivers, CSAT trends).
 - Identify the target GCP project ID and location.
 
 ### Step 2: Draft or Edit Declarative YAML
+
 - Create or update `dashboards.yaml` in the user's workspace.
 - Structure tabs inside `root_container.widgets`.
 - Add scorecards, bar charts, and line charts with matching Vega-Lite specs and SQL queries.
 
 ### Step 3: Compare with Active Remote Dashboards (`diff`)
+
 Run `diff` to preview additions, modifications, and deletions:
+
 ```bash
 uv run cxas insights diff-dashboards --file dashboards.yaml
 ```
 
 ### Step 4: Dry-Run Deploy
+
 Verify planned operations against GCP without mutating resources:
+
 ```bash
 uv run cxas insights push-dashboards --file dashboards.yaml --dry-run
 ```
 
 ### Step 5: Push to GCP
+
 Deploy new and updated dashboards to Contact Center AI Insights:
+
 ```bash
 uv run cxas insights push-dashboards --file dashboards.yaml
 ```
 
 If deleting obsolete remote dashboards:
+
 ```bash
 uv run cxas insights push-dashboards --file dashboards.yaml --force
 ```
