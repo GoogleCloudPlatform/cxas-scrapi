@@ -148,6 +148,38 @@ conversations:
         value: "lookup_order"
 ```
 
+### Barge-In & Model-Generated Interruptions in Audio Modality
+
+Multi-turn audio tests can trigger mid-response caller interruptions using either a fixed `barge_in_after_ms` offset or a `barge_in` block that synthesizes varied phrasing and timing per run while preserving required entities:
+
+```yaml
+config:
+  modality: "AUDIO"
+  capture_agent_audio: true
+
+conversations:
+  - conversation: "Cymbal Order Support - Urgent Address Change Barge-In"
+    turns:
+      - turn: "1"
+        user: "Can you walk me through all the shipping tiers you offer?"
+        expectations:
+          - type: contains
+            value: "shipping"
+      - turn: "2"
+        barge_in:
+          goal: "Interrupt to urgently update delivery address for order ORD-5512"
+          guide: "Cut in while the agent lists shipping tiers and ask to change the address on ORD-5512."
+          style: ["urgent_pivot", "impatient_cutoff"]
+          after_ms: [700, 1800]
+        expectations:
+          - type: agent_interrupted
+            value: true
+          - type: vad_barge_in
+            value: true
+          - type: contains
+            value: "ORD-5512"
+```
+
 ### Running tests programmatically
 
 ```python
