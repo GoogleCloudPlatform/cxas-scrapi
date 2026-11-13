@@ -1,0 +1,37 @@
+{
+  "displayName": "budget_agent",
+  "beforeAgentCallbacks": [
+    {
+      "description": "before_agent_callbacks_01",
+      "pythonCode": "before_agent_callbacks/before_agent_callbacks_01/python_code.py",
+      "disabled": false
+    },
+    {
+      "description": "before_agent_callbacks_02",
+      "pythonCode": "before_agent_callbacks/before_agent_callbacks_02/python_code.py",
+      "disabled": false
+    },
+    {
+      "description": "before_agent_callbacks_03",
+      "pythonCode": "before_agent_callbacks/before_agent_callbacks_03/python_code.py",
+      "disabled": false
+    }
+  ],
+  "afterModelCallbacks": [
+    {
+      "description": "after_model_callbacks_01",
+      "pythonCode": "after_model_callbacks/after_model_callbacks_01/python_code.py",
+      "disabled": false
+    },
+    {
+      "description": "after_model_callbacks_02",
+      "pythonCode": "after_model_callbacks/after_model_callbacks_02/python_code.py",
+      "disabled": false
+    },
+    {
+      "description": "after_model_callbacks_03",
+      "pythonCode": "after_model_callbacks/after_model_callbacks_03/python_code.py",
+      "disabled": true
+    }
+  ]
+}
