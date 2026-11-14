@@ -51,7 +51,7 @@ from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.conversation_history import ConversationHistory
 from cxas_scrapi.core.sessions import Modality, Sessions
 from cxas_scrapi.utils.gcs_utils import GCSUtils
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, resolve_gemini_location
 from cxas_scrapi.utils.tracing import trace_report
 from cxas_scrapi.utils.tracing.app_config import AppConfig
 from cxas_scrapi.utils.tracing.audio_analysis import (
@@ -110,6 +110,21 @@ class Traces(Common):
     heavier clients (Cloud Logging, Gemini, GCS) are lazily created on first
     use so a `cxas trace list` call does not require any of those packages
     to be reachable.
+
+    Args:
+        app_name: Full CXAS App resource name.
+        app_dir: Local directory containing the pulled app configuration.
+        env_file: Optional explicit path to an environment JSON file.
+        environment: Optional named environment (`environment.<name>.json`).
+        trace_config_path: Optional path to a `trace.yaml` config file.
+        creds_path: Optional service account credentials file path.
+        creds_dict: Optional service account credentials dictionary.
+        creds: Optional pre-built Google credentials object.
+        scope: Optional OAuth scopes list.
+        gemini_location: Google Cloud location for Gemini triage, audio
+            analysis, and transcription. Defaults to `GOOGLE_CLOUD_LOCATION`,
+            `trace.yaml` `gemini.location`, or `'global'`.
+        **kwargs: Additional keyword arguments forwarded to `Common`.
     """
 
     def __init__(
@@ -123,6 +138,7 @@ class Traces(Common):
         creds_dict: dict[str, str] | None = None,
         creds: Any = None,
         scope: list[str] | None = None,
+        gemini_location: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -145,6 +161,7 @@ class Traces(Common):
             **kwargs,
         )
         self.trace_config = TraceConfig.load(trace_config_path)
+        self._gemini_location = gemini_location
         # AppConfig is optional — `cxas trace list` works without a pulled app.
         self.app_config: AppConfig | None
         try:
@@ -159,6 +176,20 @@ class Traces(Common):
                 f"depend on `--bucket-override` / `trace.yaml` settings only."
             )
             self.app_config = None
+
+    def _resolved_gemini_location(self) -> str:
+        """Resolves Gemini location from arg, env, or trace.yaml."""
+        cfg_location = (
+            self.trace_config.gemini.location or ""
+        ).strip() or "global"
+        return resolve_gemini_location(
+            self._gemini_location, default=cfg_location
+        )
+
+    @property
+    def gemini_location(self) -> str:
+        """Default Google Cloud location for Gemini trace operations."""
+        return self._resolved_gemini_location()
 
     # -------------------------- listing & fetching --------------------------
 
@@ -871,6 +902,7 @@ class Traces(Common):
             project_id=self.project_id or "",
             credentials=self.creds,
             model_name=model_name,
+            location=self._resolved_gemini_location(),
             prompt=prompt,
         )
 
@@ -1067,6 +1099,7 @@ class Traces(Common):
             project_id=proj,
             credentials=self.creds,
             model_name=model_name,
+            location=self._resolved_gemini_location(),
         )
 
         turn_results: list[dict[str, Any]] = []
@@ -1405,6 +1438,7 @@ class Traces(Common):
             project_id=self.project_id,
             credentials=self.creds,
             model_name=self.trace_config.gemini.model,
+            location=self._resolved_gemini_location(),
         )
         mime_type = self.trace_config.audio.mime_type
 
@@ -1606,6 +1640,7 @@ class Traces(Common):
             project_id=self.project_id,
             credentials=self.creds,
             model_name=self.trace_config.gemini.model,
+            location=self._resolved_gemini_location(),
         )
         all_metrics = self.trace_config.gemini.triage_metrics
         if metrics:

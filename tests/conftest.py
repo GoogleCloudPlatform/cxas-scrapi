@@ -173,6 +173,12 @@ def mock_gemini_generate(
 
 
 @pytest.fixture(autouse=True)
+def _clear_ambient_gemini_location(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate unit tests from ambient GOOGLE_CLOUD_LOCATION shell settings."""
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def mock_webbrowser(monkeypatch: typing.Any) -> None:
     """Globally mock webbrowser to prevent opening browsers during tests."""
     monkeypatch.setattr(webbrowser, "open", lambda *args, **kwargs: True)

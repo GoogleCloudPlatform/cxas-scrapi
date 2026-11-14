@@ -72,6 +72,14 @@ def add_trace_args(subparser: argparse.ArgumentParser) -> None:
             "./.cxas/trace.yaml or ~/.cxas/trace.yaml."
         ),
     )
+    subparser.add_argument(
+        "--gemini-location",
+        default=None,
+        help=(
+            "Google Cloud location for Gemini calls. Defaults to "
+            "GOOGLE_CLOUD_LOCATION, trace.yaml gemini.location, or 'global'."
+        ),
+    )
 
 
 def _build_traces(args: argparse.Namespace) -> "Traces":
@@ -83,6 +91,7 @@ def _build_traces(args: argparse.Namespace) -> "Traces":
         env_file=getattr(args, "env_file", None),
         environment=getattr(args, "environment", None),
         trace_config_path=getattr(args, "config", None),
+        gemini_location=getattr(args, "gemini_location", None),
     )
 
 

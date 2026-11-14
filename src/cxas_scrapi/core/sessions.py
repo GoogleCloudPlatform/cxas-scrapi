@@ -37,6 +37,7 @@ from google.auth.transport.requests import Request
 from google.cloud.ces_v1beta import SessionServiceClient, types
 from google.protobuf import json_format
 
+from cxas_scrapi.utils.gemini import resolve_gemini_location
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 try:
@@ -1759,7 +1760,11 @@ class BidiInteractiveSession:
             items.append({"dtmf": dtmf_digits})
             return items
         else:
-            audio_transformer = AudioTransformer()
+            audio_transformer = AudioTransformer(
+                gemini_location=getattr(
+                    self.sessions_client, "gemini_location", None
+                )
+            )
             lang_code = "en-US"
             if variables and "locale" in variables:
                 lang_code = variables["locale"]
@@ -1911,9 +1916,19 @@ class Sessions(Common):
         app_name: str,
         deployment_id: str | None = None,
         rate_limiter: RateLimiter | None = None,
+        gemini_location: str | None = None,
         **kwargs: typing.Any,
     ) -> None:
-        """Initializes the Sessions client."""
+        """Initializes the Sessions client.
+
+        Args:
+            app_name: Full CXAS App resource name.
+            deployment_id: Optional deployment ID to target for sessions.
+            rate_limiter: Optional rate limiter for session RPCs.
+            gemini_location: Google Cloud location for Gemini TTS synthesis.
+                Defaults to GOOGLE_CLOUD_LOCATION or 'global'.
+            **kwargs: Additional keyword arguments forwarded to `Common`.
+        """
         super().__init__(app_name=app_name, **kwargs)
 
         # Initialize Sessions Client
@@ -1925,6 +1940,7 @@ class Sessions(Common):
         self.app_name = app_name
         self.deployment_id = deployment_id
         self.rate_limiter = rate_limiter
+        self.gemini_location = resolve_gemini_location(gemini_location)
         self._creds_lock = threading.Lock()
 
     def _check_audio_requirements(self) -> None:
@@ -2556,7 +2572,9 @@ class Sessions(Common):
                         "minor latency before user utterances."
                     )
                     text = [text]
-                audio_transformer = AudioTransformer()
+                audio_transformer = AudioTransformer(
+                    gemini_location=self.gemini_location
+                )
                 input_audio_bytes = []
                 lang_code = "en-US"
                 if variables and "locale" in variables:

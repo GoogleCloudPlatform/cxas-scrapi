@@ -20,11 +20,14 @@ import typing
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from cxas_scrapi.cli.llm_lint import (
     build_agent_config_context,
     llm_lint,
     resolve_gcp_credentials,
 )
+from cxas_scrapi.cli.main import get_parser
 from cxas_scrapi.prompts import LLM_LINT_SYSTEM_PROMPT, LLM_LINT_USER_PROMPT
 
 
@@ -65,6 +68,77 @@ def test_resolve_gcp_credentials_from_config(tmp_path: typing.Any) -> None:
     proj, loc = resolve_gcp_credentials(agent_dir)
     assert proj == "config-proj"
     assert loc == "config-loc"
+
+
+@pytest.mark.parametrize(
+    ("env_vars", "config_data", "cli_loc", "expected_loc"),
+    [
+        (
+            {"GOOGLE_CLOUD_LOCATION": "europe-west4", "LOCATION": "us-east1"},
+            {"gcp_project_id": "p", "location": "us-west1"},
+            None,
+            "europe-west4",
+        ),
+        (
+            {"GOOGLE_CLOUD_LOCATION": "   ", "LOCATION": "europe-west1"},
+            {"gcp_project_id": "p"},
+            "   ",
+            "europe-west1",
+        ),
+        (
+            {},
+            {
+                "gcp_project_id": "p",
+                "location": "us",
+                "gemini_location": "europe-west4",
+            },
+            None,
+            "europe-west4",
+        ),
+        (
+            {},
+            {"gcp_project_id": "p", "location": "us"},
+            None,
+            "us-central1",
+        ),
+        (
+            {},
+            {"gcp_project_id": "p", "location": "eu"},
+            None,
+            "us-central1",
+        ),
+    ],
+)
+def test_resolve_gcp_credentials_regional_gemini_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    env_vars: dict[str, str],
+    config_data: dict[str, str],
+    cli_loc: str | None,
+    expected_loc: str,
+) -> None:
+    """Test GOOGLE_CLOUD_LOCATION and gecx-config.json Gemini location rules."""
+    for key in ("GOOGLE_CLOUD_LOCATION", "LOCATION", "REGION", "PROJECT_ID"):
+        monkeypatch.delenv(key, raising=False)
+    for key, val in env_vars.items():
+        monkeypatch.setenv(key, val)
+
+    agent_dir = tmp_path / "agents" / "my-agent"
+    agent_dir.mkdir(parents=True)
+    (tmp_path / "gecx-config.json").write_text(
+        json.dumps(config_data), encoding="utf-8"
+    )
+
+    parser = get_parser()
+    parsed = parser.parse_args(["llm-lint", "--agent-dir", str(agent_dir)])
+    assert parsed.location is None
+
+    proj, loc = resolve_gcp_credentials(
+        agent_dir,
+        cli_location=cli_loc if cli_loc is not None else parsed.location,
+    )
+    assert proj == "p"
+    assert loc == expected_loc
 
 
 @mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)

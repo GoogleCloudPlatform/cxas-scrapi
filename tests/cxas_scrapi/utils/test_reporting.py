@@ -4801,3 +4801,70 @@ def test_resolve_recordings_buckets_dual_eval_only_and_explicit(
             enricher.resolve_recordings_bucket("projects/p/locations/us/apps/a")
             == "eval-only-bkt"
         )
+
+
+@pytest.mark.parametrize(
+    ("loc_kwargs", "expected_loc"),
+    [
+        ({}, "europe-west4"),
+        ({"vertex_location": "europe-west1"}, "europe-west1"),
+        (
+            {
+                "vertex_location": "europe-west1",
+                "gemini_location": "us-central1",
+            },
+            "us-central1",
+        ),
+    ],
+)
+def test_reporting_and_runner_gemini_location_precedence(
+    tmp_path: typing.Any,
+    monkeypatch: typing.Any,
+    loc_kwargs: dict[str, str],
+    expected_loc: str,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    app_name = "projects/p/locations/eu/apps/a"
+    sim_dir = tmp_path / "sims"
+    sim_dir.mkdir()
+    (sim_dir / "sim1.yaml").write_text(
+        "- name: tc1\n  steps: []\n  expectations: []\n", encoding="utf-8"
+    )
+
+    with patch.object(evals_runner, "SimulationEvals") as mock_sim_cls:
+        mock_sim_cls.return_value.run_simulations.return_value = []
+        evals_runner.run_all_evals(
+            app_name=app_name,
+            simulation_dir=str(sim_dir),
+            include=["sims"],
+            **loc_kwargs,
+        )
+        assert mock_sim_cls.call_args.kwargs["vertex_location"] == expected_loc
+
+    out_html = tmp_path / "out.html"
+    with (
+        patch.object(
+            enricher,
+            "run_all_evals",
+            return_value={
+                "callback": [],
+                "tool": [],
+                "golden": [],
+                "simulation": [],
+            },
+        ) as mock_run_all,
+        patch.object(
+            enricher,
+            "generate_combined_html_report",
+            return_value=str(out_html),
+        ),
+    ):
+        enricher.generate_combined_report_from_dir(
+            output_dir=str(tmp_path),
+            app_name=app_name,
+            output_path=str(out_html),
+            run=True,
+            include=["sims"],
+            **loc_kwargs,
+        )
+        assert mock_run_all.call_args.kwargs["vertex_location"] == expected_loc

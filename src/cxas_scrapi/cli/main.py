@@ -925,6 +925,9 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     ):
         extra_report_kwargs["return_gate_status"] = True
 
+    gemini_loc = (getattr(args, "gemini_location", None) or "").strip() or None
+    vertex_loc = (getattr(args, "vertex_location", None) or "").strip() or None
+    eval_gemini_location = gemini_loc or vertex_loc
     report_res = generate_combined_report_from_dir(
         output_dir=output_dir,
         golden_run=args.golden_run,
@@ -958,7 +961,7 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         single_bidi_stream=getattr(args, "single_bidi_stream", False),
         skip_playback_wait=getattr(args, "skip_playback_wait", False),
         report_format=getattr(args, "format", "html") or "html",
-        vertex_location=getattr(args, "vertex_location", "global") or "global",
+        vertex_location=eval_gemini_location,
         naturalness=getattr(args, "naturalness", None),
         **(
             {"platform_sims": True}
@@ -2265,9 +2268,17 @@ def get_parser() -> argparse.ArgumentParser:
         help="Do not wait out the real-time playback duration of each agent response before sending the next user turn. Audio modality only.",
     )
     parser_report.add_argument(
+        "--gemini-location",
+        default=None,
+        help=(
+            "Google Cloud location for evaluation Gemini models. Defaults to "
+            "GOOGLE_CLOUD_LOCATION or 'global'."
+        ),
+    )
+    parser_report.add_argument(
         "--vertex-location",
-        default="global",
-        help="Vertex AI location for evaluation LLM models. Defaults to 'global'.",
+        default=None,
+        help="Deprecated alias for --gemini-location.",
     )
     parser_report.add_argument(
         "--platform-sims",
@@ -2999,8 +3010,12 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_llm_lint.add_argument(
         "--location",
-        default="us-central1",
-        help="GCP location for Vertex AI queries (default: us-central1).",
+        default=None,
+        help=(
+            "Google Cloud location for Gemini queries (defaults to "
+            "GOOGLE_CLOUD_LOCATION, gecx-config.json gemini_location, or "
+            "'us-central1')."
+        ),
     )
     parser_llm_lint.add_argument(
         "--model",

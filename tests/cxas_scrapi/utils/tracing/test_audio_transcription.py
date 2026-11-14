@@ -180,3 +180,18 @@ def test_audio_transcriber_evaluate_turn(mock_gemini_cls: MagicMock) -> None:
     assert eval_res["substitutions"] == 1
     assert eval_res["wer"] == pytest.approx(1 / 6, rel=1e-3)
     assert not eval_res["contains_non_english"]
+
+
+@patch("cxas_scrapi.utils.tracing.audio_transcription.GeminiGenerate")
+def test_audio_transcriber_resolves_gemini_location(
+    mock_gemini_cls: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    transcriber = AudioTranscriber(project_id="test-proj", location=None)
+    assert transcriber.location == "europe-west4"
+    mock_gemini_cls.assert_called_once_with(
+        project_id="test-proj",
+        credentials=None,
+        model_name="gemini-3.5-flash",
+        location="europe-west4",
+    )

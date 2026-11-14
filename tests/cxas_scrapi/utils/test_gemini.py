@@ -17,7 +17,9 @@ import typing
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from cxas_scrapi.utils.gemini import GeminiGenerate
+import pytest
+
+from cxas_scrapi.utils.gemini import GeminiGenerate, resolve_gemini_location
 
 
 @patch("cxas_scrapi.utils.gemini.genai")
@@ -281,3 +283,45 @@ def test_generate_async_zero_retries_returns_none(
     gen = GeminiGenerate(project_id="p", max_concurrent_requests=1)
     res = asyncio.run(gen.generate_async(prompt="x", max_retries=0))
     assert res is None
+
+
+@pytest.mark.parametrize(
+    ("env_loc", "candidates", "default", "expected"),
+    [
+        (None, (), "global", "global"),
+        (None, ("   ",), "global", "global"),
+        (None, (), "us-central1", "us-central1"),
+        (None, ("   ", None, "asia-northeast1"), "global", "asia-northeast1"),
+        (None, ("us-east4", "europe-west1"), "global", "us-east4"),
+        ("   ", ("   ",), "us-central1", "us-central1"),
+        ("europe-west4", (), "global", "europe-west4"),
+        ("europe-west4", ("   ",), "global", "europe-west4"),
+        ("europe-west4", ("us-east4",), "global", "us-east4"),
+    ],
+)
+def test_resolve_gemini_location_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+    env_loc: str | None,
+    candidates: tuple[str | None, ...],
+    default: str,
+    expected: str,
+) -> None:
+    if env_loc is not None:
+        monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", env_loc)
+    assert resolve_gemini_location(*candidates, default=default) == expected
+
+
+@patch("cxas_scrapi.utils.gemini.genai")
+def test_gemini_generate_uses_env_gemini_location(
+    mock_genai: typing.Any, monkeypatch: typing.Any
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    gen = GeminiGenerate(project_id="p")
+    assert gen.location == "europe-west4"
+    _ = gen.client
+    mock_genai.Client.assert_called_once_with(
+        vertexai=True,
+        project="p",
+        location="europe-west4",
+        credentials=None,
+    )

@@ -937,3 +937,141 @@ class TestAudioTransformer:
         assert seg is not None
         assert len(seg) > 0
         assert mock_client.synthesize_speech.call_count == 2
+
+    @patch("cxas_scrapi.core.audio_transformer.genai")
+    def test_audio_transformer_resolves_gemini_location(
+        self, mock_genai: typing.Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            AudioTransformer._genai_local, "clients", {}, raising=False
+        )
+        monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+        transformer = AudioTransformer()
+        assert transformer.gemini_location == "europe-west4"
+        transformer.gemini_location = "us-east1"
+        assert transformer.gemini_location == "us-east1"
+        transformer.gemini_location = "   "
+        assert transformer.gemini_location == "europe-west4"
+        transformer.gemini_location = None
+        assert transformer.gemini_location == "europe-west4"
+
+        creds = MagicMock()
+        mock_genai.Client.side_effect = [MagicMock(), MagicMock()]
+        c_eu = AudioTransformer._get_genai_client("proj-1", creds)
+        c_us = AudioTransformer._get_genai_client(
+            "proj-1", creds, location="us-central1"
+        )
+        assert c_eu is not c_us
+        assert mock_genai.Client.call_args_list[0].kwargs["location"] == (
+            "europe-west4"
+        )
+        assert mock_genai.Client.call_args_list[1].kwargs["location"] == (
+            "us-central1"
+        )
+
+    @patch("cxas_scrapi.core.audio_transformer.genai")
+    @patch("cxas_scrapi.core.audio_transformer.texttospeech")
+    def test_audio_transformer_lazy_env_and_whitespace_precedence(
+        self,
+        mock_tts: typing.Any,
+        mock_genai: typing.Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            AudioTransformer._genai_local, "clients", {}, raising=False
+        )
+        monkeypatch.setattr(
+            AudioTransformer,
+            "_unsupported_cloud_tts_models",
+            {"gemini-3.8-flash-lite-tts"},
+        )
+        monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+
+        mock_part = MagicMock()
+        mock_part.inline_data.data = b"\x20\x00" * 240
+        mock_part.inline_data.mime_type = "audio/L16;codec=pcm;rate=24000"
+        mock_cand = MagicMock()
+        mock_cand.content.parts = [mock_part]
+        mock_vertex_resp = MagicMock()
+        mock_vertex_resp.candidates = [mock_cand]
+        mock_genai_client = MagicMock()
+        mock_genai_client.models.generate_content.return_value = (
+            mock_vertex_resp
+        )
+        mock_genai.Client.return_value = mock_genai_client
+
+        transformer = AudioTransformer()
+        assert transformer.gemini_location == "global"
+
+        # Setting GOOGLE_CLOUD_LOCATION after construction is honored lazily.
+        monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+        assert transformer.gemini_location == "europe-west4"
+
+        transformer.text_to_speech_bytes(
+            text="Hello",
+            credentials=MagicMock(),
+            project_id="proj-1",
+            voice_config={"model_name": "gemini-3.8-flash-lite-tts"},
+        )
+        transformer.text_to_speech_bytes(
+            text="Hello",
+            credentials=MagicMock(),
+            project_id="proj-2",
+            voice_config={
+                "model_name": "gemini-3.8-flash-lite-tts",
+                "gemini_location": "asia-northeast1",
+            },
+            gemini_location="   ",
+        )
+        transformer.text_to_speech_bytes(
+            text="Hello",
+            credentials=MagicMock(),
+            project_id="proj-3",
+            voice_config={
+                "model_name": "gemini-3.8-flash-lite-tts",
+                "vertex_location": "europe-west1",
+            },
+            gemini_location="   ",
+        )
+        transformer.text_to_speech_bytes(
+            text="Hello",
+            credentials=MagicMock(),
+            project_id="proj-4",
+            voice_config={
+                "model_name": "gemini-3.8-flash-lite-tts",
+                "gemini_location": "us-east4",
+                "vertex_location": "europe-west1",
+            },
+        )
+        transformer.gemini_location = "southamerica-east1"
+        transformer.text_to_speech_bytes(
+            text="Hello",
+            credentials=MagicMock(),
+            project_id="proj-5",
+            voice_config={"model_name": "gemini-3.8-flash-lite-tts"},
+            gemini_location="   ",
+        )
+
+        mock_tts.TextToSpeechClient.return_value.synthesize_speech.side_effect = RuntimeError(
+            "Model is not supported"
+        )
+        seg = synthesize_tts_competing_speech(
+            phrases=["Competing speaker"],
+            voices=("Puck",),
+            credentials=MagicMock(),
+            project_id="proj-6",
+            gemini_location="australia-southeast1",
+        )
+        assert len(seg) > 0
+
+        captured_locations = [
+            call.kwargs["location"] for call in mock_genai.Client.call_args_list
+        ]
+        assert captured_locations == [
+            "europe-west4",
+            "asia-northeast1",
+            "europe-west1",
+            "us-east4",
+            "southamerica-east1",
+            "australia-southeast1",
+        ]

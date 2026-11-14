@@ -1492,3 +1492,26 @@ def test_sanitize_cxas_schema() -> None:
         },
     }
     assert "[Source Schema: WebhookResponse]" in desc
+
+
+@patch("cxas_scrapi.migration.service.GeminiGenerate")
+def test_migration_service_resolves_gemini_location(
+    mock_gemini_cls: typing.Any, monkeypatch: typing.Any
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    svc_env = MigrationService(
+        project_id="test-proj",
+        ps_apps_client=MagicMock(),
+        secret_manager_client=MagicMock(),
+    )
+    assert svc_env.gemini_location == "europe-west4"
+    assert mock_gemini_cls.call_args.kwargs["location"] == "europe-west4"
+
+    svc_explicit = MigrationService(
+        project_id="test-proj",
+        gemini_location="us-central1",
+        ps_apps_client=MagicMock(),
+        secret_manager_client=MagicMock(),
+    )
+    assert svc_explicit.gemini_location == "us-central1"
+    assert mock_gemini_cls.call_args.kwargs["location"] == "us-central1"

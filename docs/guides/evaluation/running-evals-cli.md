@@ -204,6 +204,7 @@ The `cxas evals report` command runs evaluations across multiple types (simulati
 | `--modality` | `text` | Evaluation modality: `text` or `audio` |
 | `--sim-parallel` | `5` | Concurrency worker count for simulations |
 | `--runs` | `1` | Number of runs per test case |
+| `--gemini-location` | `None` | Google Cloud location for Gemini user simulator, judge, and TTS models (defaults to `GOOGLE_CLOUD_LOCATION` or `global`; `--vertex-location` is accepted as a legacy alias) |
 | `--audio-analysis` / `--no-audio-analysis` | `None` | Opt-in flag to run comprehensive audio analysis (multimodal audio checks, acoustic metrics, voice drift) and include the Audio Analysis tab. Off by default. |
 | `--naturalness` / `--no-naturalness` | `None` | Run-level override for the naturalness metric. `--naturalness` grades every simulation; `--no-naturalness` skips grading; omitting it defers to each test case YAML. |
 | `--capture-agent-audio` | `False` | Capture real-time agent output audio as WAV files for turn listening |
