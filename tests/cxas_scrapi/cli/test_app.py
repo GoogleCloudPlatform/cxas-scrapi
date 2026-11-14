@@ -17,6 +17,7 @@
 
 import argparse
 import io
+import json
 import os
 import sys
 import time
@@ -1496,3 +1497,295 @@ def test_app_lint_with_env_file_flag(
     assert excinfo.value.code == 1
     results = json.loads(capsys.readouterr().out)
     assert any(r["rule_id"] == "A017" for r in results)
+
+
+def test_app_push_lint_aborts_on_errors_before_uploading(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    _make_lint_app(tmp_path)
+    (tmp_path / "agents" / "root_agent" / "instruction.txt").write_text(
+        "Transfer to {@AGENT: nonexistent}.",
+        encoding="utf-8",
+    )
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        env_file=None,
+        display_name="Broken App",
+        project_id="test-project",
+        location="us",
+        lint=True,
+    )
+
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        cli_app.app_push(args)
+
+    assert excinfo.value.code == 1
+    mock_apps_client.import_as_new_app.assert_not_called()
+    assert "Lint FAILED" in capsys.readouterr().out
+
+
+def _make_nested_lint_workspace(
+    tmp_path: typing.Any,
+    *,
+    cxaslint_body: str | None = None,
+) -> typing.Any:
+    """Create nested app workspace with optional root `cxaslint.yaml`."""
+    nested_app = tmp_path / "cxas_app" / "CymbalSupport"
+    nested_app.mkdir(parents=True)
+    _make_lint_app(nested_app)
+    if cxaslint_body is not None:
+        (tmp_path / "cxaslint.yaml").write_text(cxaslint_body, encoding="utf-8")
+    return nested_app
+
+
+def test_app_push_lint_rejects_workspace_root_without_app_manifest(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    _make_nested_lint_workspace(tmp_path)
+    (tmp_path / "gecx-config.json").write_text(
+        json.dumps({"app_dir": "cxas_app/CymbalSupport"}),
+        encoding="utf-8",
+    )
+
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        env_file=None,
+        display_name="Workspace Root",
+        project_id="test-project",
+        location="us",
+        lint=True,
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_push(args)
+
+    assert excinfo.value.code == 1
+    mock_apps_client.import_as_new_app.assert_not_called()
+    assert "No app.json or app.yaml found" in capsys.readouterr().out
+
+
+def test_app_push_lint_inherits_parent_cxaslint_and_proceeds_on_warnings(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    nested_app = _make_nested_lint_workspace(
+        tmp_path,
+        cxaslint_body=(
+            "app_dir: cxas_app/CymbalSupport\n"
+            "rules:\n"
+            "  A001: warning\n"
+            "  V002: off\n"
+        ),
+    )
+    (nested_app / "agents" / "root_agent" / "root_agent.json").write_text(
+        "{bad json", encoding="utf-8"
+    )
+
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/new-id", []
+    )
+    args = argparse.Namespace(
+        app_dir=str(nested_app),
+        to=None,
+        env_file=None,
+        display_name="Cymbal Support",
+        project_id="test-project",
+        location="us",
+        lint=True,
+    )
+
+    with mock.patch(
+        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    ):
+        cli_app.app_push(args)
+
+    mock_apps_client.import_as_new_app.assert_called_once()
+    out = capsys.readouterr().out
+    assert "Lint PASSED (no errors)." in out
+
+
+def test_app_lint_nested_app_dir_inherits_parent_cxaslint_and_discovers_nested_evals(
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    nested_app = _make_nested_lint_workspace(
+        tmp_path,
+        cxaslint_body=(
+            "app_dir: cxas_app/CymbalSupport\n"
+            "rules:\n"
+            "  A001: warning\n"
+            "  V002: off\n"
+        ),
+    )
+    (nested_app / "agents" / "root_agent" / "root_agent.json").write_text(
+        "{bad json", encoding="utf-8"
+    )
+    nested_evals = nested_app / "evals"
+    nested_evals.mkdir()
+    (nested_evals / "suite.yaml").write_text(
+        "test_cases:\n"
+        "  - name: happy_path\n"
+        "    user_goal: Ask for support\n"
+        "    expectations:\n"
+        "      tool_calls:\n"
+        "        - end_session\n",
+        encoding="utf-8",
+    )
+
+    args = argparse.Namespace(app_dir=str(nested_app))
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        cli_app.app_lint(args)
+
+    assert excinfo.value.code == 0
+    out = capsys.readouterr().out
+    assert "Evals:     1" in out
+    assert "Lint PASSED (no errors)." in out
+
+
+def test_app_lint_nested_app_dir_supports_symlinked_root_evals_and_single_registry(
+    tmp_path: typing.Any,
+    tmp_path_factory: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    from cxas_scrapi.utils import linter  # noqa: PLC0415
+
+    nested_app = _make_nested_lint_workspace(
+        tmp_path,
+        cxaslint_body="app_dir: cxas_app/CymbalSupport\n",
+    )
+    external_evals = tmp_path_factory.mktemp("shared_evals")
+    (external_evals / "suite.yaml").write_text(
+        "test_cases:\n"
+        "  - name: happy_path\n"
+        "    user_goal: Ask for support\n"
+        "    expectations:\n"
+        "      tool_calls:\n"
+        "        - end_session\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "evals").symlink_to(external_evals)
+
+    args = argparse.Namespace(app_dir=str(nested_app))
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        mock.patch(
+            "cxas_scrapi.utils.linter.build_registry",
+            wraps=linter.build_registry,
+        ) as mock_build_registry,
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        cli_app.app_lint(args)
+
+    assert excinfo.value.code == 0
+    assert mock_build_registry.call_count == 1
+    out = capsys.readouterr().out
+    assert "Evals:     1" in out
+    assert "Lint PASSED (no errors)." in out
+
+
+def test_app_push_lint_forwards_env_file_flag(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    _make_lint_app(tmp_path)
+    (tmp_path / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "test-app",
+                "displayName": "Test App",
+                "rootAgent": "root_agent",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_authentication",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    bad_env = tmp_path / "bad_env.json"
+    bad_env.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_authentication",
+                            "schema": {"default": "not-a-bool"},
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    bad_args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        env_file=str(bad_env),
+        display_name="Env App",
+        project_id="test-project",
+        location="us",
+        lint=True,
+    )
+    with (
+        mock.patch("cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"),
+        pytest.raises(SystemExit) as excinfo,
+    ):
+        cli_app.app_push(bad_args)
+
+    assert excinfo.value.code == 1
+    mock_apps_client.import_as_new_app.assert_not_called()
+    assert "A017" in capsys.readouterr().out
+
+    good_env = tmp_path / "good_env.json"
+    good_env.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_authentication",
+                            "schema": {"default": True},
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/new-id", []
+    )
+    good_args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        env_file=str(good_env),
+        display_name="Env App",
+        project_id="test-project",
+        location="us",
+        lint=True,
+    )
+    with mock.patch(
+        "cxas_scrapi.utils.lint_rules.schema.json_format.ParseDict"
+    ):
+        cli_app.app_push(good_args)
+
+    mock_apps_client.import_as_new_app.assert_called_once()
+    assert "Lint PASSED (no errors)." in capsys.readouterr().out
