@@ -60,6 +60,7 @@ When you pass a display name (e.g., `"My Support Agent"`) instead of a resource 
 | [`cxas init`](init.md) | Bootstrap a project with AI agent development skills. |
 | [`cxas insights`](insights.md) | Manage QA scorecards via the Insights API. |
 | [`cxas trace`](trace.md) | Inspect, analyze, and report on individual conversations (deployed/build/eval) — list, fetch report, merge Cloud Logs, download/analyze audio with Gemini, replay against current agent, aggregate stats, and flag platform bugs. |
+| [`cxas arc`](arc.md) | Chat with Arc, the CX Agent Studio AI assistant — design contracts, build agents from PRDs, answer confirmation cards, poll evaluation runs, and manage assistant sessions. |
 
 ---
 

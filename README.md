@@ -152,7 +152,7 @@ The `src/cxas_scrapi/utils` directory contains helper functions and background l
 The `src/cxas_scrapi/evals` directory provides tools for executing and analyzing agent performance evaluations, including Golden tests and simulation runs, and extracting metrics like latency.
 
 ## [CLI](src/cxas_scrapi/cli)
-The `src/cxas_scrapi/cli` directory implements the command line interface for SCRAPI, offering tools like `cxas lint` to automate development and validation workflows.
+The `src/cxas_scrapi/cli` directory implements the command line interface for SCRAPI, offering tools like `cxas lint` to automate development and validation workflows. `cxas arc` talks to Arc, the AI assistant built into the CX Agent Studio console, from the terminal: ask questions about an app, design an agent contract, build an agent from a PRD, attach local files, and run or hillclimb evaluations on a sticky session (see the `cxas-arc` skill under `.agents/skills/`).
 
 ## [Migration](src/cxas_scrapi/migration)
 The `src/cxas_scrapi/migration` directory contains tools to facilitate transitioning legacy Dialogflow CX agents to CXAS, including agent generation from flows and artifact building.
