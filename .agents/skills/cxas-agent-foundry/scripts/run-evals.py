@@ -22,7 +22,12 @@ import sys
 import time
 from datetime import datetime
 
-from config import load_config as _load_shared_config, get_project_path
+from config import (
+    gemini_location_kwarg,
+    get_project_path,
+    load_config as _load_shared_config,
+    resolve_gemini_location_from_config,
+)
 
 # --- Paths ---
 REPORTS_DIR = get_project_path("eval-reports")
@@ -40,6 +45,8 @@ def load_config() -> typing.Any:
             "default_channel", raw.get("modality", "text")
         ),
         "modality": raw.get("modality", "text"),
+        "gemini_location": raw.get("gemini_location")
+        or raw.get("vertex_location"),
     }
     config["app_resource"] = (
         f"projects/{config['project']}/locations/{config['location']}/apps/{config['app_id']}"
@@ -113,6 +120,15 @@ def main() -> typing.Any:
         action="store_true",
         help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn (the default).",
     )
+    parser.add_argument(
+        "--gemini-location",
+        default=None,
+        help=(
+            "Google Cloud location for simulation and judge Gemini models "
+            "(defaults to GOOGLE_CLOUD_LOCATION, gecx-config.json "
+            "gemini_location, or 'global')."
+        ),
+    )
     args = parser.parse_args()
 
     # Load config
@@ -155,6 +171,10 @@ def main() -> typing.Any:
 
     from cxas_scrapi.utils.reporting import generate_combined_report_from_dir
 
+    gemini_location = resolve_gemini_location_from_config(
+        args.gemini_location, config
+    )
+
     print("\nRunning all evaluations in-process...")
     try:
         generate_combined_report_from_dir(
@@ -175,6 +195,9 @@ def main() -> typing.Any:
             deployment_id=args.deployment_id,
             skip_playback_wait=args.skip_playback_wait,
             single_bidi_stream=args.single_bidi_stream,
+            **gemini_location_kwarg(
+                generate_combined_report_from_dir, gemini_location
+            ),
         )
     except Exception as e:
         print(f"\n  ERROR: Evaluation run failed: {e}")

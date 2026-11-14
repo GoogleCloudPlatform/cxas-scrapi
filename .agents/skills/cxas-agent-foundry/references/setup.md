@@ -30,6 +30,7 @@ Ask for details **one at a time** -- don't batch all questions into a single mes
 
 Everything else is derived:
 - **Location**: defaults to `us`
+- **Gemini location** (optional): omit to default to `global`, or set `"gemini_location"` (for example `"europe-west4"` or `"us-central1"`) when regional Gemini data residency or org policies restrict the `global` endpoint
 - **Model**: `gemini-composite-v2` (default for both audio and text; `gemini-3.1-flash-live` is opt-in if native A2A streaming is explicitly required)
 - **deployed_app_id**: `null` for new apps (set after first push)
 
@@ -38,6 +39,7 @@ Once you have all answers, write `<project_name>/gecx-config.json` inside the pr
 {
   "gcp_project_id": "<project>",
   "location": "us",
+  "gemini_location": "<optional_gemini_region>",
   "app_name": "<app_name>",
   "deployed_app_id": null,
   "app_dir": "cxas_app/",
@@ -49,6 +51,7 @@ Once you have all answers, write `<project_name>/gecx-config.json` inside the pr
 ```
 
 Omit the `gcs_bucket` field entirely for text agents (don't write `null` — leave it out).
+Omit `gemini_location` unless a regional Gemini endpoint is needed.
 
 ### Existing agent (connecting to an app that already exists)
 
@@ -61,6 +64,7 @@ python .agents/skills/cxas-agent-foundry/scripts/setup-project.py \
   --project-id <gcp_project> \
   --app-id <app_id>
 ```
+Pass `--gemini-location <region>` when the project requires a regional Gemini endpoint.
 
 The script pulls the app, reads `app.json` to detect the model and modality, writes `gecx-config.json`, and sets the active project. No need to ask for modality -- it's auto-detected from the deployed app.
 

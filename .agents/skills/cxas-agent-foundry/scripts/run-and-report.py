@@ -142,6 +142,14 @@ def main() -> typing.Any:
         "--single-bidi-stream", action="store_true", default=False,
         help="Keep one persistent bidi WebSocket open per audio simulation instead of one connection per turn (the default)."
     )
+    parser.add_argument(
+        "--gemini-location",
+        default=None,
+        help=(
+            "Google Cloud location for Gemini models forwarded to "
+            "run-evals.py (e.g. europe-west4)."
+        ),
+    )
 
     args = parser.parse_args()
     python = sys.executable
@@ -191,6 +199,8 @@ def main() -> typing.Any:
         eval_cmd.append("--skip-playback-wait")
     if args.single_bidi_stream:
         eval_cmd.append("--single-bidi-stream")
+    if args.gemini_location:
+        eval_cmd.extend(["--gemini-location", args.gemini_location])
     result = _run(eval_cmd, "Step 3/5: Run all evals", dry_run=args.dry_run)
     if result.returncode != 0:
         print("\nEval run failed. Continuing to triage and report with available results...")

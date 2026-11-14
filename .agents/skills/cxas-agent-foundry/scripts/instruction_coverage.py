@@ -26,6 +26,7 @@ import models
 import pydantic
 import tenacity
 import utils
+from config import resolve_gemini_location_from_config
 
 from cxas_scrapi.utils import gemini
 
@@ -444,7 +445,7 @@ async def extract_instruction_coverage(
             or os.environ.get("GCP_PROJECT")
             or "default"
         )
-        location = os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
+        location = resolve_gemini_location_from_config()
 
         print(f"Initializing Gemini Generate for (Project: {project_id})...")
         gemini_client = gemini.GeminiGenerate(

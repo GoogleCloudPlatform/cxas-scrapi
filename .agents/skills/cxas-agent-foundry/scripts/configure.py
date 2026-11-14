@@ -349,6 +349,8 @@ def review_and_confirm(config: typing.Any) -> typing.Any:
 
     table.add_row("GCP Project", config["gcp_project_id"])
     table.add_row("Location", config["location"])
+    if config.get("gemini_location"):
+        table.add_row("Gemini Location", config["gemini_location"])
     table.add_row("App Name", config.get("app_name", ""))
     app_id_display = config["deployed_app_id"] or "[yellow]Not yet assigned (will be set after app creation)[/yellow]"
     table.add_row("App ID", app_id_display)
@@ -374,10 +376,26 @@ def load_existing_config() -> typing.Any:
     """Load existing config if present."""
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE) as f:
+            with open(CONFIG_FILE, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, IOError):
             pass
+    return None
+
+
+def _resolve_gemini_location(
+    cli_value: str | None,
+    existing: dict[str, typing.Any] | None,
+) -> str | None:
+    """Resolve optional Gemini location from CLI flag or existing config."""
+    candidates = [cli_value]
+    if existing:
+        candidates.extend(
+            [existing.get("gemini_location"), existing.get("vertex_location")]
+        )
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
     return None
 
 
@@ -389,6 +407,8 @@ def _show_current_config(config: typing.Any) -> typing.Any:
 
     table.add_row("GCP Project", config.get("gcp_project_id", ""))
     table.add_row("Location", config.get("location", ""))
+    if config.get("gemini_location"):
+        table.add_row("Gemini Location", config["gemini_location"])
     table.add_row("App Name", config.get("app_name", ""))
     app_id = config.get("deployed_app_id")
     table.add_row("App ID", app_id or "[yellow]Not set[/yellow]")
@@ -418,7 +438,7 @@ def _has_local_changes(app_dir: typing.Any) -> typing.Any:
         return any(os.scandir(app_dir))
 
 
-def main() -> typing.Any:
+def main(args: typing.Any = None) -> typing.Any:
     if inquirer is None:
         raise RuntimeError(
             "InquirerPy is required for interactive configuration. "
@@ -496,10 +516,15 @@ def main() -> typing.Any:
 
     if gcs_bucket:
         config["gcs_bucket"] = gcs_bucket
+    gemini_location = _resolve_gemini_location(
+        args.gemini_location if args else None, existing
+    )
+    if gemini_location:
+        config["gemini_location"] = gemini_location
 
     # Review
     if review_and_confirm(config):
-        with open(CONFIG_FILE, "w") as f:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
             f.write("\n")
         console.print(f"\n[bold green]Wrote {CONFIG_FILE}[/bold green]")
@@ -614,6 +639,13 @@ def parse_args() -> typing.Any:
     parser.add_argument("--modality", choices=["audio", "text"], help="Default modality")
     parser.add_argument("--model", help="Model name")
     parser.add_argument("--gcs-bucket", help="GCS bucket (gs://...)")
+    parser.add_argument(
+        "--gemini-location",
+        help=(
+            "Google Cloud location for Gemini and TTS calls "
+            "(e.g. europe-west4)"
+        ),
+    )
     parser.add_argument("--non-interactive", action="store_true",
                         help="Run without interactive prompts (requires --project-id)")
     return parser.parse_args()
@@ -707,8 +739,12 @@ def main_non_interactive(args: typing.Any) -> typing.Any:
 
     if gcs_bucket:
         config["gcs_bucket"] = gcs_bucket
+    existing = load_existing_config()
+    gemini_location = _resolve_gemini_location(args.gemini_location, existing)
+    if gemini_location:
+        config["gemini_location"] = gemini_location
 
-    with open(CONFIG_FILE, "w") as f:
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
         f.write("\n")
     console.print(f"\n[bold green]Wrote {CONFIG_FILE}[/bold green]")
@@ -722,4 +758,4 @@ if __name__ == "__main__":
     if args.non_interactive:
         main_non_interactive(args)
     else:
-        main()
+        main(args)
