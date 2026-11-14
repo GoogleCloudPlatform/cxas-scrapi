@@ -77,7 +77,7 @@ from cxas_scrapi.utils.eval_utils import (
     evaluate_expectations,
 )
 from cxas_scrapi.utils.gcs_utils import GCSUtils
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, resolve_gemini_location
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -1193,13 +1193,22 @@ class ShadowEvals(Apps):
         rate_limiter: RateLimiter | None = None,
         expectations_only: bool = True,
         deployment_id: str | None = None,
-        vertex_location: str = "global",
+        vertex_location: str | None = None,
         naturalness: bool | dict[str, Any] | None = None,
         gcs_bucket: str | None = None,
+        gemini_location: str | None = None,
         **kwargs: typing.Any,
     ) -> None:
+        """Initializes ShadowEvals.
+
+        `gemini_location` (or legacy `vertex_location`) defaults to
+        `GOOGLE_CLOUD_LOCATION` or `'global'`.
+        """
         self.expectations_only = expectations_only
-        self.vertex_location = vertex_location
+        self.gemini_location = resolve_gemini_location(
+            gemini_location, vertex_location
+        )
+        self.vertex_location = self.gemini_location
         self.naturalness = naturalness
         self.default_gcs_bucket = gcs_bucket
         project_id = app_name.split("/")[1]
@@ -1210,12 +1219,13 @@ class ShadowEvals(Apps):
             app_name,
             deployment_id=deployment_id,
             rate_limiter=rate_limiter,
+            gemini_location=self.gemini_location,
             **kwargs,
         )
         self.tools_map = Tools(app_name=app_name, **kwargs).get_tools_map()
         self.genai_client = GeminiGenerate(
             project_id=self.project_id,
-            location=self.vertex_location,
+            location=self.gemini_location,
             credentials=self.creds,
         )
 
@@ -1260,7 +1270,11 @@ class ShadowEvals(Apps):
             Tuple of `(traces_client, normalized_trace, bucket_override)`.
         """
         source_app_name = self._resolve_source_app_name(tc)
-        traces_client = Traces(app_name=source_app_name, creds=self.creds)
+        traces_client = Traces(
+            app_name=source_app_name,
+            creds=self.creds,
+            gemini_location=self.gemini_location,
+        )
         normalized = traces_client.get_normalized(tc.conversation_id)
 
         bucket_override = tc.gcs_bucket or self.default_gcs_bucket

@@ -503,6 +503,7 @@ def test_turn_evals_init_with_rate_limiter(
         app_name="projects/p/locations/l/apps/a",
         creds=None,
         rate_limiter=mock_rate_limiter,
+        gemini_location="global",
     )
 
 
@@ -515,6 +516,7 @@ def test_turn_evals_default_vertex_location(
     mock_gemini: typing.Any,
 ) -> None:
     evals = TurnEvals(app_name="projects/p/locations/l/apps/a")
+    assert evals.gemini_location == "global"
     assert evals.vertex_location == "global"
     mock_gemini.assert_called_once_with(
         project_id="p",
@@ -535,10 +537,56 @@ def test_turn_evals_custom_vertex_location(
         app_name="projects/p/locations/l/apps/a",
         vertex_location="us-central1",
     )
+    assert evals.gemini_location == "us-central1"
     assert evals.vertex_location == "us-central1"
+    mock_sessions.assert_called_once_with(
+        app_name="projects/p/locations/l/apps/a",
+        creds=None,
+        rate_limiter=None,
+        gemini_location="us-central1",
+    )
     mock_gemini.assert_called_once_with(
         project_id="p",
         location="us-central1",
+        credentials=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("init_kwargs", "expected_loc"),
+    [
+        ({}, "europe-west4"),
+        ({"vertex_location": "europe-west1"}, "europe-west1"),
+        (
+            {"vertex_location": "europe-west1", "gemini_location": "us-east4"},
+            "us-east4",
+        ),
+    ],
+)
+@patch("cxas_scrapi.evals.turn_evals.GeminiGenerate")
+@patch("cxas_scrapi.evals.turn_evals.Variables")
+@patch("cxas_scrapi.evals.turn_evals.Sessions")
+def test_turn_evals_gemini_location_precedence_and_backwards_compat(
+    mock_sessions: typing.Any,
+    mock_variables: typing.Any,
+    mock_gemini: typing.Any,
+    init_kwargs: dict[str, str],
+    expected_loc: str,
+    monkeypatch: typing.Any,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    evals = TurnEvals(app_name="projects/p/locations/l/apps/a", **init_kwargs)
+    assert evals.gemini_location == expected_loc
+    assert evals.vertex_location == expected_loc
+    mock_sessions.assert_called_once_with(
+        app_name="projects/p/locations/l/apps/a",
+        creds=None,
+        rate_limiter=None,
+        gemini_location=expected_loc,
+    )
+    mock_gemini.assert_called_once_with(
+        project_id="p",
+        location=expected_loc,
         credentials=None,
     )
 

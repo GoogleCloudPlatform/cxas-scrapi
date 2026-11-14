@@ -790,7 +790,7 @@ def handle_eval(args: argparse.Namespace) -> None:
         runner = ScorecardEvalRunner(
             project_id=getattr(args, "project_id", "default-project")
             or "default-project",
-            location=getattr(args, "location", "global") or "global",
+            location=getattr(args, "location", None),
             model_name=getattr(args, "model", "gemini-2.5-flash")
             or "gemini-2.5-flash",
         )
@@ -1689,12 +1689,15 @@ def populate_insights_parser(parser_insights: argparse.ArgumentParser) -> None:
     parser_eval.add_argument(
         "--project-id",
         dest="project_id",
-        help="GCP Project ID for Vertex AI evaluation.",
+        help="GCP Project ID for Gemini evaluation.",
     )
     parser_eval.add_argument(
         "--location",
-        default="global",
-        help="Vertex AI location (default: global).",
+        default=None,
+        help=(
+            "Google Cloud location for Gemini evaluation (defaults to "
+            "GOOGLE_CLOUD_LOCATION or 'global')."
+        ),
     )
     parser_eval.add_argument(
         "--output",

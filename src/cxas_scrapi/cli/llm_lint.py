@@ -18,6 +18,7 @@ import ast
 import json
 import os
 import sys
+import typing
 from pathlib import Path
 
 import yaml
@@ -235,6 +236,27 @@ def build_agent_config_context(agent_dir: Path) -> str:
     )
 
 
+_CES_CONTROL_PLANE_REGIONS = frozenset({"us", "eu", "au", "<YOUR_GCP_REGION>"})
+
+
+def _extract_config_location(
+    config_data: dict[str, typing.Any],
+) -> str | None:
+    """Extracts a Gemini-compatible location from gecx-config.json data."""
+    for key in ("gemini_location", "vertex_location"):
+        val = config_data.get(key)
+        if isinstance(val, str):
+            stripped = val.strip()
+            if stripped and stripped != "<YOUR_GCP_REGION>":
+                return stripped
+    cfg_loc = config_data.get("location")
+    if isinstance(cfg_loc, str):
+        stripped = cfg_loc.strip()
+        if stripped and stripped not in _CES_CONTROL_PLANE_REGIONS:
+            return stripped
+    return None
+
+
 def resolve_gcp_credentials(
     agent_dir: Path,
     cli_project_id: str | None = None,
@@ -257,7 +279,7 @@ def resolve_gcp_credentials(
         A tuple containing (project_id, location).
     """
     project_id = cli_project_id
-    location = cli_location
+    location = (cli_location or "").strip() or None
 
     # 2. Check environment variables
     if not project_id:
@@ -265,7 +287,12 @@ def resolve_gcp_credentials(
             "GOOGLE_CLOUD_PROJECT"
         )
     if not location:
-        location = os.environ.get("LOCATION") or os.environ.get("REGION")
+        location = (
+            (os.environ.get("GOOGLE_CLOUD_LOCATION") or "").strip()
+            or (os.environ.get("LOCATION") or "").strip()
+            or (os.environ.get("REGION") or "").strip()
+            or None
+        )
 
     # 3. Search for gecx-config.json by walking up from the agent directory
     current_dir = agent_dir.resolve()
@@ -278,7 +305,7 @@ def resolve_gcp_credentials(
                     if not project_id:
                         project_id = config_data.get("gcp_project_id")
                     if not location:
-                        location = config_data.get("location")
+                        location = _extract_config_location(config_data)
             except (json.JSONDecodeError, OSError) as e:
                 print(
                     f"Warning: Failed to parse config at {config_path}: {e}",
@@ -300,7 +327,7 @@ def resolve_gcp_credentials(
                         if not project_id:
                             project_id = config_data.get("gcp_project_id")
                         if not location:
-                            location = config_data.get("location")
+                            location = _extract_config_location(config_data)
                 except (json.JSONDecodeError, OSError):
                     pass
                 break

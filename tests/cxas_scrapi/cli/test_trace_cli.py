@@ -75,6 +75,33 @@ def _search_ns(**overrides: typing.Any) -> typing.Any:
     return _ns(**base)
 
 
+@pytest.mark.parametrize(
+    ("extra_flags", "expected"),
+    [
+        ([], None),
+        (["--gemini-location", "europe-west4"], "europe-west4"),
+    ],
+)
+def test_trace_cli_forwards_gemini_location(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    extra_flags: list[str],
+    expected: str | None,
+) -> None:
+    mock_traces_cls = MagicMock()
+    mock_traces_cls.return_value.list.return_value = []
+    monkeypatch.setattr("cxas_scrapi.core.traces.Traces", mock_traces_cls)
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    trace_cli.register(sub)
+    args = parser.parse_args(
+        ["trace", "list", "--app-name", APP, "--format", "json", *extra_flags]
+    )
+    args.func(args)
+    capsys.readouterr()
+    assert mock_traces_cls.call_args.kwargs["gemini_location"] == expected
+
+
 def test_register_search_smoke() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)

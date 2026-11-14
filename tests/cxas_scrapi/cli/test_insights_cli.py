@@ -336,10 +336,15 @@ def test_handle_eval(mock_runner_cls: typing.Any, tmp_path: typing.Any) -> None:
         goldens=str(calib_file),
         model="gemini-2.5-flash",
         project_id="test-p",
-        location="global",
+        location=None,
         output=str(out_file),
     )
     handle_eval(args)
+    mock_runner_cls.assert_called_once_with(
+        project_id="test-p",
+        location=None,
+        model_name="gemini-2.5-flash",
+    )
     mock_runner_inst.evaluate_scorecard_on_calibration_set.assert_called_once()
     assert out_file.exists()
 
