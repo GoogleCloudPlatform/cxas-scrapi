@@ -32,9 +32,12 @@ from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions
 from cxas_scrapi.utils.env_vars import (
     collect_env_var_declaration_names,
+    collect_tool_and_toolset_env_var_placeholders,
     extract_env_variable_defaults,
     preserve_env_var_placeholders_on_pull,
+    preserve_tool_and_toolset_env_vars_on_pull,
     resolve_app_env_variables_in_dir,
+    resolve_tool_and_toolset_env_vars_in_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -235,16 +238,27 @@ def _app_pull(
                 )
             )
             prev_env_vars = collect_env_var_declaration_names(pulled_app_root)
+            prev_resource_placeholders = (
+                collect_tool_and_toolset_env_var_placeholders(pulled_app_root)
+            )
             prev_env_defaults: dict[str, Any] = {}
+            prev_env_data: dict[str, Any] | None = None
             prev_env_path = os.path.join(pulled_app_root, "environment.json")
-            if prev_env_vars and os.path.isfile(prev_env_path):
+            if (prev_env_vars or prev_resource_placeholders) and os.path.isfile(
+                prev_env_path
+            ):
                 try:
                     with open(prev_env_path, encoding="utf-8") as ef:
+                        loaded_prev_env = json.load(ef)
+                    if isinstance(loaded_prev_env, dict):
+                        prev_env_data = loaded_prev_env
+                    if prev_env_vars:
                         prev_env_defaults, _ = extract_env_variable_defaults(
-                            json.load(ef)
+                            loaded_prev_env
                         )
                 except (OSError, ValueError):
                     prev_env_defaults = {}
+                    prev_env_data = None
 
             if dest_app_root is not None:
                 os.makedirs(dest_app_root, exist_ok=True)
@@ -364,6 +378,19 @@ def _app_pull(
                     "environment.json."
                 )
 
+        if prev_resource_placeholders:
+            preserved_resources = preserve_tool_and_toolset_env_vars_on_pull(
+                pulled_app_root,
+                prev_resource_placeholders,
+                previous_env_data=prev_env_data,
+            )
+            if preserved_resources:
+                print(
+                    "Preserved $env_var placeholders for "
+                    f"{len(preserved_resources)} tool/toolset field(s) and "
+                    "updated environment.json."
+                )
+
         print("Successfully pulled app.")
 
     except Exception as e:
@@ -469,6 +496,7 @@ def _app_push(
 
         if env_file_missing and (
             collect_env_var_declaration_names(inner_dir)
+            or collect_tool_and_toolset_env_var_placeholders(inner_dir)
             or has_bool_env_var_placeholders(inner_dir)
         ):
             raise FileNotFoundError(
@@ -486,6 +514,14 @@ def _app_push(
         # Resolve boolean $env_var placeholders and boolean environment
         # overrides in the staged inner_dir before creating the zip archive.
         resolve_env_booleans_in_dir(inner_dir)
+
+        resolved_resources = resolve_tool_and_toolset_env_vars_in_dir(inner_dir)
+        if resolved_resources:
+            print(
+                f"Resolved {len(resolved_resources)} '$env_var' "
+                "tool/toolset field(s) from environment.json: "
+                f"{', '.join(resolved_resources)}"
+            )
 
         # ZIP does not support timestamps before 1980.
         # Touch files and directories in temp_dir with timestamps before 1980.

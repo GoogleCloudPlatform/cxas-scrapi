@@ -18,7 +18,7 @@ cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
 |--------|----------|---------|-------------|
 | `--app-dir DIR` | No | `.` (current directory) | Path to the local agent directory to upload. |
 | `--to TARGET` | No | — | Target app to overwrite. Accepts a full resource name or display name. When provided, the existing app is updated in place. |
-| `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json` before uploading. Useful for supplying environment-specific resource bindings and resolving `"$env_var"` defaults in `app.json` / `app.yaml` `variableDeclarations` without committing secrets or per-stage overrides. |
+| `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json` before uploading. Useful for supplying environment-specific resource bindings and resolving `"$env_var"` placeholders in `app.json` / `app.yaml` `variableDeclarations`, `tools/`, and `toolsets/` without committing secrets or per-stage overrides. |
 | `--app-name APP` | No | — | Explicit app resource name to push to (v1beta API). Use this when you want to overwrite a specific app and already know its full ID. |
 | `--display-name NAME` | No | `"Pushed Agent"` | Display name for the new app when no target is specified and a new app will be created. |
 | `--create-version` | No | `false` | Automatically create a version snapshot after a successful push. |
@@ -81,6 +81,55 @@ Supply the per-environment value under `app.variableDeclarations` in `environmen
 ```
 
 `cxas push` fails fast before uploading if `--env-file` is missing, a `"$env_var"` variable is absent from `app.variableDeclarations`, `variableDeclarations` is mistakenly placed at the top level of `environment.json`, or the supplied value does not match the declared schema type.
+
+## Environment-Specific Tool and Toolset Fields (`$env_var`)
+
+When any tool under `tools/<name>/<name>.{json,yaml}` or toolset under `toolsets/<name>/<name>.{json,yaml}` uses `"$env_var"` (including `connectorToolset.connection`, `mcpToolset.serverAddress` / `mcpTool.serverAddress`, `openApiTool` / `openApiToolset` schema URLs and `apiAuthentication.oauthConfig.clientId`, `connectorTool.connection`, `dataStoreTool` engines/datastores, `fileSearchTool.fileCorpus`, `remoteAgentTool.agentCard.supportedInterfaces[].url`, `applicationIntegrationTool.{integrationVersion,triggerId}`, `enterpriseAgentTool` datasets/Cloud SQL connections, and `googleSearchTool` URLs/domains), `cxas push` resolves those values from `environment.json` (or `--env-file`) inside the staging directory before uploading — matching entries by `displayName`, nested tool `name`, or directory/file stem without mutating local files.
+
+For example, declare `"$env_var"` in `toolsets/cymbal_connector/cymbal_connector.json` and `toolsets/orders_mcp/orders_mcp.json`:
+
+```json
+{
+  "displayName": "cymbal_connector",
+  "connectorToolset": {
+    "connection": "$env_var",
+    "connectorActions": [
+      {
+        "entityOperation": {
+          "entityId": "Customers",
+          "operation": "LIST"
+        }
+      }
+    ]
+  }
+}
+```
+
+Supply the per-environment values under `toolsets` / `tools` in `environment.json` (or `--env-file`):
+
+```json
+{
+  "toolsets": {
+    "cymbal_connector": {
+      "connectorToolset": {
+        "connection": "projects/my-gcp-project/locations/us-central1/connections/cymbal-prod"
+      }
+    },
+    "orders_mcp": {
+      "mcpToolset": {
+        "serverAddress": "https://mcp-prod.example.com/mcp/",
+        "apiAuthentication": {
+          "oauthConfig": {
+            "clientId": "orders-mcp-prod-client"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+`cxas push` and `cxas lint` (`A018`) validate that every `"$env_var"` tool and toolset field resolves to a valid non-empty value (and matches the expected GCP resource name or HTTP/HTTPS URL format where applicable) before uploading.
 
 ## Examples
 

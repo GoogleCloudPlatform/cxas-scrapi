@@ -49,7 +49,7 @@ my-agent/<AppName>/
 
 This structure is what `cxas push` expects when you upload changes back. Point `--app-dir` at the exported app directory containing `app.json`.
 
-If the destination directory already contains an `app.json` or `app.yaml` where `variableDeclarations` entries use `"default": "$env_var"`, `cxas pull` preserves the `"$env_var"` placeholders in `app.json` / `app.yaml` and writes the exported default values into `environment.json` under `app.variableDeclarations`.
+If the destination directory already contains `"$env_var"` placeholders in `app.json` / `app.yaml` `variableDeclarations` (`"default": "$env_var"`) or in `tools/` / `toolsets/` manifests (such as `connectorToolset.connection`, `mcpToolset.serverAddress`, `oauthConfig.clientId`, or `remoteAgentTool` URLs), `cxas pull` preserves the `"$env_var"` placeholders locally and writes the exported values into `environment.json` under `app.variableDeclarations`, `tools.<key>`, and `toolsets.<key>`.
 
 ## Examples
 

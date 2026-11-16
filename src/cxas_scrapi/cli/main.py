@@ -2880,7 +2880,7 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Optional: Path to an environment JSON file to validate '$env_var' "
-            "variableDeclarations against."
+            "placeholders against."
         ),
     )
     parser_lint.add_argument(

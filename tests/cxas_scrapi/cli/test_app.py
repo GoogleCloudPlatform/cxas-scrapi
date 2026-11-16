@@ -1779,3 +1779,250 @@ def test_app_lint_with_env_file_flag(
     assert excinfo.value.code == 1
     results = json.loads(capsys.readouterr().out)
     assert any(r["rule_id"] == "A017" for r in results)
+
+
+def test_app_push_resolves_tool_and_toolset_env_vars_without_mutating_source(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    app_dir = tmp_path / "agent_src"
+    ts_dir = app_dir / "toolsets" / "find_customer"
+    ts_dir.mkdir(parents=True)
+    mcp_dir = app_dir / "toolsets" / "orders_mcp"
+    mcp_dir.mkdir(parents=True)
+    oa_dir = app_dir / "tools" / "orders_api"
+    (oa_dir / "open_api_tool").mkdir(parents=True)
+    (app_dir / "app.json").write_text(
+        json.dumps({"name": "test-app", "displayName": "Support Agent"})
+    )
+    source_ts_json = ts_dir / "find_customer.json"
+    source_ts_json.write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": "$env_var",
+                    "connectorActions": [{"connectionActionId": "GetAccount"}],
+                },
+            }
+        )
+    )
+    source_mcp_json = mcp_dir / "orders_mcp.json"
+    source_mcp_json.write_text(
+        json.dumps(
+            {
+                "displayName": "Orders MCP",
+                "mcpToolset": {
+                    "serverAddress": "$env_var",
+                    "apiAuthentication": {
+                        "oauthConfig": {"clientId": "$env_var"}
+                    },
+                },
+            }
+        )
+    )
+    source_oa_schema = oa_dir / "open_api_tool" / "open_api_schema.yaml"
+    source_oa_schema.write_text(
+        "openapi: 3.0.0\nservers:\n  - url: $env_var\npaths: {}\n"
+    )
+    (oa_dir / "orders_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Orders API",
+                "openApiTool": {
+                    "openApiSchema": (
+                        "tools/orders_api/open_api_tool/open_api_schema.yaml"
+                    ),
+                },
+            }
+        )
+    )
+
+    prod_conn = (
+        "projects/prod-proj/locations/us-central1/connections/cymbal-prod"
+    )
+    prod_mcp = "https://mcp-prod.example.com/mcp/"
+    prod_oa = "https://api-prod.example.com"
+    prod_env_file = tmp_path / "env.prod.json"
+    prod_env_file.write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {"connection": prod_conn}
+                    },
+                    "Orders MCP": {
+                        "mcpToolset": {
+                            "serverAddress": prod_mcp,
+                            "apiAuthentication": {
+                                "oauthConfig": {"clientId": "prod-client-id"}
+                            },
+                        }
+                    },
+                },
+                "tools": {
+                    "orders_api": {"openApiTool": {"url": prod_oa}},
+                },
+            }
+        )
+    )
+
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/prod-id", []
+    )
+
+    args = argparse.Namespace(
+        app_dir=str(app_dir),
+        to=None,
+        env_file=str(prod_env_file),
+        display_name="Support Agent Prod",
+        project_id="test-project",
+        location="us",
+    )
+    cli_app.app_push(args)
+
+    zip_bytes = mock_apps_client.import_as_new_app.call_args[1]["app_content"]
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        pushed_ts = json.loads(
+            zf.read("agent/toolsets/find_customer/find_customer.json").decode(
+                "utf-8"
+            )
+        )
+        pushed_mcp = json.loads(
+            zf.read("agent/toolsets/orders_mcp/orders_mcp.json").decode("utf-8")
+        )
+        pushed_oa_schema = zf.read(
+            "agent/tools/orders_api/open_api_tool/open_api_schema.yaml"
+        ).decode("utf-8")
+
+    assert pushed_ts["connectorToolset"]["connection"] == prod_conn
+    assert pushed_mcp["mcpToolset"]["serverAddress"] == prod_mcp
+    assert (
+        pushed_mcp["mcpToolset"]["apiAuthentication"]["oauthConfig"]["clientId"]
+        == "prod-client-id"
+    )
+    assert prod_oa in pushed_oa_schema
+
+    # Local source files remain untouched
+    assert (
+        json.loads(source_ts_json.read_text())["connectorToolset"]["connection"]
+        == "$env_var"
+    )
+    assert (
+        json.loads(source_mcp_json.read_text())["mcpToolset"]["serverAddress"]
+        == "$env_var"
+    )
+    assert "$env_var" in source_oa_schema.read_text()
+
+    captured = capsys.readouterr()
+    assert "Resolved 4 '$env_var' tool/toolset field(s)" in captured.out
+
+
+def test_app_pull_preserves_tool_and_toolset_env_vars_and_syncs_env_json(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    local_app_dir = tmp_path / "My_App"
+    local_ts_dir = local_app_dir / "toolsets" / "find_customer"
+    local_ts_dir.mkdir(parents=True)
+    local_mcp_dir = local_app_dir / "toolsets" / "orders_mcp"
+    local_mcp_dir.mkdir(parents=True)
+    (local_app_dir / "app.json").write_text(
+        json.dumps({"displayName": "My App"})
+    )
+    (local_ts_dir / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": "$env_var",
+                    "connectorActions": [{"connectionActionId": "GetAccount"}],
+                },
+            }
+        )
+    )
+    (local_mcp_dir / "orders_mcp.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Orders MCP",
+                "mcpToolset": {"serverAddress": "$env_var"},
+            }
+        )
+    )
+
+    exported_conn = (
+        "projects/uat-project/locations/us-central1/connections/cymbal-uat"
+    )
+    exported_mcp = "https://mcp-uat.example.com/mcp/"
+    export_buf = io.BytesIO()
+    with zipfile.ZipFile(export_buf, "w") as zf:
+        zf.writestr(
+            "My_App/app.json",
+            json.dumps({"displayName": "My App"}),
+        )
+        zf.writestr(
+            "My_App/toolsets/find_customer/find_customer.json",
+            json.dumps(
+                {
+                    "displayName": "Find Customer",
+                    "connectorToolset": {
+                        "connection": exported_conn,
+                        "connectorActions": [
+                            {"connectionActionId": "GetAccount"}
+                        ],
+                    },
+                }
+            ),
+        )
+        zf.writestr(
+            "My_App/toolsets/orders_mcp/orders_mcp.json",
+            json.dumps(
+                {
+                    "displayName": "Orders MCP",
+                    "mcpToolset": {"serverAddress": exported_mcp},
+                }
+            ),
+        )
+        zf.writestr("My_App/environment.json", json.dumps({}))
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    mock_lro = mock.MagicMock()
+    mock_lro.result.return_value = mock.MagicMock(
+        app_content=export_buf.getvalue()
+    )
+    mock_apps_client.export_app.return_value = mock_lro
+
+    args = argparse.Namespace(
+        app="My App",
+        target_dir=str(tmp_path),
+        project_id="test-project",
+        location="us",
+        overwrite=True,
+    )
+    cli_app.app_pull(args)
+
+    pulled_ts = json.loads((local_ts_dir / "find_customer.json").read_text())
+    assert pulled_ts["connectorToolset"]["connection"] == "$env_var"
+    pulled_mcp = json.loads((local_mcp_dir / "orders_mcp.json").read_text())
+    assert pulled_mcp["mcpToolset"]["serverAddress"] == "$env_var"
+
+    pulled_env = json.loads((local_app_dir / "environment.json").read_text())
+    assert (
+        pulled_env["toolsets"]["Find Customer"]["connectorToolset"][
+            "connection"
+        ]
+        == exported_conn
+    )
+    assert (
+        pulled_env["toolsets"]["Orders MCP"]["mcpToolset"]["serverAddress"]
+        == exported_mcp
+    )

@@ -25,8 +25,10 @@ import yaml
 
 from cxas_scrapi.utils.env_vars import (
     ENV_VAR_PLACEHOLDER,
+    collect_tool_and_toolset_env_var_placeholders,
     infer_schema_type,
     parse_env_variable_declarations,
+    validate_tool_and_toolset_env_vars,
     validate_value_for_schema,
 )
 from cxas_scrapi.utils.linter import (
@@ -1155,4 +1157,75 @@ class AppVariableDefaultsAndEnvVars(Rule):
                     )
                 )
 
+        return results
+
+
+@rule("config")
+class ToolAndToolsetEnvVars(Rule):
+    id = "A018"
+    name = "tool-and-toolset-env-vars"
+    description = (
+        "Validates tool and toolset $env_var placeholders against "
+        "environment.json"
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if file_path.name not in ("app.json", "app.yaml"):
+            return []
+
+        app_root = file_path.parent
+        if not collect_tool_and_toolset_env_var_placeholders(app_root):
+            return []
+
+        env_path: Path | None = None
+        if context.env_file is not None:
+            env_path = context.env_file
+            env_rel = _rel_or_str(env_path, context.project_root)
+            if not env_path.is_file():
+                return [
+                    self.make_result(
+                        file=env_rel,
+                        message=f"Environment file '{env_path}' not found",
+                        fix="Provide an existing JSON file to --env-file",
+                    )
+                ]
+        else:
+            candidate = app_root / "environment.json"
+            if candidate.is_file():
+                env_path = candidate
+                env_rel = _rel_or_str(env_path, context.project_root)
+
+        if env_path is None:
+            return []
+
+        try:
+            env_data = json.loads(env_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            return [
+                self.make_result(
+                    file=env_rel,
+                    message=f"Invalid JSON in {env_path.name}: {e}",
+                )
+            ]
+
+        _, _, issues = validate_tool_and_toolset_env_vars(
+            app_root, env_data, env_label=env_path.name
+        )
+        results: list[LintResult] = []
+        for issue in issues:
+            target_rel = (
+                env_rel
+                if issue.is_env_file_issue or issue.manifest_path is None
+                else _rel_or_str(issue.manifest_path, context.project_root)
+            )
+            results.append(
+                self.make_result(
+                    file=target_rel,
+                    message=issue.message,
+                    fix=issue.fix,
+                )
+            )
         return results
