@@ -24,6 +24,7 @@ from cxas_scrapi.utils.lint_rules.config import (
     AgentMissingInstruction,
     AppRootAgentValidation,
     AppVariableDefaultsAndEnvVars,
+    ConnectorToolsetEnvVars,
     RootAgentMissingEndSession,
 )
 from cxas_scrapi.utils.linter import LintContext, build_registry
@@ -447,3 +448,77 @@ def test_a017_flags_undeclared_or_non_placeholder_override_in_env_file(
     assert any(
         "Variable 'unknown_flag'" in m and "not declared" in m for m in messages
     )
+
+
+def test_a018_validates_connector_toolset_env_vars(tmp_path: Path) -> None:
+    a018 = ConnectorToolsetEnvVars()
+    app_dir = tmp_path / "app"
+    ts_dir = app_dir / "toolsets" / "find_customer"
+    ts_dir.mkdir(parents=True)
+    app_json = app_dir / "app.json"
+    app_json.write_text(json.dumps({"displayName": "MyApp"}))
+    (ts_dir / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": "$env_var",
+                    "connectorActions": [{"connectionActionId": "GetAccount"}],
+                },
+            }
+        )
+    )
+
+    # Without environment.json or --env-file, deferred push-time overrides pass
+    ctx = LintContext(
+        project_root=tmp_path, app_dir=app_dir, evals_dir=tmp_path
+    )
+    assert a018.check(app_json, app_json.read_text(), ctx) == []
+
+    # Missing toolset entry in environment.json triggers A018
+    (app_dir / "environment.json").write_text(json.dumps({"toolsets": {}}))
+    results = a018.check(app_json, app_json.read_text(), ctx)
+    assert len(results) == 1
+    assert "missing from environment.json" in results[0].message
+
+    # Invalid connection format triggers A018
+    (app_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {"connection": "short-name"}
+                    }
+                }
+            }
+        )
+    )
+    results_bad = a018.check(app_json, app_json.read_text(), ctx)
+    assert len(results_bad) == 1
+    assert "invalid connection resource name" in results_bad[0].message
+
+    # Valid --env-file passes cleanly
+    valid_env = tmp_path / "env.uat.json"
+    valid_env.write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {
+                            "connection": (
+                                "projects/uat-proj/locations/us-central1/"
+                                "connections/crm-uat"
+                            )
+                        }
+                    }
+                }
+            }
+        )
+    )
+    ctx_ext = LintContext(
+        project_root=tmp_path,
+        app_dir=app_dir,
+        evals_dir=tmp_path,
+        env_file=valid_env,
+    )
+    assert a018.check(app_json, app_json.read_text(), ctx_ext) == []

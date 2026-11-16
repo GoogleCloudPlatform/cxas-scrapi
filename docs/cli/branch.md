@@ -19,7 +19,7 @@ cxas branch <source> --new-name NAME [--env-file FILE] --project-id PROJECT --lo
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--new-name NAME` | Yes | — | Display name for the new (branched) app. |
-| `--env-file FILE` | No | — | Optional JSON environment file to inject as `environment.json` (and resolve `"$env_var"` variable defaults) when pushing the branched app. |
+| `--env-file FILE` | No | — | Optional JSON environment file to inject as `environment.json` (and resolve `"$env_var"` variable defaults and `connectorToolset.connection` paths) when pushing the branched app. |
 | `--project-id PROJECT` | Yes | — | GCP project ID. |
 | `--location LOCATION` | Yes | — | GCP location (e.g., `global`, `us-central1`). |
 

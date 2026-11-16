@@ -18,7 +18,7 @@ cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
 |--------|----------|---------|-------------|
 | `--app-dir DIR` | No | `.` (current directory) | Path to the local agent directory to upload. |
 | `--to TARGET` | No | — | Target app to overwrite. Accepts a full resource name or display name. When provided, the existing app is updated in place. |
-| `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json` before uploading. Useful for supplying environment-specific resource bindings and resolving `"$env_var"` defaults in `app.json` / `app.yaml` `variableDeclarations` without committing secrets or per-stage overrides. |
+| `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json` before uploading. Useful for supplying environment-specific resource bindings and resolving `"$env_var"` placeholders in `app.json` / `app.yaml` `variableDeclarations` and `toolsets/` `connectorToolset.connection` without committing secrets or per-stage overrides. |
 | `--app-name APP` | No | — | Explicit app resource name to push to (v1beta API). Use this when you want to overwrite a specific app and already know its full ID. |
 | `--display-name NAME` | No | `"Pushed Agent"` | Display name for the new app when no target is specified and a new app will be created. |
 | `--create-version` | No | `false` | Automatically create a version snapshot after a successful push. |
@@ -81,6 +81,41 @@ Supply the per-environment value under `app.variableDeclarations` in `environmen
 ```
 
 `cxas push` fails fast before uploading if `--env-file` is missing, a `"$env_var"` variable is absent from `app.variableDeclarations`, `variableDeclarations` is mistakenly placed at the top level of `environment.json`, or the supplied value does not match the declared schema type.
+
+## Environment-Specific Integration Connector Toolsets (`$env_var`)
+
+When an Integration Connector toolset under `toolsets/<name>/<name>.json` (or `.yaml`) sets `"connection": "$env_var"`, `cxas push` resolves the concrete connection resource name from `environment.json` (or `--env-file`) inside the staging directory before uploading — matching the `toolsets` entry by `displayName` first and falling back to the toolset directory/file name:
+
+```json
+{
+  "displayName": "cymbal_connector",
+  "connectorToolset": {
+    "connection": "$env_var",
+    "connectorActions": [
+      {
+        "name": "Customers",
+        "operation": "LIST_ENTITIES"
+      }
+    ]
+  }
+}
+```
+
+Supply the per-environment connection path under `toolsets.<displayName_or_dir>.connectorToolset.connection` in `environment.json` (or `--env-file`):
+
+```json
+{
+  "toolsets": {
+    "cymbal_connector": {
+      "connectorToolset": {
+        "connection": "projects/my-gcp-project/locations/us-central1/connections/cymbal-prod"
+      }
+    }
+  }
+}
+```
+
+`cxas push` and `cxas lint` (`A018`) validate that every `"$env_var"` Integration Connector toolset resolves to a valid `projects/{project}/locations/{location}/connections/{connection}` resource path before uploading.
 
 ## Examples
 
