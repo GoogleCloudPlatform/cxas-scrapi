@@ -23,6 +23,7 @@ SCRAPI provides six complementary evaluation types, each targeting a different l
 | **Callback Tests** | Python unit tests for callback code | Local machine (pytest) | pytest files |
 | **Turn Evals** | Single-turn response assertions | Local machine using Sessions API | Python code |
 | **Shadow Evals** | A past call replayed with its recorded caller audio against the current agent | Local machine using Sessions API (audio) | YAML with `shadow_evals:` key |
+| **Redaction Checks** | What logging redaction removes from and keeps in persisted conversations | DLP API replay or Sessions API | `redaction_policy.yaml` + optional `redaction_expectations` on evals |
 
 ---
 
@@ -75,6 +76,9 @@ In practice, you'll use multiple types together. A well-tested agent typically h
 **"I want to check how a new agent version handles calls that already happened"**
 : Use [Shadow Evals](shadow-evals.md). They replay a past conversation with the caller's recorded audio and judge the new conversation against your expectations.
 
+**"I want to make sure sensitive data is redacted from logs, and nothing else is"**
+: Use [Redaction Checks](redaction-checks.md). Declare a redaction policy once, then replay eval transcripts through your DLP templates or verify live sessions end to end.
+
 ---
 
 ## What's in this section
@@ -96,6 +100,9 @@ In practice, you'll use multiple types together. A well-tested agent typically h
 
 [`Shadow Evals`](shadow-evals.md)
 :   Replaying past calls with recorded caller audio, seeding session state, preflight checks, and the side-by-side audio report.
+
+[`Redaction Checks`](redaction-checks.md)
+:   The `redaction_policy.yaml` contract, `cxas redaction replay` / `live`, and `redaction_expectations` on sims and goldens.
 
 [`Running Evaluations`](running-evals-cli.md)
 :   End-to-end CLI workflow, `cxas ci-test`, exit codes for CI, and combining multiple eval types.

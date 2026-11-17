@@ -45,6 +45,7 @@ from cxas_scrapi.core.audio_transformer import snr_to_noise_level
 from cxas_scrapi.evals import naturalness
 from cxas_scrapi.evals import runner as evals_runner
 from cxas_scrapi.prompts import naturalness_prompts
+from cxas_scrapi.redaction.policy import merge_redaction_expectations
 from cxas_scrapi.utils import (
     base_components,
     eval_utils,
@@ -5112,6 +5113,11 @@ def load_golden_results(
                 "turns": turns,
                 "expectations": expectations,
                 "session_id": session_id,
+                "conversations": [
+                    t.get("conversation")
+                    for t in golden.get("turn_replay_results", [])
+                    if t.get("conversation")
+                ],
                 "session_parameters": session_params,
                 "duration_s": (
                     round(total_latency_s, 1) if total_latency_s > 0 else None
@@ -5243,6 +5249,8 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
             "tool_expectations",
             "naturalness_metric",
             "common_naturalness_metric",
+            "redaction_expectations",
+            "common_redaction_expectations",
         }
         for k, v in common_params_dict.items():
             if k not in meta_and_noise_keys:
@@ -5250,6 +5258,7 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
 
     common_expectations = data.get("common_expectations", []) or []
     common_naturalness = data.get("common_naturalness_metric")
+    common_redaction = data.get("common_redaction_expectations")
 
     common_config = {}
     if isinstance(data.get("common_config"), dict):
@@ -5430,6 +5439,19 @@ def _load_sim_test_cases(yaml_path: str) -> list[dict[str, Any]]:
                     common_naturalness,
                     case_copy.get("naturalness_metric"),
                 )
+
+            # Merge the optional redaction_expectations block and remember
+            # where the file lives so relative policy paths resolve.
+            redaction = merge_redaction_expectations(
+                common_redaction, case_copy.get("redaction_expectations")
+            )
+            if redaction is not None:
+                case_copy["redaction_expectations"] = redaction
+                case_copy["_redaction_base_dir"] = os.path.dirname(
+                    os.path.abspath(yaml_path)
+                )
+            else:
+                case_copy.pop("redaction_expectations", None)
 
             merged_cases.append(case_copy)
     return merged_cases

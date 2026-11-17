@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Redaction report</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 24px; color: #202124; }
+  h1 span { font-size: 14px; padding: 2px 8px; border-radius: 4px; }
+  h1 span.pass { background: #e6f4ea; }
+  h1 span.fail { background: #fce8e6; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  td, th { border: 1px solid #dadce0; padding: 6px 8px; text-align: left;
+           vertical-align: top; font-size: 13px; }
+  th { background: #f1f3f4; }
+  code { white-space: pre-wrap; word-break: break-word; }
+  .cards { display: flex; gap: 12px; flex-wrap: wrap; }
+  .card { border: 1px solid #dadce0; border-radius: 8px; padding: 8px 14px; }
+  .card b { display: block; font-size: 22px; }
+  .bad { background: #fce8e6; }
+  .warn { background: #fef7e0; }
+  .k-leak td:first-child,
+  .k-partial_leak td:first-child,
+  .k-over_redaction td:first-child { color: #c5221f; font-weight: 600; }
+</style>
+</head>
+<body>
+<h1>Redaction report
+  <span class="{{ 'pass' if passed else 'fail' }}">{{ 'PASS' if passed else 'FAIL' }}</span>
+</h1>
+<p>Mode: <b>{{ mode }}</b> &middot; sources: {{ source_count }}
+  &middot; leaves checked: {{ leaves_checked }}</p>
+
+<div class="cards">
+  {% for card in cards %}
+  <div class="card"><b>{{ card.count }}</b><span>{{ card.label }}</span></div>
+  {% endfor %}
+</div>
+
+<h2>Categories</h2>
+<table>
+  <tr>
+    <th>category</th><th>action</th><th>seen</th><th>redacted</th><th>kept</th>
+    <th>leaked</th><th>partial</th><th>over-redacted</th><th>recall</th>
+    <th>preserved</th>
+  </tr>
+  {% for s in categories %}
+  <tr>
+    <td>{{ s.id }}</td>
+    <td>{{ s.action }}</td>
+    <td>{{ s.occurrences }}</td>
+    <td>{{ s.redacted }}</td>
+    <td>{{ s.preserved }}</td>
+    <td class="{{ 'bad' if s.leaked else '' }}">{{ s.leaked }}</td>
+    <td class="{{ 'warn' if s.partially_leaked else '' }}">{{ s.partially_leaked }}</td>
+    <td class="{{ 'bad' if s.over_redacted else '' }}">{{ s.over_redacted }}</td>
+    <td>{{ s.recall }}</td>
+    <td>{{ s.preservation }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p>Redaction markers:
+  {% if markers %}
+    {% for name, count in markers %}{{ name }}={{ count }}{% if not loop.last %}, {% endif %}{% endfor %}
+  {% else %}none{% endif %}
+</p>
+
+<h2>Findings</h2>
+<table>
+  <tr><th>kind</th><th>category</th><th>where</th><th>raw</th><th>persisted / replayed</th></tr>
+  {% for f in findings %}
+  <tr class="k-{{ f.kind }}">
+    <td>{{ f.kind }}</td>
+    <td>{{ f.category or '-' }}</td>
+    <td>
+      {{ f.source }}
+      {% if f.turn is not none %}<br><small>turn {{ f.turn }} {{ f.role or '' }} {{ f.surface or '' }}</small>{% endif %}
+      {% if f.path %}<br><code>{{ f.path }}</code>{% endif %}
+    </td>
+    <td><code>{{ f.raw_excerpt or '' }}</code></td>
+    <td><code>{{ f.stored_excerpt or f.message }}</code></td>
+  </tr>
+  {% endfor %}
+</table>
+</body>
+</html>

@@ -29,6 +29,9 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
+from cxas_scrapi.cli.redaction_cli import (
+    register as register_redaction_subparser,
+)
 from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
@@ -3396,6 +3399,9 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'trace' — observability/debugging for past conversations.
     register_trace_subparser(subparsers)
+
+    # Subparsers for 'redaction' — verify logging redaction against a policy.
+    register_redaction_subparser(subparsers)
 
     return parser
 

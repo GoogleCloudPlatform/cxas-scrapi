@@ -1,0 +1,45 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Golden evals with redaction checks.
+#
+# Golden conversations are stored without logging redaction, so goldens that
+# declare `redaction_expectations` are checked by replaying their evaluation
+# conversations through the app's DLP templates. `redaction_expectations`
+# stays local; it is never pushed to the platform.
+
+common_session_parameters:
+  caller_phone: "5550100000"
+
+common_redaction_expectations: true
+
+conversations:
+  - conversation: card_payment_golden
+    tags: [payments]
+    turns:
+      - user: Hi, my member ID is MBR-0042-7781.
+        agent: Thanks, I found your account. Your balance is $45.10.
+      - user: Pay it with card 4111 1111 1111 1111, security code 123.
+        agent: Done. I charged the card ending in 1111.
+    redaction_expectations:
+      values:
+        card_security_code: ["123"]
+      require: [payment_card]
+
+  - conversation: crisis_line_golden
+    turns:
+      - user: Who do I call in a crisis?
+        agent: You can call or text 988, or dial 911 in an emergency.
+    redaction_expectations:
+      require: [emergency_numbers]
