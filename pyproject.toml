@@ -176,6 +176,8 @@ ignore = [
 "src/cxas_scrapi/utils/metrics_extractor.py" = ["E501"]
 ".agents/skills/cxas-insights/scripts/*.py" = ["E501"]
 ".agents/skills/cxas-composite-voice-agent-optimizer/scripts/*.py" = ["E501"]
+".agents/skills/cxas-vector-steering/scripts/*.py" = ["E501"]
+".agents/skills/cxas-vector-steering/resources/cloud_function/*.py" = ["E501"]
 "tests/cxas_scrapi/**" = ["E501"]
 
 

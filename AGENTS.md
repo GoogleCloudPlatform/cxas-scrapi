@@ -39,6 +39,7 @@ This workspace provides several specialized AI skills to assist with development
 - **`cxas-configurable-dashboards`**: Author, validate, and manage CCAI Insights Configurable Dashboards declaratively via YAML, Vega-Lite specs, and SQL metrics queries.
 - **`cxas-self-steering-agent`**: Builds and refactors self-steering CXAS conversational agents with one root agent, Jinja progressive disclosure (`open_playbook` and `load_task`, dynamic tool hiding), and deterministic actions (`set_next_agent_actions`).
 - **`cxas-sim-eval`**: A utility skill for converting CXAS golden evaluations to SCRAPI SimulationEvals test cases.
+- **`cxas-vector-steering`**: Two-tower hybrid semantic vector intent classification and deterministic routing skill for CXAS/CES and Google ADK agents — pairs sub-40ms Vertex AI Vector Search candidate retrieval with calibrated confidence gating, multi-tenant isolation, focused Top-3 LLM disambiguation, and strict `update_intent` allowlist validation.
 
 ## CLI Features
 

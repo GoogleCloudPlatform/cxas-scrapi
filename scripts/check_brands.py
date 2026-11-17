@@ -69,6 +69,7 @@ ALLOWED_BRANDS: tuple[str, ...] = (
     "GECX",
     "CXAS",
     "DFCX",
+    "Cymbal",
     # --- Google products / services this repo legitimately references ---
     "Gemini",
     "Vertex AI",
@@ -84,6 +85,9 @@ ALLOWED_BRANDS: tuple[str, ...] = (
     "CCAI",
     "CES",
     "Conversational Agents",
+    "Cloud Functions",
+    "Cloud Run",
+    "ADK",
     # --- Adjacent ecosystem this repo intentionally integrates with ---
     "Anthropic",
     "Claude",
@@ -103,6 +107,12 @@ ALLOWED_BRANDS: tuple[str, ...] = (
     "pydub",
     "AudioSegment",
     "requests",
+    "pandas",
+    "PyYAML",
+    "Flask",
+    "Gunicorn",
+    "Docker",
+    "OpenAPI",
 )
 
 
