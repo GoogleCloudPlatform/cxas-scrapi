@@ -39,6 +39,34 @@ from cxas_scrapi.utils.env_vars import (
 
 logger = logging.getLogger(__name__)
 
+# Top-level folders and files that CES ExportApp omits entirely once their last
+# resource is deleted. Folders present in the new export are pruned
+# automatically, so only these need to be listed explicitly.
+_REMOVABLE_APP_ROOT_DIRS = frozenset(
+    {
+        "tools",
+        "toolsets",
+        "guardrails",
+        "examples",
+        "evaluations",
+        "evaluationDatasets",
+        "evaluationExpectations",
+    }
+)
+
+_REMOVABLE_APP_ROOT_FILES = frozenset(
+    {
+        "global_instruction.txt",
+        "environment.json",
+    }
+)
+
+
+def _to_posix_relpath(path: str, start: str) -> str:
+    """Return a forward-slash relative path from ``start`` (empty for self)."""
+    rel = os.path.relpath(path, start).replace("\\", "/")
+    return "" if rel == "." else rel.strip("/")
+
 
 def _resolve_app_args(
     app_identifier: str, args: argparse.Namespace
@@ -247,89 +275,81 @@ def _app_pull(
             else:
                 z.extractall(target_dir)
 
-        # Handle overwrite logic if requested
-        if overwrite and export_members:
-            if dest_app_root is not None:
-                app_root = dest_app_root
-            else:
-                top_dir = export_members[0].split("/")[0]
-                app_root = os.path.join(target_dir, top_dir)
+        # Handle overwrite logic if requested. Pruning is scoped to a dedicated
+        # app folder (the archive's top-level folder or --app-dir-name) so a
+        # flat archive never prunes an arbitrary --target-dir such as ".".
+        if overwrite and export_members and (top_dir or dest_app_root):
+            app_root = pulled_app_root
 
-            if os.path.exists(app_root):
-                # Build set of exported paths relative to app_root
-                export_set = set()
+            if os.path.isdir(app_root):
+                # Build set of exported POSIX paths relative to app_root
+                export_set: set[str] = set()
+                export_root_dirs: set[str] = set()
+                prefix = f"{top_dir}/" if top_dir else ""
                 for member in export_members:
-                    rel_path = (
-                        os.path.relpath(member, top_dir)
-                        if top_dir
-                        else member.rstrip("/")
-                    )
-                    if rel_path and rel_path != ".":
-                        export_set.add(rel_path)
-
-                # Identify root level items in export (direct children of
-                # app_root)
-                export_root_items = set()
-                for member in export_members:
+                    norm_member = member.replace("\\", "/").strip("/")
+                    if not norm_member:
+                        continue
                     if top_dir:
-                        parts = member.split("/")
-                        if len(parts) > 1 and parts[0] == top_dir and parts[1]:
-                            export_root_items.add(parts[1])
+                        if norm_member == top_dir:
+                            continue
+                        if not norm_member.startswith(prefix):
+                            continue
+                        rel_path = norm_member[len(prefix) :]
                     else:
-                        first = member.split("/")[0]
-                        if first:
-                            export_root_items.add(first)
+                        rel_path = norm_member
+                    if not rel_path or rel_path == ".":
+                        continue
+                    export_set.add(rel_path)
+                    parts = rel_path.split("/")
+                    if len(parts) > 1 or member.endswith("/"):
+                        export_root_dirs.add(parts[0])
+
+                managed_root_dirs = _REMOVABLE_APP_ROOT_DIRS | export_root_dirs
 
                 # Walk the local app root bottom-up to remove files then dirs
                 for root, dirs, files in os.walk(app_root, topdown=False):
-                    rel_root = os.path.relpath(root, app_root)
-                    if rel_root == ".":
-                        rel_root = ""
+                    rel_root = _to_posix_relpath(root, app_root)
 
                     # Check files
                     for name in files:
                         local_rel_path = (
-                            os.path.join(rel_root, name) if rel_root else name
+                            f"{rel_root}/{name}" if rel_root else name
                         )
                         parts = local_rel_path.split("/")
-
-                        if len(parts) > 1:
-                            # It's a non-root level file
-                            root_item = parts[0]
-                            # Only remove if it belongs to a folder that WAS in
-                            # the export
-                            if root_item in export_root_items:  # noqa: SIM102
-                                if local_rel_path not in export_set:
-                                    file_path = os.path.join(root, name)
-                                    print(
-                                        "Removing non-exported file: "
-                                        f"{file_path}"
-                                    )
-                                    os.remove(file_path)
+                        is_managed = (
+                            parts[0] in managed_root_dirs
+                            if len(parts) > 1
+                            else name in _REMOVABLE_APP_ROOT_FILES
+                        )
+                        if is_managed and local_rel_path not in export_set:
+                            file_path = os.path.join(root, name)
+                            print(f"Removing non-exported file: {file_path}")
+                            os.remove(file_path)
 
                     # Check directories (remove if empty and not in export)
                     for name in dirs:
                         local_rel_path = (
-                            os.path.join(rel_root, name) if rel_root else name
+                            f"{rel_root}/{name}" if rel_root else name
                         )
                         parts = local_rel_path.split("/")
-
-                        if len(parts) > 1:
-                            root_item = parts[0]
-                            if root_item in export_root_items:  # noqa: SIM102
-                                if (
-                                    local_rel_path not in export_set
-                                    and (local_rel_path + "/") not in export_set
-                                ):
-                                    dir_path = os.path.join(root, name)
-                                    # Only remove if it's empty (we didn't keep
-                                    # any files inside it)
-                                    if not os.listdir(dir_path):
-                                        print(
-                                            "Removing empty non-exported dir: "
-                                            f"{dir_path}"
-                                        )
-                                        os.rmdir(dir_path)
+                        dir_prefix = f"{local_rel_path}/"
+                        if (
+                            parts[0] in managed_root_dirs
+                            and local_rel_path not in export_set
+                            and not any(
+                                m.startswith(dir_prefix) for m in export_set
+                            )
+                        ):
+                            dir_path = os.path.join(root, name)
+                            # Only remove if it's empty (we didn't keep
+                            # any files inside it)
+                            if not os.listdir(dir_path):
+                                print(
+                                    "Removing empty non-exported dir: "
+                                    f"{dir_path}"
+                                )
+                                os.rmdir(dir_path)
 
         if prev_env_vars:
             preserved = preserve_env_var_placeholders_on_pull(
