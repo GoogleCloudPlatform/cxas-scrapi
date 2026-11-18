@@ -83,74 +83,106 @@
       }
     },
     {
-      "name": "shared",
-      "description": "The order the customer is asking about, used by every playbook: its number, status, item and delivery, the on-file shipping ZIP code (never shown to the model), whether the customer verified it, and failed ZIP attempts in the conversation.",
+      "name": "order",
+      "description": "Written only by lookup_order: the order the customer is asking about (number, status, item, delivery) and its on-file shipping ZIP code, which is never shown to the model.",
       "schema": {
         "type": "OBJECT",
         "properties": {
           "order_id": {
             "type": "STRING"
           },
-          "order_status": {
+          "status": {
             "type": "STRING"
           },
-          "order_item": {
+          "item": {
             "type": "STRING"
           },
-          "order_delivery": {
+          "delivery": {
             "type": "STRING"
           },
           "on_file_zip": {
             "type": "STRING"
-          },
-          "zip_verified": {
-            "type": "BOOLEAN"
-          },
-          "zip_attempts": {
-            "type": "INTEGER"
           }
         },
         "default": {
           "order_id": "",
-          "order_status": "",
-          "order_item": "",
-          "order_delivery": "",
-          "on_file_zip": "",
-          "zip_verified": false,
-          "zip_attempts": 0
+          "status": "",
+          "item": "",
+          "delivery": "",
+          "on_file_zip": ""
         }
       }
     },
     {
-      "name": "order_support",
-      "description": "order_support playbook state for the selected order: the order number the text message terms were shared for, and the order number whose summary was texted.",
+      "name": "zip_check",
+      "description": "Written only by verify_order_zip: the order number whose shipping ZIP code the customer verified, and failed ZIP attempts in the conversation.",
       "schema": {
         "type": "OBJECT",
         "properties": {
-          "sms_disclosure_played": {
+          "verified_order_id": {
             "type": "STRING"
           },
-          "sms_summary_sent": {
-            "type": "STRING"
+          "failed_attempts": {
+            "type": "INTEGER"
           }
         },
         "default": {
-          "sms_disclosure_played": "",
-          "sms_summary_sent": ""
+          "verified_order_id": "",
+          "failed_attempts": 0
         }
       }
     },
     {
-      "name": "returns",
-      "description": "returns playbook state for the selected order: the courier pickup details collected so far, whether the summary was confirmed, and the booking once it's made.",
+      "name": "sms_disclosure_played",
+      "description": "Written only by play_sms_legal_disclosure: the order number the text message terms were shared for.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "sms_summary_sent",
+      "description": "Written only by send_sms_summary: the order number whose summary was texted.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "canceled_order_id",
+      "description": "Written only by submit_cancellation: the order number canceled in this conversation.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "mail_return_order_id",
+      "description": "Written only by create_mail_return: the order number a mail return was started for.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "availability_order_id",
+      "description": "Written only by check_return_pickup_availability: the order number pickup availability was checked for.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "return_details",
+      "description": "Written only by update_return_details: the courier pickup details collected for one order, and whether the customer confirmed the summary.",
       "schema": {
         "type": "OBJECT",
         "properties": {
-          "reason": {
+          "order_id": {
             "type": "STRING"
           },
-          "availability_checked": {
-            "type": "BOOLEAN"
+          "reason": {
+            "type": "STRING"
           },
           "pickup_day": {
             "type": "STRING"
@@ -163,23 +195,42 @@
           },
           "summary_confirmed": {
             "type": "BOOLEAN"
-          },
-          "pickup_completed": {
-            "type": "BOOLEAN"
+          }
+        },
+        "default": {
+          "order_id": "",
+          "reason": "",
+          "pickup_day": "",
+          "pickup_window": "",
+          "contact_phone": "",
+          "summary_confirmed": false
+        }
+      }
+    },
+    {
+      "name": "return_pickup",
+      "description": "Written only by submit_return_pickup: the booked courier pickup (order number, confirmation ID, day and window).",
+      "schema": {
+        "type": "OBJECT",
+        "properties": {
+          "order_id": {
+            "type": "STRING"
           },
           "confirmation_id": {
+            "type": "STRING"
+          },
+          "pickup_day": {
+            "type": "STRING"
+          },
+          "pickup_window": {
             "type": "STRING"
           }
         },
         "default": {
-          "reason": "",
-          "availability_checked": false,
+          "order_id": "",
+          "confirmation_id": "",
           "pickup_day": "",
-          "pickup_window": "",
-          "contact_phone": "",
-          "summary_confirmed": false,
-          "pickup_completed": false,
-          "confirmation_id": ""
+          "pickup_window": ""
         }
       }
     }
@@ -193,6 +244,6 @@
   "timeZoneSettings": {
     "timeZone": "America/New_York"
   },
-  "toolExecutionMode": "SEQUENTIAL",
+  "toolExecutionMode": "PARALLEL",
   "errorHandlingSettings": {}
 }

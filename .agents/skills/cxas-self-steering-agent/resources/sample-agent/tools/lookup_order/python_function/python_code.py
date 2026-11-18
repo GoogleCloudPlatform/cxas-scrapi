@@ -31,6 +31,7 @@ SAMPLE_ORDERS = {
 }
 
 
+
 def lookup_order(order_number: str) -> dict[str, Any]:
   """Looks up an order by its order number.
 
@@ -44,58 +45,26 @@ def lookup_order(order_number: str) -> dict[str, Any]:
       the customer verifies its shipping ZIP code.
   """
   number = re.sub(r"\D", "", order_number or "")
-  order = SAMPLE_ORDERS.get(number)
-  if order is None:
-    _reset_order_state(context.state)
+  found = SAMPLE_ORDERS.get(number)
+  if found is None:
+    context.state["order"] = {
+        "order_id": "",
+        "status": "",
+        "item": "",
+        "delivery": "",
+        "on_file_zip": "",
+    }
     return {"found": False, "order_number": order_number}
 
-  shared = context.state.get("shared") or {}
-  if shared.get("order_id") == number:
-    # Keep the status and verification of the order already selected.
-    return {"found": True, "order_number": number}
-
-  _reset_order_state(context.state)
-  context.state["shared"] = {
-      **(context.state.get("shared") or {}),
+  context.state["order"] = {
       "order_id": number,
-      "order_status": order["status"],
-      "order_item": order["item"],
-      "order_delivery": (
-          f"estimated delivery {order['estimated_delivery']}"
-          if "estimated_delivery" in order
-          else f"delivered {order['delivered_on']}"
+      "status": found["status"],
+      "item": found["item"],
+      "delivery": (
+          f"estimated delivery {found['estimated_delivery']}"
+          if "estimated_delivery" in found
+          else f"delivered {found['delivered_on']}"
       ),
-      "on_file_zip": order["zip"],
+      "on_file_zip": found["zip"],
   }
   return {"found": True, "order_number": number}
-
-
-def _reset_order_state(state: Any) -> None:
-  """Clears the previous order's record and every playbook's state for it.
-
-  zip_attempts stays, since failed ZIP codes count for the whole conversation.
-  """
-  shared = state.get("shared") or {}
-  state["shared"] = {
-      "order_id": "",
-      "order_status": "",
-      "order_item": "",
-      "order_delivery": "",
-      "on_file_zip": "",
-      "zip_verified": False,
-      "zip_attempts": shared.get("zip_attempts") or 0,
-  }
-  state["order_support"] = {
-      "sms_disclosure_played": "",
-      "sms_summary_sent": "",
-  }
-  state["returns"] = {
-      "reason": "",
-      "availability_checked": False,
-      "pickup_day": "",
-      "pickup_window": "",
-      "contact_phone": "",
-      "summary_confirmed": False,
-      "pickup_completed": False,
-      "confirmation_id": "",
-  }

@@ -17,31 +17,41 @@ def submit_return_pickup(summary_confirmed: bool = False) -> dict[str, Any]:
       window, missing_prerequisites with the list of missing fields, or
       pickup_already_booked if this order's pickup is already booked.
   """
-  order = context.state.get("shared") or {}
-  returns = dict(context.state.get("returns") or {})
-  if returns.get("pickup_completed"):
+  order = context.state.get("order") or {}
+  order_id = order.get("order_id") or ""
+  booking = context.state.get("return_pickup") or {}
+  if order_id and booking.get("order_id") == order_id:
     return {
         "status": "error",
         "error": "pickup_already_booked",
-        "confirmation_id": returns.get("confirmation_id") or "",
+        "confirmation_id": booking.get("confirmation_id") or "",
     }
-  if summary_confirmed:
-    returns["summary_confirmed"] = True
-    context.state["returns"] = returns
-
-  order_id = order.get("order_id") or ""
+  details = context.state.get("return_details") or {}
+  if details.get("order_id") != order_id:
+    details = {}
+  zip_check = context.state.get("zip_check") or {}
   missing = [
       name
       for name, ok in (
           ("order_id", bool(order_id)),
-          ("delivered_order", order.get("order_status") == "Delivered"),
-          ("zip_verified", bool(order.get("zip_verified"))),
-          ("reason", bool(returns.get("reason"))),
-          ("availability_checked", bool(returns.get("availability_checked"))),
-          ("pickup_day", bool(returns.get("pickup_day"))),
-          ("pickup_window", bool(returns.get("pickup_window"))),
-          ("contact_phone", bool(returns.get("contact_phone"))),
-          ("summary_confirmed", bool(returns.get("summary_confirmed"))),
+          ("delivered_order", order.get("status") == "Delivered"),
+          ("zip_verified", zip_check.get("verified_order_id") == order_id),
+          (
+              "no_mail_return",
+              context.state.get("mail_return_order_id") != order_id,
+          ),
+          ("reason", bool(details.get("reason"))),
+          (
+              "availability_checked",
+              context.state.get("availability_order_id") == order_id,
+          ),
+          ("pickup_day", bool(details.get("pickup_day"))),
+          ("pickup_window", bool(details.get("pickup_window"))),
+          ("contact_phone", bool(details.get("contact_phone"))),
+          (
+              "summary_confirmed",
+              summary_confirmed or bool(details.get("summary_confirmed")),
+          ),
       )
       if not ok
   ]
@@ -52,17 +62,16 @@ def submit_return_pickup(summary_confirmed: bool = False) -> dict[str, Any]:
     }
 
   confirmation_id = f"RP-{order_id}"
-  context.state["shared"] = {**order, "order_status": "Return Pickup Scheduled"}
-  context.state["returns"] = {
-      **returns,
-      "pickup_completed": True,
-      "summary_confirmed": False,
+  context.state["return_pickup"] = {
+      "order_id": order_id,
       "confirmation_id": confirmation_id,
+      "pickup_day": details["pickup_day"],
+      "pickup_window": details["pickup_window"],
   }
   return {
       "status": "scheduled",
       "order_number": order_id,
       "confirmation_id": confirmation_id,
-      "pickup_day": returns["pickup_day"],
-      "pickup_window": returns["pickup_window"],
+      "pickup_day": details["pickup_day"],
+      "pickup_window": details["pickup_window"],
   }

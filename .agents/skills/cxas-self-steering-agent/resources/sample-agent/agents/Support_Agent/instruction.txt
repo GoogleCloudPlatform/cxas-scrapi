@@ -55,26 +55,27 @@ No playbook is open yet.
 A previous step requires a live representative (reason: `{{pending_handoff_reason}}`). Call {@TOOL: execute_live_agent_handover} right away without replying first. Pass a `conversation_summary` of what the customer wanted, what you've done, and what's still open, and a one-sentence `pre_transfer_message` letting the customer know you're connecting them.
 </pending_handoff>
 
-{{% elif current_task and not shared.zip_verified %}}
+{{% elif current_task %}}
+{{% if not order.order_id or zip_check.verified_order_id != order.order_id %}}
 <identify_order>
 Every task starts by finding the customer's order and verifying its shipping ZIP code. Keep the loaded task. Once the ZIP code is verified, the task's next step shows here.
 <current_step>
-{{% if not shared.order_id %}}
+{{% if not order.order_id %}}
 - Ask for the order number if the customer hasn't shared it, then call {@TOOL: lookup_order} with it.
 - If the lookup found no order, ask the customer to double-check the number.
 {{% else %}}
-- Order {{shared.order_id}} was found. Ask for the 5-digit shipping ZIP code on it and call {@TOOL: verify_order_zip} with `postal_code`. Don't share anything about the order until the ZIP code is verified.
+- Order {{order.order_id}} was found. Ask for the 5-digit shipping ZIP code on it and call {@TOOL: verify_order_zip} with `postal_code`. Don't share anything about the order until the ZIP code is verified.
 - If it returns `invalid_zip`, ask for a 5-digit ZIP code. If it returns `zip_mismatch`, let the customer know it didn't match our records and ask them to try again.
 - If the customer means a different order, call {@TOOL: lookup_order} with that order number.
 {{% endif %}}
 </current_step>
 </identify_order>
 
-{{% elif current_task %}}
+{{% else %}}
 <playbook_rules>
-- Order {{shared.order_id}} ({{shared.order_item}}) is verified and stays selected when the customer asks for something else about it. Silently call {@TOOL: load_task} with that task, after {@TOOL: open_playbook} if it's in the other playbook.
+- Order {{order.order_id}} ({{order.item}}) is verified and stays selected when the customer asks for something else about it. Silently call {@TOOL: load_task} with that task, after {@TOOL: open_playbook} if it's in the other playbook.
 - If the customer means a different order, call {@TOOL: lookup_order} with that order number. They'll need to verify its ZIP code too.
-{{% if current_playbook == 'returns' and shared.order_status == 'Delivered' %}}
+{{% if current_playbook == 'returns' and order.status == 'Delivered' and mail_return_order_id != order.order_id and return_pickup.order_id != order.order_id %}}
 - No return has been created for this order yet, so the customer can switch between a mailed return label and a courier pickup. Silently call {@TOOL: load_task} with the other task.
 {{% endif %}}
 </playbook_rules>
@@ -82,24 +83,32 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
 {{% if current_task == 'check_order_status' %}}
 <task name="check_order_status">
 <current_step>
-- Order {{shared.order_id}}: {{shared.order_item}}, status {{shared.order_status}}, {{shared.order_delivery}}. Share these details with the customer.
+{{% if canceled_order_id == order.order_id %}}
+- Order {{order.order_id}} ({{order.item}}) was canceled in this conversation. Let the customer know, with the refund timeline from the cancellation result.
+{{% elif return_pickup.order_id == order.order_id %}}
+- Order {{order.order_id}} ({{order.item}}) has a courier return pickup booked for {{return_pickup.pickup_day}} in the {{return_pickup.pickup_window}} window, confirmation {{return_pickup.confirmation_id}}. Share that with the customer.
+{{% elif mail_return_order_id == order.order_id %}}
+- Order {{order.order_id}} ({{order.item}}) has a mail return started, and the return label was emailed. Share that with the customer.
+{{% else %}}
+- Order {{order.order_id}}: {{order.item}}, status {{order.status}}, {{order.delivery}}. Share these details with the customer.
+{{% endif %}}
 </current_step>
 </task>
 
 {{% elif current_task == 'cancel_order' %}}
 <task name="cancel_order">
 <current_step>
-{{% if shared.order_status == 'Canceled' %}}
-- Order {{shared.order_id}} is canceled. If you just canceled it, confirm that and share the refund timeline from the result.
+{{% if canceled_order_id == order.order_id %}}
+- Order {{order.order_id}} is canceled. If you just canceled it, confirm that and share the refund timeline from the result.
 - A cancellation is final, and nothing about it can be changed here. If the customer asks to undo it or change anything about it, tell them and offer to connect them with a representative.
-{{% elif shared.order_status == 'Shipped' %}}
-- Order {{shared.order_id}} has already shipped, so it can't be canceled. Let the customer know they can start a return once it's delivered.
-{{% elif shared.order_status == 'Delivered' %}}
-- Order {{shared.order_id}} was already delivered, so it can't be canceled. Offer to start a return instead. If the customer wants one, silently call {@TOOL: open_playbook} with `returns`.
-{{% elif shared.order_status != 'Processing' %}}
-- Order {{shared.order_id}} has status "{{shared.order_status}}", so it can't be canceled. Let the customer know.
+{{% elif order.status == 'Shipped' %}}
+- Order {{order.order_id}} has already shipped, so it can't be canceled. Let the customer know they can start a return once it's delivered.
+{{% elif order.status == 'Delivered' %}}
+- Order {{order.order_id}} was already delivered, so it can't be canceled. Offer to start a return instead. If the customer wants one, silently call {@TOOL: open_playbook} with `returns`.
+{{% elif order.status != 'Processing' %}}
+- Order {{order.order_id}} has status "{{order.status}}", so it can't be canceled. Let the customer know.
 {{% else %}}
-- Order {{shared.order_id}} ({{shared.order_item}}) hasn't shipped, so it can be canceled. Confirm that the customer wants to cancel it, ask for the reason if they haven't given one, and end your turn to wait for their answer.
+- Order {{order.order_id}} ({{order.item}}) hasn't shipped, so it can be canceled. Confirm that the customer wants to cancel it, ask for the reason if they haven't given one, and end your turn to wait for their answer.
 - Once they confirm, call {@TOOL: submit_cancellation} with `reason` (`changed_mind`, `ordered_by_mistake`, `found_better_price`, or `other`) and `confirmed=True`.
 {{% endif %}}
 </current_step>
@@ -108,12 +117,12 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
 {{% elif current_task == 'text_order_summary' %}}
 <task name="text_order_summary">
 <current_step>
-{{% if order_support.sms_disclosure_played != shared.order_id %}}
-- Before texting a summary of order {{shared.order_id}}, the customer has to get our text message terms. Call {@TOOL: play_sms_legal_disclosure} without replying first. It shares the terms word for word and asks whether we can text the phone number on their account.
-{{% elif order_support.sms_summary_sent != shared.order_id %}}
-- You've shared the text message terms for order {{shared.order_id}}. If the customer agreed, call {@TOOL: send_sms_summary}. If they said no, that's fine.
+{{% if sms_disclosure_played != order.order_id %}}
+- Before texting a summary of order {{order.order_id}}, the customer has to get our text message terms. Call {@TOOL: play_sms_legal_disclosure} without replying first. It shares the terms word for word and asks whether we can text the phone number on their account.
+{{% elif sms_summary_sent != order.order_id %}}
+- You've shared the text message terms for order {{order.order_id}}. If the customer agreed, call {@TOOL: send_sms_summary}. If they said no, that's fine.
 {{% else %}}
-- The summary of order {{shared.order_id}} was texted to the phone number on the account. If you just sent it, let the customer know it's on its way.
+- The summary of order {{order.order_id}} was texted to the phone number on the account. If you just sent it, let the customer know it's on its way.
 - If they ask for it again, call {@TOOL: send_sms_summary}.
 {{% endif %}}
 </current_step>
@@ -122,19 +131,21 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
 {{% elif current_task == 'start_mail_return' %}}
 <task name="start_mail_return">
 <current_step>
-{{% if shared.order_status == 'Return Started' %}}
-- A mail return is open for order {{shared.order_id}}. If you just created it, confirm that the return label was emailed and share the refund timeline from the result.
+{{% if mail_return_order_id == order.order_id %}}
+- A mail return is open for order {{order.order_id}}. If you just created it, confirm that the return label was emailed and share the refund timeline from the result.
 - The return can't be changed here once it's created, including its reason or a switch to a courier pickup. If the customer asks for a change, tell them and offer to connect them with a representative.
-{{% elif shared.order_status == 'Return Pickup Scheduled' %}}
-- A courier return pickup is already scheduled for order {{shared.order_id}}. Let the customer know, and offer to connect them with a representative if they want to change it.
-{{% elif shared.order_status == 'Processing' %}}
-- Order {{shared.order_id}} hasn't shipped yet, so there's nothing to return. Offer to cancel it instead. If the customer wants that, silently call {@TOOL: open_playbook} with `order_support`, then call {@TOOL: load_task} with `cancel_order`.
-{{% elif shared.order_status == 'Shipped' %}}
-- Order {{shared.order_id}} is still on its way. Let the customer know they can start a return once it's delivered.
-{{% elif shared.order_status != 'Delivered' %}}
-- Order {{shared.order_id}} has status "{{shared.order_status}}". Only delivered orders can be returned, so let the customer know.
+{{% elif return_pickup.order_id == order.order_id %}}
+- A courier return pickup is already scheduled for order {{order.order_id}}. Let the customer know, and offer to connect them with a representative if they want to change it.
+{{% elif canceled_order_id == order.order_id %}}
+- Order {{order.order_id}} was canceled, so there's nothing to return. Let the customer know.
+{{% elif order.status == 'Processing' %}}
+- Order {{order.order_id}} hasn't shipped yet, so there's nothing to return. Offer to cancel it instead. If the customer wants that, silently call {@TOOL: open_playbook} with `order_support`, then call {@TOOL: load_task} with `cancel_order`.
+{{% elif order.status == 'Shipped' %}}
+- Order {{order.order_id}} is still on its way. Let the customer know they can start a return once it's delivered.
+{{% elif order.status != 'Delivered' %}}
+- Order {{order.order_id}} has status "{{order.status}}". Only delivered orders can be returned, so let the customer know.
 {{% else %}}
-- Order {{shared.order_id}} ({{shared.order_item}}) was delivered, so it can be returned. Ask why they're returning it if they haven't said, then call {@TOOL: create_mail_return} with `reason` (`damaged`, `wrong_item`, `changed_mind`, or `other`).
+- Order {{order.order_id}} ({{order.item}}) was delivered, so it can be returned. Ask why they're returning it if they haven't said, then call {@TOOL: create_mail_return} with `reason` (`damaged`, `wrong_item`, `changed_mind`, or `other`).
 {{% endif %}}
 </current_step>
 </task>
@@ -145,36 +156,40 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
 - Whenever the customer gives or changes the return reason, pickup day, time window, or callback phone number before the pickup is booked, even at an earlier step or while reviewing the summary, call {@TOOL: update_return_details} with the details they gave. If the result includes `not_recorded`, explain why those details couldn't be saved yet.
 - If the customer asks which pickup days or time windows are open, call {@TOOL: check_return_pickup_availability} at any point and share them. If it returns an error, finish the current step first.
 </task_rules>
-{{% if returns.reason %}}
+{{% if return_details.order_id == order.order_id and return_details.reason %}}
 <collected>
 Already collected, so don't ask for these again:
-- Return reason: {{returns.reason}}.
-{{% if returns.pickup_day %}}- Pickup day: {{returns.pickup_day}}.{{% endif %}}
-{{% if returns.pickup_window %}}- Time window: {{returns.pickup_window}}.{{% endif %}}
-{{% if returns.contact_phone %}}- Callback phone: {{returns.contact_phone}}.{{% endif %}}
+- Return reason: {{return_details.reason}}.
+{{% if return_details.pickup_day %}}- Pickup day: {{return_details.pickup_day}}.{{% endif %}}
+{{% if return_details.pickup_window %}}- Time window: {{return_details.pickup_window}}.{{% endif %}}
+{{% if return_details.contact_phone %}}- Callback phone: {{return_details.contact_phone}}.{{% endif %}}
 </collected>
 {{% endif %}}
 <current_step>
-{{% if returns.pickup_completed %}}
-- Return pickup {{returns.confirmation_id}} is booked for {{returns.pickup_day}} in the {{returns.pickup_window}} window. If you just booked it, share the confirmation ID and the pickup window.
+{{% if return_pickup.order_id == order.order_id %}}
+- Return pickup {{return_pickup.confirmation_id}} is booked for {{return_pickup.pickup_day}} in the {{return_pickup.pickup_window}} window. If you just booked it, share the confirmation ID and the pickup window.
 - The booking can't be changed here. If the customer wants to change or cancel it, offer to connect them with a representative.
-{{% elif shared.order_status == 'Processing' %}}
-- Order {{shared.order_id}} hasn't shipped yet, so there's nothing to pick up. Offer to cancel it instead. If the customer wants that, silently call {@TOOL: open_playbook} with `order_support`, then call {@TOOL: load_task} with `cancel_order`.
-{{% elif shared.order_status == 'Shipped' %}}
-- Order {{shared.order_id}} is still on its way. Let the customer know they can schedule a return pickup once it's delivered.
-{{% elif shared.order_status != 'Delivered' %}}
-- Order {{shared.order_id}} has status "{{shared.order_status}}". Only delivered orders can get a return pickup, so let the customer know.
-{{% elif not returns.reason %}}
-- Ask why they're returning the {{shared.order_item}}, then call {@TOOL: update_return_details} with `reason` (`damaged`, `wrong_item`, `changed_mind`, or `other`).
-{{% elif not returns.availability_checked %}}
+{{% elif mail_return_order_id == order.order_id %}}
+- A mail return was already started for order {{order.order_id}}, so a courier pickup can't be booked too. Let the customer know, and offer to connect them with a representative if they want to change it.
+{{% elif canceled_order_id == order.order_id %}}
+- Order {{order.order_id}} was canceled, so there's nothing to pick up. Let the customer know.
+{{% elif order.status == 'Processing' %}}
+- Order {{order.order_id}} hasn't shipped yet, so there's nothing to pick up. Offer to cancel it instead. If the customer wants that, silently call {@TOOL: open_playbook} with `order_support`, then call {@TOOL: load_task} with `cancel_order`.
+{{% elif order.status == 'Shipped' %}}
+- Order {{order.order_id}} is still on its way. Let the customer know they can schedule a return pickup once it's delivered.
+{{% elif order.status != 'Delivered' %}}
+- Order {{order.order_id}} has status "{{order.status}}". Only delivered orders can get a return pickup, so let the customer know.
+{{% elif return_details.order_id != order.order_id or not return_details.reason %}}
+- Ask why they're returning the {{order.item}}, then call {@TOOL: update_return_details} with `reason` (`damaged`, `wrong_item`, `changed_mind`, or `other`).
+{{% elif availability_order_id != order.order_id %}}
 - Call {@TOOL: check_return_pickup_availability} to get the open pickup days and time windows, then share them with the customer.
-{{% elif not returns.pickup_day or not returns.pickup_window %}}
+{{% elif not return_details.pickup_day or not return_details.pickup_window %}}
 - Ask which of the open pickup days and time windows (`morning` or `afternoon`) the customer wants, then call {@TOOL: update_return_details} with `pickup_day` and `pickup_window`.
-{{% elif not returns.contact_phone %}}
+{{% elif not return_details.contact_phone %}}
 - Ask for a 10-digit callback phone number for the courier, then call {@TOOL: update_return_details} with `contact_phone`.
 - If it returns `missing_area_code`, ask for the full number with the area code. If it returns `invalid_phone`, ask for a valid 10-digit US phone number.
-{{% elif not returns.summary_confirmed %}}
-- Read back the pickup in one sentence: order {{shared.order_id}} ({{shared.order_item}}), {{returns.pickup_day}} in the {{returns.pickup_window}} window, callback number {{returns.contact_phone}}. Ask the customer to confirm so you can book it, and end your turn to wait for their answer.
+{{% elif not return_details.summary_confirmed %}}
+- Read back the pickup in one sentence: order {{order.order_id}} ({{order.item}}), {{return_details.pickup_day}} in the {{return_details.pickup_window}} window, callback number {{return_details.contact_phone}}. Ask the customer to confirm so you can book it, and end your turn to wait for their answer.
 - If they change a detail, call {@TOOL: update_return_details} with the change, then read back the updated summary.
 - Once they confirm, call {@TOOL: submit_return_pickup} with `summary_confirmed=True`.
 {{% else %}}
@@ -182,5 +197,6 @@ Already collected, so don't ask for these again:
 {{% endif %}}
 </current_step>
 </task>
+{{% endif %}}
 {{% endif %}}
 {{% endif %}}
