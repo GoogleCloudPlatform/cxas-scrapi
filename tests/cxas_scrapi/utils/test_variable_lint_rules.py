@@ -550,7 +550,7 @@ def test_v105_ignore_option_and_callbacks_not_counted(
     path = _tool_path(first, "lookup")
     assert ToolVariableSingleWriter().check(path, path.read_text(), ctx) == []
 
-    # A callback writing the same variable isn't a tool call, so no race.
+    # A before_model callback finishes before any tool runs, so no race.
     second = tmp_path / "callback"
     ctx = _writer_app(second, {"lookup": _LOOKUP})
     path = _tool_path(second, "lookup")
@@ -567,6 +567,32 @@ def test_v105_ignore_option_and_callbacks_not_counted(
         "def cb(callback_context):\n    callback_context.state['status'] = ''\n"
     )
     assert ToolVariableSingleWriter().check(path, path.read_text(), ctx) == []
+
+
+@pytest.mark.parametrize("kind", ["before_tool", "after_tool"])
+def test_v105_counts_tool_callback_writes(
+    tmp_path: typing.Any, kind: str
+) -> None:
+    ctx = _writer_app(tmp_path, {"lookup": _LOOKUP})
+    callback = (
+        tmp_path
+        / "agents"
+        / "Root_Agent"
+        / f"{kind}_callbacks"
+        / f"{kind}_callbacks_01"
+        / "python_code.py"
+    )
+    callback.parent.mkdir(parents=True, exist_ok=True)
+    callback.write_text(
+        "def cb(tool, input, callback_context):\n"
+        "    callback_context.state['status'] = tool.name\n"
+    )
+    _clear_writer_cache()
+    path = _tool_path(tmp_path, "lookup")
+    results = ToolVariableSingleWriter().check(path, path.read_text(), ctx)
+    assert len(results) == 1
+    assert "'status'" in results[0].message
+    assert f"Root_Agent {kind} callback" in results[0].message
 
 
 @pytest.mark.parametrize(

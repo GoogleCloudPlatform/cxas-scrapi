@@ -565,7 +565,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **V105 — variable-single-writer**
 
-    With the default `"toolExecutionMode": "PARALLEL"`, tools the model calls in the same step all start from the same session state, and each write replaces the variable's whole value. When two tools write the same variable (most visibly an OBJECT variable that several tools update), one tool's change can be lost. Callbacks don't count, since they don't run as tool calls. The rule is skipped when `toolExecutionMode` is `SEQUENTIAL`.
+    With the default `"toolExecutionMode": "PARALLEL"`, tools the model calls in the same step all start from the same session state, and each write replaces the variable's whole value. When two tools write the same variable (most visibly an OBJECT variable that several tools update), one tool's change can be lost. An agent's `before_tool` and `after_tool` callbacks count as writers too: they run once per tool call, alongside the other calls in the step, and their writes merge the same way. Other callbacks (such as `before_model`) finish before any tool in the step starts, so they don't count. The rule is skipped when `toolExecutionMode` is `SEQUENTIAL`.
 
     *Triggers:* A tool writes a declared top-level variable that another tool also writes. Writes include assignments (nested ones like `state["order"]["status"] = x` count for `order`), `update()`, `setdefault()`, `pop()` and `del`.
 
