@@ -347,3 +347,95 @@ def test_parser_self_terminating_transfer_ends_session() -> None:
     assert parsed.session_ended is True
     assert len(parsed.custom_payloads) == 1
     assert "transferToNga" in parsed.custom_payloads[0]
+
+
+def test_parser_extracts_callback_and_sibling_fake_tool_spans() -> None:
+    """Callback-invoked Tool and sibling Fake Tool spans populate tool_calls."""
+    response = {
+        "outputs": [
+            {
+                "diagnostic_info": {
+                    "messages": [
+                        {
+                            "role": "agent",
+                            "chunks": [
+                                {
+                                    "tool_call": {
+                                        "tool": "send_sms",
+                                        "args": {"to": "555"},
+                                    }
+                                }
+                            ],
+                        }
+                    ],
+                    "root_span": {
+                        "name": "Turn",
+                        "childSpans": [
+                            {
+                                "name": "Callback",
+                                "attributes": {"agent": "order_status_cb"},
+                                "childSpans": [
+                                    {
+                                        "name": "Tool",
+                                        "attributes": {
+                                            "name": "lookup_orders",
+                                            "args": {"account_id": "1001"},
+                                            "response": {"status": "SUCCESS"},
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "name": "Fake Tool",
+                                "attributes": {
+                                    "name": "lookup_orders_secondary",
+                                    "args": {"order_id": "99"},
+                                    "response": {"status": "SHIPPED"},
+                                },
+                            },
+                            {
+                                # Same-turn LLM tool_call duplicate -> skipped.
+                                "name": "Fake Tool",
+                                "attributes": {"name": "send_sms"},
+                            },
+                            {"name": "LLM", "attributes": {}},
+                            {
+                                "name": "Fake Tool",
+                                "attributes": {"name": "after_llm_ignored"},
+                            },
+                        ],
+                    },
+                }
+            }
+        ]
+    }
+    parsed = ParsedSessionResponse(response)
+    assert [(tc.name, tc.args, tc.source) for tc in parsed.tool_calls] == [
+        ("send_sms", {"to": "555"}, "diagnostic_info"),
+    ]
+    assert [
+        (tc.name, tc.args, tc.source) for tc in parsed.callback_tool_calls
+    ] == [
+        ("lookup_orders", {"account_id": "1001"}, "callback"),
+        ("lookup_orders_secondary", {"order_id": "99"}, "callback"),
+    ]
+    assert parsed.tool_responses == []
+    assert [
+        (tr.name, tr.response) for tr in parsed.callback_tool_responses
+    ] == [
+        ("lookup_orders", {"status": "SUCCESS"}),
+        ("lookup_orders_secondary", {"status": "SHIPPED"}),
+    ]
+
+    parsed_merged = ParsedSessionResponse(response, include_callback_tools=True)
+    assert [
+        (tc.name, tc.args, tc.source) for tc in parsed_merged.tool_calls
+    ] == [
+        ("send_sms", {"to": "555"}, "diagnostic_info"),
+        ("lookup_orders", {"account_id": "1001"}, "callback"),
+        ("lookup_orders_secondary", {"order_id": "99"}, "callback"),
+    ]
+    assert [(tr.name, tr.response) for tr in parsed_merged.tool_responses] == [
+        ("lookup_orders", {"status": "SUCCESS"}),
+        ("lookup_orders_secondary", {"status": "SHIPPED"}),
+    ]
