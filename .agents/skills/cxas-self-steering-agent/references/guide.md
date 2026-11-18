@@ -224,8 +224,13 @@ Facts the model only says once can stay in the tool result.
 
 Data loaded once at the start of the session that no tool owns, such as
 telephony parameters or a caller profile, can go in one object that only the
-session-start callback writes. Callbacks don't run alongside tool calls, so
-that object can't lose a write. If a tool later needs to change part of it,
+session-start or `before_model` callback writes. Those callbacks finish
+before any tool in the step starts, so that object can't lose a write. Keep
+`before_tool` and `after_tool` callbacks out of it: they run once per tool
+call, alongside the other calls in the step, and their writes merge like the
+tool's own. When two tool calls in one step each appended to the same value
+from a `before_tool` callback, both read the same starting value and only one
+append survived. If a tool later needs to change part of it,
 move that part into the tool's own object. Mock API responses for evals go in
 one read-only object as well, not in a variable per response.
 

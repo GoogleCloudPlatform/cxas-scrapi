@@ -232,7 +232,9 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
      `PARALLEL` mode (V105, a warning) and a tool writing several flat
      variables (V106, info). Lint still passes with them, so fix every V105.
    - Data loaded at session start that no tool owns goes in one object only
-     the session-start callback writes. Eval mocks go in one read-only object.
+     the session-start or `before_model` callback writes. `before_tool` and
+     `after_tool` callbacks run per tool call and race like tools, so V105
+     counts them as writers. Eval mocks go in one read-only object.
    - Declare each OBJECT with `properties` (a type for each) and a `default`
      that lists every property, so the instruction never reads a missing key
      and `cxas lint` (V100 to V104) catches a misspelled property or a name
