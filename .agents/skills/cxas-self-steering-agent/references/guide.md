@@ -971,7 +971,7 @@ can render and verify it.
   platform attach `<state_update>` notes to the start of the turn. Always use
   double-brace control blocks (`{{% if ... %}}`) and double-brace variables
   (`{{var}}`). Never write `{{var}}` inside a tool-call example in
-  `instruction.txt` (such as `call tool(id='{{order.order_id}}')`) when `order_id`
+  `instruction.txt` (such as `call tool(id='{{order.order_id}}')`) when `order.order_id`
   can be empty, because it renders as `call tool(id='')`.
 
 - **`Part.from_end_session` arguments:** `Part.from_end_session` takes
