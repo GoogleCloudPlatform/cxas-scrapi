@@ -90,6 +90,7 @@ ALLOWED_BRANDS: tuple[str, ...] = (
     "GitHub",
     "Apache",  # the licence header of every file
     "GitLab",
+    "Mermaid",
     # --- Standard Python ecosystem libraries ---
     "Jinja",
     "Jinja2",

@@ -96,6 +96,25 @@ Rules:
 - **Suite name:** use the same `--suite-name` for runs that should be compared, and another name for runs filtered by tag or file.
 - **Safe to add:** an export failure is printed as a warning and never changes the eval result or the gate. Transcripts, traces and audio are not exported.
 
+### 6. Trends Report (results over time)
+Turns the history exported to BigQuery (report type 5) into a Markdown report. Use it when the user asks how results evolve, what broke since the previous run, or which evals are flaky.
+
+```bash
+cxas evals trends --bq-dataset <gcp-project>.<dataset> --days 30 \
+  --output <project>/eval-reports/eval_trends.md
+```
+
+Output: a Markdown file with Mermaid charts. Includes:
+- Pass rate, executions, errors, goal completion and expectations met: last day, previous day and whole period. Then executions, pass rate and durations per category.
+- Pass rate per day, overall and per category.
+- Changes since the previous run (new failures, fixes) and the longest-failing cases.
+- Worst tags and the tags whose pass rate changed the most. Tags used by fewer than 5 cases are not reported (`--min-tag-cases`).
+- Most frequent failed expectations, executions per day, run time, and flaky cases (PASS and FAIL on the same commit).
+
+Rules:
+- **Comparisons:** runs are compared within a `--suite-name` and a category.
+- **Git ref:** `--git-ref <ref>` limits the report to runs with that recorded git ref (`GITHUB_REF_NAME` or `CI_COMMIT_REF_NAME`, e.g. `main`; GitHub PR runs are recorded as `<number>/merge`, local runs as `local`).
+
 ## Interpreting Results
 
 ### Key Metrics
@@ -322,5 +341,5 @@ For each agent, produce:
 - Hallucination scores above 0.3 warrant investigation
 - Semantic similarity below 3.0 (on 0-4 scale) indicates response quality issues
 - Tool invocation correctness below 1.0 means missed or wrong tool calls
-- Compare trends across the last 10 results to spot regressions
+- Compare trends across the last 10 results to spot regressions (for runs exported to BigQuery, `cxas evals trends` lists new failures and the longest-failing cases)
 - When a golden eval is marked `invalid: true`, it references a deleted/changed tool -- flag prominently
