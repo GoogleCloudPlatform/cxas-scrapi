@@ -91,18 +91,6 @@ VERBATIM_RESULT = re.compile(
 TOOL_REF = re.compile(r"\{@TOOL:\s*\w+\s*\}")
 # State the router tools may write.
 ROUTER_STATE_KEYS = frozenset({"current_playbook", "current_task"})
-# Flat variables the skill's own design needs: routing, queued actions, the
-# greeting flag, and handoff fields a contact center integration reads.
-FLAT_VARIABLES = frozenset(
-    {
-        "current_playbook",
-        "current_task",
-        "next_agent_actions",
-        "played_greeting",
-        "pending_handoff_reason",
-        "handoff_summary",
-    }
-)
 QUOTED = re.compile(r"['\"]([^'\"]+)['\"]")
 # Static blocks where an always-available tool must not be named.
 NO_TOOL_BLOCKS = ("role", "context", "constraints")
@@ -504,59 +492,6 @@ def _nested_property_problems(app: _App) -> list[str]:
     return problems
 
 
-def _state_writers(app: _App) -> dict[str, set[str]]:
-    """Maps each declared variable to the tools that assign it."""
-    tool_code = {
-        p.parent.parent.name: p.read_text(encoding="utf-8")
-        for p in app.path.glob("tools/*/python_function/python_code.py")
-    }
-    writers: dict[str, set[str]] = {}
-    for var in app.config.get("variableDeclarations", []):
-        name = var["name"]
-        write = re.compile(rf"\[\s*[\"']{re.escape(name)}[\"']\s*\]\s*=(?!=)")
-        writers[name] = {
-            t for t, code in tool_code.items() if write.search(code)
-        }
-    return writers
-
-
-def _writer_problems(app: _App) -> list[str]:
-    """Checks that state is grouped by the tool that writes it.
-
-    In PARALLEL mode, tools the model calls in the same step all start from
-    the same state, and each write replaces the variable's whole value, so two
-    tools writing one variable can lose a write. Each OBJECT gets one writer
-    tool, and a tool that writes several values keeps them in its own object.
-    """
-    parallel = app.config.get("toolExecutionMode", "PARALLEL") != "SEQUENTIAL"
-    objects = _object_schemas(app)
-    writers = _state_writers(app)
-    problems = []
-    flat_by_tool: dict[str, list[str]] = {}
-    for name, tools in sorted(writers.items()):
-        if name in FLAT_VARIABLES:
-            continue
-        if name not in objects:
-            for tool in tools:
-                flat_by_tool.setdefault(tool, []).append(name)
-        if parallel and len(tools) > 1:
-            kind = "OBJECT variable" if name in objects else "variable"
-            problems.append(
-                f"{kind} {name!r} is written by {', '.join(sorted(tools))};"
-                " tools called in the same step start from the same state and"
-                " the last write replaces the whole value. Give each variable"
-                " one writer tool, and keep per-record results under the"
-                " record's ID instead of resetting them from another tool"
-            )
-    for tool, names in sorted(flat_by_tool.items()):
-        if len(names) > 1:
-            problems.append(
-                f"tool {tool!r} writes flat variables {', '.join(names)}; put"
-                " them in one OBJECT variable that only this tool writes"
-            )
-    return problems
-
-
 def _code_problems(app: _App) -> list[str]:
     """Checks callbacks and tool return dictionaries for anti-patterns."""
     problems = []
@@ -883,7 +818,6 @@ def main() -> None:
         + _router_problems(app, playbook_tasks)
         + _router_state_problems(app)
         + _nested_property_problems(app)
-        + _writer_problems(app)
     )
     try:
         template, undeclared = _compile(app)

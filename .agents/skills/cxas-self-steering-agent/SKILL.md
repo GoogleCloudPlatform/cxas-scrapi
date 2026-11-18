@@ -226,6 +226,13 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
      `pending_handoff_reason`, `handoff_summary`), and keys another system
      reads as session parameters, such as reporting or telephony keys. Make
      those STRING, since `get_session_params` ignores objects and non-strings.
+     If two tools that never run in the same step set one of those keys, list
+     it under V105 `ignore` in `cxaslint.yaml`.
+   - `cxas lint` reports a variable written by more than one tool in
+     `PARALLEL` mode (V105, a warning) and a tool writing several flat
+     variables (V106, info). Lint still passes with them, so fix every V105.
+   - Data loaded at session start that no tool owns goes in one object only
+     the session-start callback writes. Eval mocks go in one read-only object.
    - Declare each OBJECT with `properties` (a type for each) and a `default`
      that lists every property, so the instruction never reads a missing key
      and `cxas lint` (V100 to V104) catches a misspelled property or a name
@@ -379,9 +386,8 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    (`message`, `instructions`, `phrase`) or spreading a dict into the result,
    `afterModelCallbacks`, names shared by a playbook or task and a tool, router
    lists that don't match the instruction, routers writing other state or
-   reading `rationale`, variables written by more than one tool (in
-   `PARALLEL` mode), tools writing several flat variables, references to
-   object properties that aren't declared, tool names outside `{@TOOL: ...}` or in `<role>`
+   reading `rationale`, references to object properties that aren't
+   declared, tool names outside `{@TOOL: ...}` or in `<role>`
    or `<constraints>`, tools visible at the start that
    `<anytime_actions>` doesn't name, registered tools nothing uses, and a
    visible `end_session` or `set_next_agent_actions`. To check branches that
@@ -502,5 +508,6 @@ instruction, the visible tool declarations, and `llm_request.contents`.
   per-record state holds the record's ID instead of being reset by another
   tool.
 - [ ] Tool JSON descriptions match the docstrings (`sync_tool_descriptions.py --check`).
-- [ ] `cxas lint` passes, `check_tool_visibility.py` reports no problems, and
-  a `run_locally.py` flow per task runs without errors.
+- [ ] `cxas lint` passes with no V105 warnings, `check_tool_visibility.py`
+  reports no problems, and a `run_locally.py` flow per task runs without
+  errors.

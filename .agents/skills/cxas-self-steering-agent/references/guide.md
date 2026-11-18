@@ -222,6 +222,13 @@ Be deliberate about what goes in state at all. Store a value only when a
 `{{% if %}}` branch tests it, a step renders it, or a later tool needs it.
 Facts the model only says once can stay in the tool result.
 
+Data loaded once at the start of the session that no tool owns, such as
+telephony parameters or a caller profile, can go in one object that only the
+session-start callback writes. Callbacks don't run alongside tool calls, so
+that object can't lose a write. If a tool later needs to change part of it,
+move that part into the tool's own object. Mock API responses for evals go in
+one read-only object as well, not in a variable per response.
+
 ### One writer per variable
 
 Never let two tools write the same variable. In the default `PARALLEL` tool
@@ -281,8 +288,15 @@ them all:
 The full default means the instruction never reads a missing key, and the
 declared properties let `cxas lint` (V100 to V104) catch a misspelled property
 or a name left over from a flat layout. `check_tool_visibility.py` reports a
-property the instruction uses that isn't declared, a variable written by more
-than one tool, and a tool that writes several flat variables.
+property the instruction uses that isn't declared. `cxas lint` also reports a
+variable written by more than one tool when tools run in parallel (V105, a
+warning) and a tool that writes several flat variables (V106, info). Lint
+still passes with these, so fix every V105. It counts assignments, nested
+ones included, and `update()`, `setdefault()`, `pop()` and `del` on the
+state. A flat key another system reads can have two writers if they never
+run in the same step, such as a call outcome both the end-of-call and handoff
+tools set. List it under `ignore` for V105 in `cxaslint.yaml` (and for V106
+if that tool also writes other flat variables).
 
 In the owning tool, read the object, change it and write the whole object
 back:
