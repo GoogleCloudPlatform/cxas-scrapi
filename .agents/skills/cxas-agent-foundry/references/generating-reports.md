@@ -81,6 +81,21 @@ Key features:
 - **Adjusted Pass Rate Metric**: Automatically computes Overall Pass Rate vs. Adjusted Pass Rate (excluding platform/sim infra glitches and timeouts).
 - **Direct CES Session Links**: Deep-links each simulation test case directly into the CES live conversation console.
 
+### 5. Results History in BigQuery
+Keeps every eval result across runs, to answer questions about pass-rate history, regressions, or flaky evals. Add `--bq-dataset` to the combined report command:
+
+```bash
+cxas evals report --output-dir <project>/eval-reports \
+  --suite-name <suite> --bq-dataset <gcp-project>.<dataset>
+```
+
+Output: one row per run in the `eval_runs` table and one row per result in `eval_results` (category, tags, PASS/FAIL/ERROR, duration, failed expectations), plus two daily views (`v_eval_daily`, `v_eval_daily_by_tag`) to query or chart.
+
+Rules:
+- **Dataset:** ask the user which BigQuery dataset to use. The export doesn't create it unless you pass `--bq-create-dataset --bq-location <location>`, because a dataset's location can't change later.
+- **Suite name:** use the same `--suite-name` for runs that should be compared, and another name for runs filtered by tag or file.
+- **Safe to add:** an export failure is printed as a warning and never changes the eval result or the gate. Transcripts, traces and audio are not exported.
+
 ## Interpreting Results
 
 ### Key Metrics
