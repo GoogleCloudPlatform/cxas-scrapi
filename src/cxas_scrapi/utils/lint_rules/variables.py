@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""Variable-reference lint rules (V100-V104).
+"""Variable-reference lint rules (V100-V106).
 
 Surfaces state/instruction/eval references that target undeclared keys,
 mistyped nested children, or wrong parent objects after a flat→nested
@@ -1093,3 +1093,167 @@ class InstructionVariableRef(Rule):
                     )
                 )
         return results
+
+
+# ── Tool writers (V105-V106) ────────────────────────────────────────────
+
+_WRITER_CACHE: dict[str, dict[str, dict[str, int]]] = {}
+
+
+def _tool_name(file_path: Path) -> str | None:
+    """Return the tool name for ``tools/<name>/python_function/*.py``."""
+    parts = file_path.parts
+    if (
+        len(parts) >= 4
+        and parts[-2] == "python_function"
+        and (parts[-4] == "tools")
+    ):
+        return parts[-3]
+    return None
+
+
+def _tool_writes(app_root: Path) -> dict[str, dict[str, int]]:
+    """Return ``{tool_name: {top_level_var: first_write_line}}`` (cached).
+
+    Only tools count. Callbacks don't run as tool calls, so they can't race
+    with tools the model calls in the same step.
+    """
+    key = str(app_root)
+    if key in _WRITER_CACHE:
+        return _WRITER_CACHE[key]
+    writes: dict[str, dict[str, int]] = {}
+    tools_dir = app_root / "tools"
+    if tools_dir.exists():
+        for code in sorted(tools_dir.glob("*/python_function/python_code.py")):
+            try:
+                content = code.read_text()
+            except OSError:
+                continue
+            found: dict[str, int] = {}
+            for kind, var_key, line, _rhs in _collect_state_accesses(content):
+                if kind != "write" or not var_key:
+                    continue
+                found.setdefault(var_key.split(".")[0], line)
+            writes[code.parent.parent.name] = found
+    _WRITER_CACHE[key] = writes
+    return writes
+
+
+def _clear_writer_cache() -> None:
+    """Test helper — drop the tool-writer cache."""
+    _WRITER_CACHE.clear()
+
+
+def _tools_run_in_parallel(context: LintContext) -> bool:
+    app_root = _resolve_app_root(context)
+    if app_root is None:
+        return False
+    mode = _load_app_config(app_root).get("toolExecutionMode") or "PARALLEL"
+    return str(mode).upper() != "SEQUENTIAL"
+
+
+@rule("tools")
+class ToolVariableSingleWriter(Rule):
+    id = "V105"
+    name = "variable-single-writer"
+    description = (
+        "Each session variable should have one writer tool when tools run "
+        "in parallel"
+    )
+    default_severity = Severity.WARNING
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        tool = _tool_name(file_path)
+        app_root = _resolve_app_root(context)
+        if tool is None or app_root is None:
+            return []
+        if not _tools_run_in_parallel(context):
+            return []
+        schema = _load_var_schema(context)
+        ignored = set(context.options.get(self.id, {}).get("ignore", []))
+        writes = _tool_writes(app_root)
+        rel = str(file_path.relative_to(context.project_root))
+        results = []
+        for var, line in sorted(writes.get(tool, {}).items()):
+            if var in ignored or var in STATE_BUILTINS:
+                continue
+            if schema and var not in schema:
+                continue
+            others = sorted(
+                t for t, found in writes.items() if t != tool and var in found
+            )
+            if not others:
+                continue
+            results.append(
+                self.make_result(
+                    file=rel,
+                    line=line,
+                    message=(
+                        f"State variable '{var}' is also written by "
+                        f"{', '.join(others)}. Tools the model calls in the "
+                        "same step start from the same state, and each write "
+                        "replaces the variable's whole value, so one tool's "
+                        "change can be lost"
+                    ),
+                    fix=(
+                        "Give each variable one writer tool: keep a tool's "
+                        "values in its own variable, and store the record's "
+                        "ID with per-record state instead of resetting it "
+                        "from another tool. Set toolExecutionMode to "
+                        "SEQUENTIAL only if the extra latency is acceptable"
+                    ),
+                )
+            )
+        return results
+
+
+@rule("tools")
+class ToolFlatVariableGroup(Rule):
+    id = "V106"
+    name = "tool-flat-variable-group"
+    description = (
+        "A tool that writes several flat variables should keep them in one "
+        "OBJECT variable"
+    )
+    default_severity = Severity.INFO
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        tool = _tool_name(file_path)
+        app_root = _resolve_app_root(context)
+        if tool is None or app_root is None:
+            return []
+        schema = _load_var_schema(context)
+        if not schema:
+            return []
+        opts = context.options.get(self.id, {})
+        max_flat = int(opts.get("max_flat_variables", 2))
+        ignored = set(opts.get("ignore", []))
+        flat = sorted(
+            (line, var)
+            for var, line in _tool_writes(app_root).get(tool, {}).items()
+            if var in schema
+            and var not in ignored
+            and schema[var].get("type") not in ("OBJECT", "ARRAY")
+        )
+        if len(flat) <= max_flat:
+            return []
+        names = ", ".join(var for _line, var in flat)
+        return [
+            self.make_result(
+                file=str(file_path.relative_to(context.project_root)),
+                line=flat[0][0],
+                message=(
+                    f"Tool '{tool}' writes {len(flat)} flat variables "
+                    f"({names}); each one adds a top-level variable to "
+                    "app.json"
+                ),
+                fix=(
+                    "Keep them as properties of one OBJECT variable that only "
+                    "this tool writes, declared with properties and a default"
+                ),
+            )
+        ]

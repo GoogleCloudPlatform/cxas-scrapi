@@ -519,6 +519,8 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | V102 | `nested-property-exists` | Error | Dotted state keys must resolve to declared OBJECT properties |
     | V103 | `no-stale-flat-var-regression` | Warning | Reference matches a nested property — likely a stale flat-variable reference |
     | V104 | `instruction-variable-ref` | Error | Instruction {var} references must resolve to a declared variable |
+    | V105 | `variable-single-writer` | Warning | Each session variable should have one writer tool when tools run in parallel |
+    | V106 | `tool-flat-variable-group` | Info | A tool that writes several flat variables should keep them in one OBJECT variable |
 
     ---
 
@@ -569,3 +571,23 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `{var}` reference where `var` is not declared or doesn't resolve.
 
     *Fix:* Declare the variable in `app.json` or fix the reference.
+
+    ---
+
+    **V105 — variable-single-writer**
+
+    With the default `"toolExecutionMode": "PARALLEL"`, tools the model calls in the same step all start from the same session state, and each write replaces the variable's whole value. When two tools write the same variable (most visibly an OBJECT variable that several tools update), one tool's change can be lost. Callbacks don't count, since they don't run as tool calls. The rule is skipped when `toolExecutionMode` is `SEQUENTIAL`.
+
+    *Triggers:* A tool writes a declared top-level variable that another tool also writes.
+
+    *Fix:* Give each variable one writer tool. Keep the values a tool writes in its own variable, and store the record's ID with per-record state (for example `verified_order_id`) instead of resetting it from another tool. Switching to `SEQUENTIAL` also avoids the race, at the cost of latency when the model calls several slow tools in one step. To accept a known case, list the variable under `options: V105: ignore: [...]` in `cxaslint.yaml`.
+
+    ---
+
+    **V106 — tool-flat-variable-group**
+
+    Every flat variable a tool writes is another top-level entry in `variableDeclarations`. A tool that writes several values (a lookup's record, an intake tool's slots) can keep them as properties of one OBJECT variable that only it writes.
+
+    *Triggers:* A tool writes more than `max_flat_variables` (default 2) declared non-OBJECT variables.
+
+    *Fix:* Move them into one OBJECT variable, declared with `properties` and a `default`, and write the whole object from that tool. Tune the threshold with `options: V106: max_flat_variables: N`, or exclude names with `ignore: [...]`.
