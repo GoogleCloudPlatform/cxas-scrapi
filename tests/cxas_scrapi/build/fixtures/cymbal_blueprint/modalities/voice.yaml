@@ -1,0 +1,11 @@
+modality_id: "voice"
+modality_label: "Voice Telephony"
+planner_model_override: "gemini-composite-v2"
+keep_supervisor_guardrails: true
+audio_rewriter_disabled: true
+barge_in_enabled: true
+disabled_agents: []
+disabled_tools:
+  - "display_deeplink"
+  - "request_websocket_handover"
+disabled_guardrails: []

@@ -1,0 +1,36 @@
+brand_id: "cymbal_direct"
+brand_name: "Cymbal Direct"
+brand_slug: "cymbal-direct"
+tenant_id: 2
+branches_available: false
+web_host: "www.cymbal-direct.example"
+
+voice:
+  voice_name: "en-US-Chirp3-HD-Aoede"
+  speaking_rate: 1.0
+
+ai_disclosure: "Hello! You are interacting with the AI virtual assistant for Cymbal Direct. Your request is processed by an artificial intelligence system, and you may request a live support specialist at any time."
+
+placeholders:
+  legal_entity: "Cymbal Direct Digital Bank"
+  account_term: "Cymbal Direct Checking"
+  customer_id_label: "Cymbal Direct Member Number"
+  tan_method: "Cymbal Pass"
+  support_phone: "+1-800-555-0199"
+
+disabled_agents:
+  - "branch_information_agent"
+
+disabled_tools:
+  - "find_branches"
+  - "book_branch_appointment"
+  - "search_appointments_knowledge"
+
+disabled_guardrails: []
+
+forbidden_tokens:
+  - "Cymbal Retail Bank"
+  - "cymbal-retail.example"
+  - "Cymbal Approve"
+  - "branch_information_agent"
+  - "find_branches"

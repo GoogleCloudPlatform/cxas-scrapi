@@ -1,0 +1,10 @@
+modality_id: "digital"
+modality_label: "Digital Multimodal"
+planner_model_override: null
+keep_supervisor_guardrails: false
+audio_rewriter_disabled: false
+barge_in_enabled: false
+disabled_agents: []
+disabled_tools:
+  - "sip_transfer_to_queue"
+disabled_guardrails: []

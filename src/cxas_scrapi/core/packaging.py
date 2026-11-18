@@ -17,7 +17,6 @@
 import os
 import shutil
 import tempfile
-import time
 import zipfile
 from pathlib import Path
 
@@ -146,24 +145,28 @@ def package_app_archive(
                 f"Total archive size {total_size} exceeds maximum {MAX_TOTAL_ARCHIVE_BYTES} bytes"  # noqa: E501
             )
 
-        limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
-        for root, dirs, files in os.walk(temp_dir):
-            for name in files:
-                path = os.path.join(root, name)
-                if os.path.getmtime(path) < limit_time:
-                    os.utime(path, None)
-            for name in dirs:
-                path = os.path.join(root, name)
-                if os.path.getmtime(path) < limit_time:
-                    os.utime(path, None)
-
+        output_zip.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(
             output_zip, "w", compression=zipfile.ZIP_DEFLATED
         ) as zf:
-            for fpath in sorted(paths_to_add):
+            for fpath in sorted(
+                paths_to_add,
+                key=lambda p: p.relative_to(temp_dir).as_posix(),
+            ):
                 arcname = fpath.relative_to(temp_dir)
                 if wrapper_dir:
                     arcname = Path(wrapper_dir) / arcname
-                zf.write(fpath, arcname=str(arcname).replace(os.sep, "/"))
+                arcname_str = arcname.as_posix()
+                zi = zipfile.ZipInfo(
+                    filename=arcname_str, date_time=(2026, 1, 1, 0, 0, 0)
+                )
+                zi.compress_type = zipfile.ZIP_DEFLATED
+                zi.external_attr = 0o644 << 16
+                zf.writestr(
+                    zi,
+                    fpath.read_bytes(),
+                    compress_type=zipfile.ZIP_DEFLATED,
+                    compresslevel=9,
+                )
 
     return output_zip

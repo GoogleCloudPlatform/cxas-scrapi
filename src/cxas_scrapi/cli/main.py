@@ -2741,6 +2741,12 @@ def get_parser() -> argparse.ArgumentParser:
             "the exported app will be deleted."
         ),
     )
+    parser_pull.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Force strip tampered shared bundle marker blocks during pull.",
+    )
     _add_project_location_args(parser_pull, required=False)
     parser_pull.set_defaults(func=app_pull)
 
@@ -2798,6 +2804,60 @@ def get_parser() -> argparse.ArgumentParser:
         "--native-python-env",
         action="store_true",
         help="Synthesize pythonEnvFiles.yaml without mutating python_code.py",
+    )
+    parser_push.add_argument(
+        "--firewall",
+        action="store_true",
+        default=False,
+        help="Run static architecture firewall (FW01-FW10) before pushing.",
+    )
+    parser_push.add_argument(
+        "--firewall-profile",
+        choices=["strict", "standard"],
+        default="strict",
+        help="Firewall enforcement profile when --firewall is enabled.",
+    )
+    parser_push.add_argument(
+        "--check-drift",
+        action="store_true",
+        default=False,
+        help="Run 3-way CES-to-Git drift gate before pushing.",
+    )
+    parser_push.add_argument(
+        "--live-dir",
+        default=None,
+        help=(
+            "Pre-exported live app directory for offline 3-way drift check "
+            "before pushing."
+        ),
+    )
+    parser_push.add_argument(
+        "--lockfile",
+        default=None,
+        help="Baseline <app>.lock.json lockfile path for pre-push drift check.",
+    )
+    parser_push.add_argument(
+        "--blueprint",
+        default=None,
+        help="Optional blueprint directory for pre-push firewall/drift check.",
+    )
+    parser_push.add_argument(
+        "--conflicts-dir",
+        default=None,
+        help=(
+            "Directory for .diff conflict markers when pre-push drift detects "
+            "conflicts."
+        ),
+    )
+    parser_push.add_argument(
+        "--force-ours",
+        action="extend",
+        nargs="+",
+        default=[],
+        help=(
+            "Resource IDs to force from local bundle during pre-push drift "
+            "check."
+        ),
     )
     parser_push.set_defaults(func=app_push)
 

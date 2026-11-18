@@ -18,12 +18,28 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
 
+from cxas_scrapi.build.blueprint_compiler import (
+    _strip_dangling_reference_lines,
+    apply_runtime_policy_to_bundle,
+    apply_tuning_overlay_to_bundle,
+)
+from cxas_scrapi.build.blueprint_schemas import (
+    BlueprintCompilerError,
+    FirewallViolation,
+    RuntimePolicySpec,
+    TuningOverlaySpec,
+    build_pruned_identifier_regex,
+    load_spec,
+)
+from cxas_scrapi.build.drift import write_lockfile
+from cxas_scrapi.build.firewall import FirewallProfile, run_firewall
 from cxas_scrapi.build.manifests import (
     CHANNEL_PROFILE_TYPES,
     Manifests,
@@ -33,7 +49,14 @@ from cxas_scrapi.core.packaging import package_app_archive
 
 
 class BuildError(Exception):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        violations: Sequence[FirewallViolation] = (),
+    ) -> None:
+        super().__init__(message)
+        self.violations: list[FirewallViolation] = list(violations)
 
 
 class BuildReport(BaseModel):
@@ -42,6 +65,8 @@ class BuildReport(BaseModel):
     environment: str
     out_dir: Path
     zip_path: Path | None = None
+    lockfile_path: Path | None = None
+    runtime_rules_count: int = 0
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -142,6 +167,12 @@ def build_app(
     package_zip: bool = False,
     native_python_env: bool = False,
     strip_bridge: str | None = None,
+    prune_dangling_lines: bool = False,
+    runtime_policy: str | Path | None = None,
+    tuning_overlay: str | Path | None = None,
+    emit_deployments: bool = True,
+    write_lock: bool = False,
+    firewall_profile: FirewallProfile | None = None,
 ) -> BuildReport:
     core_dir = Path(core_dir).resolve()
     out_dir = Path(out_dir).resolve()
@@ -220,6 +251,14 @@ def build_app(
                         pruned_tool_display_names.add(display_name)
                     pruned_tool_display_names.add(tool_path.name)
                     shutil.rmtree(tool_path)
+
+    all_pruned_agents = disabled_agents | pruned_agent_display_names
+    all_pruned_tools = disabled_tools | pruned_tool_display_names
+    pruned_re = (
+        build_pruned_identifier_regex(all_pruned_agents, all_pruned_tools)
+        if prune_dangling_lines
+        else None
+    )
 
     # Substitutions mapping
     replacements = {
@@ -507,6 +546,9 @@ def build_app(
                 except BuildError as e:
                     raise BuildError(f"{path}: {e}") from e
 
+                if pruned_re is not None:
+                    text = _strip_dangling_reference_lines(text, pruned_re)
+
                 for a in disabled_agents:
                     if f"{{@AGENT: {a}}}" in text:
                         warnings.append(
@@ -525,6 +567,9 @@ def build_app(
                 except BuildError as e:
                     raise BuildError(f"{path}: {e}") from e
 
+                if pruned_re is not None:
+                    text = _strip_dangling_reference_lines(text, pruned_re)
+
                 path.write_text(text, "utf-8")
                 validate_modalities(text, path.relative_to(out_dir))
 
@@ -538,33 +583,103 @@ def build_app(
                         raise BuildError(f"{path}: {e}") from e
                     path.write_text(text, "utf-8")
 
-    deployments_dir = out_dir / "deployments"
-    deployments_dir.mkdir(exist_ok=True)
+    modality_id = (
+        "voice"
+        if (
+            channel in {"VOICE_TELEPHONY", "CONTACT_CENTER"}
+            or "AUDIO" in channel_caps.supported_modalities
+        )
+        else "digital"
+    )
     slug = channel.lower().replace("_", "-")
-    dep_path = deployments_dir / f"{slug}.yaml"
 
-    dep_data = {
-        "displayName": f"{brand.display_name} {channel}",
-        "brandId": brand.brand_id,
-        "channel": channel,
-        "environment": environment,
-        "channelProfile": {"channelType": CHANNEL_PROFILE_TYPES[channel]},
-        "supportedCountries": policy.supported_countries,
-        "supportedLanguages": brand.languages,
-        "supportedModalities": channel_caps.supported_modalities,
-        "deeplinkWidgets": channel_caps.deeplink_widgets,
-    }
-    if channel_caps.entry_agent:
-        dep_data["entryAgent"] = channel_caps.entry_agent
+    if emit_deployments:
+        deployments_dir = out_dir / "deployments"
+        deployments_dir.mkdir(exist_ok=True)
+        dep_path = deployments_dir / f"{slug}.yaml"
 
-    with open(dep_path, "w") as f:
-        yaml.safe_dump(dep_data, f, sort_keys=False)
+        dep_data = {
+            "displayName": f"{brand.display_name} {channel}",
+            "brandId": brand.brand_id,
+            "channel": channel,
+            "environment": environment,
+            "channelProfile": {"channelType": CHANNEL_PROFILE_TYPES[channel]},
+            "supportedCountries": policy.supported_countries,
+            "supportedLanguages": brand.languages,
+            "supportedModalities": channel_caps.supported_modalities,
+            "deeplinkWidgets": channel_caps.deeplink_widgets,
+        }
+        if channel_caps.entry_agent:
+            dep_data["entryAgent"] = channel_caps.entry_agent
 
-    zip_path = None
+        with open(dep_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(dep_data, f, sort_keys=False)
+
+    if tuning_overlay is not None:
+        try:
+            overlay_spec: TuningOverlaySpec = load_spec(
+                TuningOverlaySpec, Path(tuning_overlay)
+            )
+            overlay_placeholders = {
+                "brand_id": brand.brand_id,
+                "brand_name": brand.display_name,
+                "brand_slug": brand.brand_id.replace("_", "-"),
+                "web_host": brand.urls.get(
+                    "web_host", brand.urls.get("home", "")
+                ),
+            }
+            apply_tuning_overlay_to_bundle(
+                out_dir,
+                overlay_spec,
+                modality_id=modality_id,
+                placeholders=overlay_placeholders,
+                pruned_re=pruned_re,
+            )
+        except BlueprintCompilerError as exc:
+            raise BuildError(str(exc)) from exc
+
+    runtime_rules_count = 0
+    loaded_rp_spec: RuntimePolicySpec | None = None
+    if runtime_policy is not None:
+        try:
+            loaded_rp_spec = load_spec(RuntimePolicySpec, Path(runtime_policy))
+            runtime_rules_count = apply_runtime_policy_to_bundle(
+                out_dir,
+                loaded_rp_spec,
+                modality_id=modality_id,
+                disabled_agents=all_pruned_agents,
+            )
+        except BlueprintCompilerError as exc:
+            raise BuildError(str(exc)) from exc
+
+    if firewall_profile is not None:
+        try:
+            violations = run_firewall(
+                out_dir,
+                runtime_policy=loaded_rp_spec,
+                profile=firewall_profile,
+                modality=modality_id,
+                pruned_agents=sorted(all_pruned_agents),
+            )
+        except BlueprintCompilerError as exc:
+            raise BuildError(str(exc)) from exc
+        if violations:
+            raise BuildError(
+                "; ".join(str(v) for v in violations),
+                violations=violations,
+            )
+
+    zip_path: Path | None = None
     if package_zip:
         zip_path = out_dir / f"{brand_id}_{slug}.zip"
         package_app_archive(
             out_dir, zip_path, native_python_env=native_python_env
+        )
+
+    lockfile_path: Path | None = None
+    if write_lock:
+        lockfile_path = write_lockfile(
+            out_dir, app_id=f"{brand_id}/{channel.lower()}"
         )
 
     return BuildReport(
@@ -573,6 +688,8 @@ def build_app(
         environment=environment,
         out_dir=out_dir,
         zip_path=zip_path,
+        lockfile_path=lockfile_path,
+        runtime_rules_count=runtime_rules_count,
         warnings=warnings,
     )
 
@@ -586,6 +703,12 @@ def build_all(
     package_zip: bool = False,
     native_python_env: bool = False,
     strip_bridge: str | None = None,
+    prune_dangling_lines: bool = False,
+    runtime_policy: str | Path | None = None,
+    tuning_overlay: str | Path | None = None,
+    emit_deployments: bool = True,
+    write_locks: bool = False,
+    firewall_profile: FirewallProfile | None = None,
 ) -> list[BuildReport]:
     manifests = load_manifests(manifests_dir)
     reports = []
@@ -605,6 +728,12 @@ def build_all(
                 package_zip=package_zip,
                 native_python_env=native_python_env,
                 strip_bridge=strip_bridge,
+                prune_dangling_lines=prune_dangling_lines,
+                runtime_policy=runtime_policy,
+                tuning_overlay=tuning_overlay,
+                emit_deployments=emit_deployments,
+                write_lock=write_locks,
+                firewall_profile=firewall_profile,
             )
             reports.append(rep)
 

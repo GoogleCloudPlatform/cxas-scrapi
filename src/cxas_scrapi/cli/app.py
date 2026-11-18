@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import argparse
+import inspect
 import io
 import json
 import logging
@@ -27,9 +28,11 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from cxas_scrapi.build import BlueprintCompilerError, enforce_pre_push_gate
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.python_bundler import (
+    PythonBundlerError,
     strip_shared_bundles,
 )
 from cxas_scrapi.core.versions import Versions
@@ -366,6 +369,159 @@ def _app_pull(
         sys.exit(1)
 
 
+def _export_live_app_to_dir(
+    apps_client: Apps,
+    target_app_name: str,
+    temp_root: Path,
+) -> Path:
+    """Exports an existing remote CES app as JSON and unwraps root wrapper."""
+    tmp_zip = temp_root / "live_export.zip"
+    extract_dir = temp_root / "live_extracted"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_bytes: bytes | bytearray | None = None
+    try:
+        sig_params = inspect.signature(apps_client.export_app).parameters
+        if "app_id" in sig_params and "app_name" not in sig_params:
+            call_kwargs: dict[str, Any] = {
+                "app_id": target_app_name,
+                "export_format": "JSON",
+            }
+            if "filepath" in sig_params:
+                call_kwargs["filepath"] = str(tmp_zip)
+            export_res = apps_client.export_app(**call_kwargs)
+        else:
+            export_res = apps_client.export_app(
+                app_name=target_app_name,
+                local_path=str(tmp_zip),
+                export_format="JSON",
+            )
+
+        has_file = tmp_zip.is_file() and tmp_zip.stat().st_size > 0
+        if not has_file:
+            raw_bytes = getattr(export_res, "app_content", None)
+            if not isinstance(raw_bytes, (bytes, bytearray)) and hasattr(
+                export_res, "result"
+            ):
+                lro_resp = export_res.result()
+                raw_bytes = getattr(lro_resp, "app_content", None)
+            if not isinstance(raw_bytes, (bytes, bytearray)):
+                raise BlueprintCompilerError(
+                    f"Failed to export live app {target_app_name!r} for drift "
+                    "gate."
+                )
+    except BlueprintCompilerError:
+        raise
+    except Exception as exc:
+        raise BlueprintCompilerError(
+            f"Failed to export live app {target_app_name!r} for drift gate: "
+            f"{exc}"
+        ) from exc
+
+    abs_extract = extract_dir.resolve()
+    try:
+        zf_source: Path | io.BytesIO = (
+            tmp_zip if has_file else io.BytesIO(bytes(raw_bytes or b""))
+        )
+        with zipfile.ZipFile(zf_source, "r") as zf:
+            for info in zf.infolist():
+                dest_member = (abs_extract / info.filename).resolve()
+                if os.path.commonpath(
+                    [str(abs_extract), str(dest_member)]
+                ) != str(abs_extract):
+                    raise BlueprintCompilerError(
+                        f"Unsafe archive path in live export: {info.filename}"
+                    )
+            zf.extractall(abs_extract)
+    except BlueprintCompilerError:
+        raise
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise BlueprintCompilerError(
+            f"Invalid ZIP archive exported from live app "
+            f"{target_app_name!r}: {exc}"
+        ) from exc
+
+    if (abs_extract / "app.json").is_file() or (
+        abs_extract / "app.yaml"
+    ).is_file():
+        return abs_extract
+
+    subdirs = [
+        p
+        for p in sorted(abs_extract.iterdir())
+        if p.is_dir() and p.name != "__MACOSX"
+    ]
+    files = [p for p in abs_extract.iterdir() if p.is_file()]
+    if len(subdirs) == 1 and not files:
+        return subdirs[0]
+    return abs_extract
+
+
+def _maybe_run_pre_push_gate(
+    app_dir: str,
+    apps_client: Apps | None,
+    target_app_name: str | None,
+    args: argparse.Namespace | None,
+    *,
+    firewall_already_ran: bool = False,
+) -> None:
+    """Runs static firewall and/or 3-way drift gate prior to importing."""
+    if args is None:
+        return
+
+    run_fw = bool(getattr(args, "firewall", False)) and not firewall_already_ran
+    live_dir = getattr(args, "live_dir", None)
+    lockfile = getattr(args, "lockfile", None)
+    want_drift = bool(
+        getattr(args, "check_drift", False)
+        or live_dir is not None
+        or lockfile is not None
+    )
+    if not run_fw and not want_drift:
+        return
+
+    blueprint_dir = getattr(args, "blueprint", None)
+    conflicts_dir = getattr(args, "conflicts_dir", None)
+    force_ours = tuple(getattr(args, "force_ours", None) or ())
+    firewall_profile = getattr(args, "firewall_profile", "strict") or "strict"
+
+    try:
+        if want_drift and live_dir is None:
+            if not target_app_name or apps_client is None:
+                raise BlueprintCompilerError(
+                    "Pre-push drift check without --live-dir requires an "
+                    "existing target app (--to or --app-name)."
+                )
+            with tempfile.TemporaryDirectory() as tmp_live_root:
+                eff_live_dir = _export_live_app_to_dir(
+                    apps_client, target_app_name, Path(tmp_live_root)
+                )
+                enforce_pre_push_gate(
+                    app_dir,
+                    live_dir=eff_live_dir,
+                    lockfile_path=lockfile,
+                    blueprint_dir=blueprint_dir,
+                    conflicts_dir=conflicts_dir,
+                    force_ours=force_ours,
+                    run_static_firewall=run_fw,
+                    firewall_profile=firewall_profile,
+                )
+        else:
+            enforce_pre_push_gate(
+                app_dir,
+                live_dir=live_dir,
+                lockfile_path=lockfile,
+                blueprint_dir=blueprint_dir,
+                conflicts_dir=conflicts_dir,
+                force_ours=force_ours,
+                run_static_firewall=run_fw,
+                firewall_profile=firewall_profile,
+            )
+    except (BlueprintCompilerError, PythonBundlerError) as exc:
+        print(f"Pre-push gate failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def app_push(args: argparse.Namespace) -> str | None:
     """Handles the 'push' command."""
     # We will reuse the deploy_agent logic from main.py, slightly adjusted.
@@ -376,13 +532,60 @@ def app_push(args: argparse.Namespace) -> str | None:
     app_name_arg = getattr(args, "app_name", None)
     identifier = target_app or app_name_arg
 
+    run_fw = bool(getattr(args, "firewall", False))
+    live_dir_arg = getattr(args, "live_dir", None)
+    lockfile_arg = getattr(args, "lockfile", None)
+    want_drift = bool(
+        getattr(args, "check_drift", False)
+        or live_dir_arg is not None
+        or lockfile_arg is not None
+    )
+    needs_remote_export = want_drift and live_dir_arg is None
+
+    if needs_remote_export and not identifier:
+        print(
+            "Pre-push gate failed: Pre-push drift check without --live-dir "
+            "requires an existing target app (--to or --app-name).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    gate_ran_offline = False
+    firewall_ran_offline = False
+    if (run_fw or want_drift) and not needs_remote_export:
+        _maybe_run_pre_push_gate(
+            app_dir=app_dir,
+            apps_client=None,
+            target_app_name=None,
+            args=args,
+        )
+        gate_ran_offline = True
+    elif run_fw and needs_remote_export:
+        firewall_profile = (
+            getattr(args, "firewall_profile", "strict") or "strict"
+        )
+        try:
+            enforce_pre_push_gate(
+                app_dir,
+                blueprint_dir=getattr(args, "blueprint", None),
+                run_static_firewall=True,
+                firewall_profile=firewall_profile,
+            )
+        except (BlueprintCompilerError, PythonBundlerError) as exc:
+            print(f"Pre-push gate failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+        firewall_ran_offline = True
+
     if identifier:
         apps_client, app_name, display_name = _resolve_app_args(
             identifier, args
         )
         print("Pushing to existing app... Overwriting if supported.")
     else:
-        apps_client = Apps(project_id=args.project_id, location=args.location)
+        apps_client = Apps(
+            project_id=getattr(args, "project_id", None),
+            location=getattr(args, "location", None),
+        )
         app_name = None
         print("No target specified, using existing name if needed.")
         display_name = getattr(args, "display_name", None) or "Pushed Agent"
@@ -395,6 +598,8 @@ def app_push(args: argparse.Namespace) -> str | None:
         display_name=getattr(args, "display_name", None) or display_name,
         env_file=getattr(args, "env_file", None),
         args=args,
+        _skip_pre_push_gate=gate_ran_offline,
+        _firewall_already_ran=firewall_ran_offline,
     )
 
 
@@ -406,8 +611,20 @@ def _app_push(
     display_name: str | None = None,
     env_file: str | None = None,
     args: argparse.Namespace | None = None,
+    *,
+    _skip_pre_push_gate: bool = False,
+    _firewall_already_ran: bool = False,
 ) -> str | None:
     """Helper to push an app to CXAS."""
+    if not _skip_pre_push_gate:
+        _maybe_run_pre_push_gate(
+            app_dir=app_dir,
+            apps_client=apps_client,
+            target_app_name=target_app_name,
+            args=args,
+            firewall_already_ran=_firewall_already_ran,
+        )
+
     from cxas_scrapi.core.packaging import package_app_archive
 
     temp_zip = tempfile.mktemp(suffix=".zip")
