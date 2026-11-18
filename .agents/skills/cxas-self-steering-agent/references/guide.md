@@ -107,15 +107,15 @@ No playbook is open yet.
 A previous step requires a live representative (reason: `{{pending_handoff_reason}}`). Call {@TOOL: execute_live_agent_handover} right away without replying first. ...
 </pending_handoff>
 
-{{% elif current_task and not zip_verified %}}
+{{% elif current_task and not shared.zip_verified %}}
 <identify_order>
 Every task starts by finding the customer's order and verifying its shipping ZIP code. Keep the loaded task. Once the ZIP code is verified, the task's next step shows here.
 <current_step>
-{{% if not order_id %}}
+{{% if not shared.order_id %}}
 - Ask for the order number if the customer hasn't shared it, then call {@TOOL: lookup_order} with it.
 - If the lookup found no order, ask the customer to double-check the number.
 {{% else %}}
-- Order {{order_id}} was found. Ask for the 5-digit shipping ZIP code on it and call {@TOOL: verify_order_zip} with `postal_code`. Don't share anything about the order until the ZIP code is verified.
+- Order {{shared.order_id}} was found. Ask for the 5-digit shipping ZIP code on it and call {@TOOL: verify_order_zip} with `postal_code`. Don't share anything about the order until the ZIP code is verified.
 - ...
 {{% endif %}}
 </current_step>
@@ -123,9 +123,9 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
 
 {{% elif current_task %}}
 <playbook_rules>
-- Order {{order_id}} ({{order_item}}) is verified and stays selected when the customer asks for something else about it. Silently call {@TOOL: load_task} with that task, after {@TOOL: open_playbook} if it's in the other playbook.
+- Order {{shared.order_id}} ({{shared.order_item}}) is verified and stays selected when the customer asks for something else about it. Silently call {@TOOL: load_task} with that task, after {@TOOL: open_playbook} if it's in the other playbook.
 - If the customer means a different order, call {@TOOL: lookup_order} with that order number. They'll need to verify its ZIP code too.
-{{% if current_playbook == 'returns' and order_status == 'Delivered' %}}
+{{% if current_playbook == 'returns' and shared.order_status == 'Delivered' %}}
 - No return has been created for this order yet, so the customer can switch between a mailed return label and a courier pickup. Silently call {@TOOL: load_task} with the other task.
 {{% endif %}}
 </playbook_rules>
@@ -133,7 +133,7 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
 {{% if current_task == 'check_order_status' %}}
 <task name="check_order_status">
 <current_step>
-- Order {{order_id}}: {{order_item}}, status {{order_status}}, {{order_delivery}}. Share these details with the customer.
+- Order {{shared.order_id}}: {{shared.order_item}}, status {{shared.order_status}}, {{shared.order_delivery}}. Share these details with the customer.
 </current_step>
 </task>
 
@@ -164,7 +164,7 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
   (such as "ask for the ZIP code again"). It earns its place when tools in
   more than one task or block can decide on a transfer: each tool sets a
   reason, and one branch handles them all whatever is loaded. With a single
-  trigger, a branch in that step (`{{% elif zip_attempts >= 2 %}}`) does the
+  trigger, a branch in that step (`{{% elif shared.zip_attempts >= 2 %}}`) does the
   same job.
 - `<identify_order>` holds the steps every task starts with. See
   [Shared prerequisite block](#shared-prerequisite-block).
@@ -172,7 +172,7 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
   playbook: the record stays selected when the customer moves to another
   request about it, how to switch to a different record, and switches that are
   open only in some states (the sample's mail return versus courier pickup,
-  gated on `order_status == 'Delivered'`). Keep transfer routing out of it
+  gated on `shared.order_status == 'Delivered'`). Keep transfer routing out of it
   unless a playbook really routes elsewhere, and then gate the anytime line
   off with `{{% if %}}` rather than writing "follow the playbook's rule
   instead"; two visible rules and two visible tools for one request leave the
@@ -189,6 +189,85 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
 - The CES design guide's `<persona>`, `<taskflow>` and `<subtask>` tags aren't
   required. The sample's `cxaslint.yaml` turns off I001, the lint rule that
   asks for them.
+
+## Session variables
+
+Every value a tool writes has to be declared in `app.json`, because CES drops
+undeclared writes between turns. When every slot, flag and counter is its own
+top-level variable, the list grows with each playbook. Agents built that way
+reached 200 to 350 variables, most of them one playbook's slots and flags,
+which makes the app hard to read, review and migrate.
+
+Group state by who uses it:
+
+| Variable                       | Holds                                                                                                  | Sample                                                                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `shared` (OBJECT)              | State every playbook uses: the record the customer is asking about, its verification, attempt counters | `order_id`, `order_status`, `order_item`, `order_delivery`, `on_file_zip`, `zip_verified`, `zip_attempts`                |
+| one OBJECT per playbook        | That playbook's slots, flags and counters                                                              | `order_support`, `returns`                                                                                               |
+| flat STRING, BOOLEAN or OBJECT | Routing, the skill's plumbing, and keys other systems read                                             | `current_playbook`, `current_task`, `next_agent_actions`, `played_greeting`, `pending_handoff_reason`, `handoff_summary` |
+
+Keys that another system reads as session parameters (reporting, telephony,
+the handoff summary) stay flat and STRING, because `get_session_params`
+ignores objects and non-strings.
+
+Be deliberate about what goes in state at all. Store a value only when a
+`{{% if %}}` branch tests it, a step renders it, or a later tool needs it.
+Facts the model only says once can stay in the tool result.
+
+Declare each object with a type for every property and a default that lists
+them all:
+
+```json
+{
+  "name": "returns",
+  "description": "returns playbook state for the selected order: the courier pickup details collected so far, whether the summary was confirmed, and the booking once it's made.",
+  "schema": {
+    "type": "OBJECT",
+    "properties": {
+      "reason": {"type": "STRING"},
+      "pickup_day": {"type": "STRING"},
+      "summary_confirmed": {"type": "BOOLEAN"},
+      "pickup_completed": {"type": "BOOLEAN"}
+    },
+    "default": {"reason": "", "pickup_day": "", "summary_confirmed": false, "pickup_completed": false}
+  }
+}
+```
+
+The full default means the instruction never reads a missing key, and the
+declared properties let `cxas lint` (V100 to V104) catch a misspelled property
+or a name left over from a flat layout. `check_tool_visibility.py` also
+reports a property the instruction uses that isn't declared, since it would
+always render empty, and a flat variable that only one playbook uses.
+
+In tools, read the object, change your keys and write the whole object back.
+CES saves top-level assignments, so changing a nested value in place can be
+lost, and replacing the object without the other keys drops them:
+
+```python
+returns = dict(context.state.get("returns") or {})
+returns["reason"] = reason
+returns["summary_confirmed"] = False
+context.state["returns"] = returns
+```
+
+Set `"toolExecutionMode": "SEQUENTIAL"` in `app.json` whenever more than one
+tool writes the same object, as the sample does. In the default `PARALLEL`
+mode, tools the model calls in the same step all start from the same state,
+and each write replaces the whole object. In a test with `PARALLEL`, the model
+called `update_return_details(reason="damaged")` and
+`check_return_pickup_availability` in one step, `returns` came out with
+`availability_checked` set and `reason` empty, and 2 of 8 courier pickup runs
+then failed at booking. With `SEQUENTIAL`, each tool saw the previous tool's
+write and 8 of 8 booked. Sequential mode only adds time when the model calls
+several tools in one step. Numbers inside objects come back as floats, so cast
+counters with `int()` before comparing or adding.
+
+In the instruction, use dot access in conditions and output tags:
+`{{% if not returns.reason %}}`, `{{shared.order_id}}`. The tool that changes
+the record resets every playbook's object along with it; the sample's
+`lookup_order` does that when the customer moves to a different order, and
+keeps `shared.zip_attempts`.
 
 ## Router tools
 
@@ -267,11 +346,11 @@ Every task gets the same shape inside its `<task name="...">` block:
   [Going back to an earlier step](#going-back-to-an-earlier-step).
 - `<collected>` (optional): a short list of **confirmed** facts, each wrapped
   in `{{% if ... %}}`, so the model doesn't ask for them again. Never list
-  unverified on-file data (such as `on_file_zip` or an unconfirmed street
+  unverified on-file data (such as `shared.on_file_zip` or an unconfirmed street
   address on the account); if the model can see an unverified value in the
   prompt, it can read it aloud before the customer verifies it. Never add a
   `<session_snapshot>` block dumping raw state variables
-  (`zip_verified: {{zip_verified}}`); it duplicates what the template branches
+  (`zip_verified: {{shared.zip_verified}}`); it duplicates what the template branches
   on and leaks internal flag names.
 - `<current_step>`: one flat `{{% if ... %}} / {{% elif ... %}}` chain,
   ordered from the first prerequisite to the final state, so **only the active
@@ -292,32 +371,32 @@ submit-style tool or a script. The sample's `schedule_return_pickup` task:
 - Whenever the customer gives or changes the return reason, pickup day, time window, or callback phone number before the pickup is booked, even at an earlier step or while reviewing the summary, call {@TOOL: update_return_details} with the details they gave. If the result includes `not_recorded`, explain why those details couldn't be saved yet.
 - If the customer asks which pickup days or time windows are open, call {@TOOL: check_return_pickup_availability} at any point and share them. If it returns an error, finish the current step first.
 </task_rules>
-{{% if return_reason %}}
+{{% if returns.reason %}}
 <collected>
 Already collected, so don't ask for these again:
-- Return reason: {{return_reason}}.
-{{% if return_pickup_day %}}- Pickup day: {{return_pickup_day}}.{{% endif %}}
-{{% if return_pickup_window %}}- Time window: {{return_pickup_window}}.{{% endif %}}
-{{% if return_contact_phone %}}- Callback phone: {{return_contact_phone}}.{{% endif %}}
+- Return reason: {{returns.reason}}.
+{{% if returns.pickup_day %}}- Pickup day: {{returns.pickup_day}}.{{% endif %}}
+{{% if returns.pickup_window %}}- Time window: {{returns.pickup_window}}.{{% endif %}}
+{{% if returns.contact_phone %}}- Callback phone: {{returns.contact_phone}}.{{% endif %}}
 </collected>
 {{% endif %}}
 <current_step>
-{{% if return_pickup_completed %}}
-- Return pickup {{return_confirmation_id}} is booked for {{return_pickup_day}} in the {{return_pickup_window}} window. If you just booked it, share the confirmation ID and the pickup window.
+{{% if returns.pickup_completed %}}
+- Return pickup {{returns.confirmation_id}} is booked for {{returns.pickup_day}} in the {{returns.pickup_window}} window. If you just booked it, share the confirmation ID and the pickup window.
 - The booking can't be changed here. If the customer wants to change or cancel it, offer to connect them with a representative.
-{{% elif order_status == 'Processing' %}}
+{{% elif shared.order_status == 'Processing' %}}
 ...
-{{% elif not return_reason %}}
-- Ask why they're returning the {{order_item}}, then call {@TOOL: update_return_details} with `reason` (`damaged`, `wrong_item`, `changed_mind`, or `other`).
-{{% elif not return_availability_checked %}}
+{{% elif not returns.reason %}}
+- Ask why they're returning the {{shared.order_item}}, then call {@TOOL: update_return_details} with `reason` (`damaged`, `wrong_item`, `changed_mind`, or `other`).
+{{% elif not returns.availability_checked %}}
 - Call {@TOOL: check_return_pickup_availability} to get the open pickup days and time windows, then share them with the customer.
-{{% elif not return_pickup_day or not return_pickup_window %}}
+{{% elif not returns.pickup_day or not returns.pickup_window %}}
 - Ask which of the open pickup days and time windows (`morning` or `afternoon`) the customer wants, then call {@TOOL: update_return_details} with `pickup_day` and `pickup_window`.
-{{% elif not return_contact_phone %}}
+{{% elif not returns.contact_phone %}}
 - Ask for a 10-digit callback phone number for the courier, then call {@TOOL: update_return_details} with `contact_phone`.
 - If it returns `missing_area_code`, ask for the full number with the area code. If it returns `invalid_phone`, ask for a valid 10-digit US phone number.
-{{% elif not return_summary_confirmed %}}
-- Read back the pickup in one sentence: order {{order_id}} ({{order_item}}), {{return_pickup_day}} in the {{return_pickup_window}} window, callback number {{return_contact_phone}}. Ask the customer to confirm so you can book it, and end your turn to wait for their answer.
+{{% elif not returns.summary_confirmed %}}
+- Read back the pickup in one sentence: order {{shared.order_id}} ({{shared.order_item}}), {{returns.pickup_day}} in the {{returns.pickup_window}} window, callback number {{returns.contact_phone}}. Ask the customer to confirm so you can book it, and end your turn to wait for their answer.
 - If they change a detail, call {@TOOL: update_return_details} with the change, then read back the updated summary.
 - Once they confirm, call {@TOOL: submit_return_pickup} with `summary_confirmed=True`.
 {{% else %}}
@@ -330,7 +409,7 @@ Already collected, so don't ask for these again:
 Key details in this step chain:
 
 - **Never write prose state checks on declared variables.** Do not write
-  `If zip_verified is false, ask for the ZIP code` in prose; the model
+  `If shared.zip_verified is false, ask for the ZIP code` in prose; the model
   shouldn't evaluate session state flags itself. Branch on state variables
   with `{{% if ... %}}`, and use prose `If ...` inside a step only for fields
   of that step's tool response (`If it returns invalid_zip...`).
@@ -341,11 +420,11 @@ Key details in this step chain:
   call is told to do it again. For an action on one order, store that order's
   number rather than `True`, so the flag doesn't carry over to a different
   order: the sample's `text_order_summary` task branches on
-  `{{% elif sms_disclosure_played != order_id %}}` and
-  `{{% elif sms_summary_sent != order_id %}}`.
+  `{{% elif order_support.sms_disclosure_played != shared.order_id %}}` and
+  `{{% elif order_support.sms_summary_sent != shared.order_id %}}`.
 - **Check the completed state near the top of the chain.**
-  `submit_return_pickup` sets `return_pickup_completed` and resets
-  `return_summary_confirmed`. With `{{% elif return_pickup_completed %}}` as
+  `submit_return_pickup` sets `returns.pickup_completed` and resets
+  `returns.summary_confirmed`. With `{{% elif returns.pickup_completed %}}` as
   the first step, the turn after booking lands on the completed step instead
   of the summary step. `update_return_details` refuses edits once the pickup
   is booked, so the collected details can't drift from what was submitted.
@@ -353,7 +432,7 @@ Key details in this step chain:
   state (verification, collected details, completion) when the customer moves
   to a different order, so `<identify_order>` renders again for the new order
   and then the task's chain starts over, without reloading the task. It
-  doesn't clear `zip_attempts`: `verify_order_zip` counts failures for the
+  doesn't clear `shared.zip_attempts`: `verify_order_zip` counts failures for the
   whole conversation, because a count that resets on a switch lets a customer
   look up another order, come back, and guess again.
 - **End the turn at confirmations.** A step that reads something back or asks
@@ -390,7 +469,7 @@ sample uses a shared block, `<identify_order>`, the branch right after
 `<pending_handoff>`:
 
 ```xml
-{{% elif current_task and not zip_verified %}}
+{{% elif current_task and not shared.zip_verified %}}
 <identify_order>
 Every task starts by finding the customer's order and verifying its shipping ZIP code. Keep the loaded task. Once the ZIP code is verified, the task's next step shows here.
 <current_step>
@@ -405,7 +484,7 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
 ```
 
 The customer's task stays loaded the whole time, so `<status>` still shows what
-they asked for, and once `verify_order_zip` sets `zip_verified` the next model
+they asked for, and once `verify_order_zip` sets `shared.zip_verified` the next model
 call in the same turn gets that task's first step. Each task's chain starts
 after the prerequisite and never repeats it.
 
@@ -462,13 +541,13 @@ model call in the same turn. Four rules keep that working:
 1. **Every edit clears what depended on the old value, and only that.** In the
    sample, `lookup_order` clears the old order's ZIP verification, collected
    details and completion flags when the order changes, and
-   `update_return_details` resets `return_summary_confirmed` when a detail
+   `update_return_details` resets `returns.summary_confirmed` when a detail
    changes. Otherwise the chain keeps a stale flag and skips a step it should
    redo, which is worse than a visible error because nothing looks wrong. Two
    things must not be cleared by an edit: attempt counters, which only the
    verifying tool changes (or a switch hands out fresh guesses), and done flags
    that belong to another record. Scope each done flag to its record, by
-   storing the record's ID (`sms_summary_sent` holds the order number) or by
+   storing the record's ID (`order_support.sms_summary_sent` holds the order number) or by
    clearing it when the record changes; a plain `True` blocks a second booking
    for a different record. Add a column for what each correcting tool clears to
    the plan table, so it's decided before the code is written.
@@ -530,7 +609,7 @@ switches tasks.
   entire session state dictionary on every update call.
 
 - Keep unverified on-file secrets out of tool return dicts. In the sample,
-  `lookup_order` saves `on_file_zip` in `context.state["on_file_zip"]` for
+  `lookup_order` saves the on-file ZIP code in `shared.on_file_zip` for
   `verify_order_zip` to check, and returns only `found` and the order number;
   the details come back from `verify_order_zip` once the ZIP code matches. If
   a tool looks up an account number or phone number from caller ID, store the
@@ -589,10 +668,10 @@ without counting against mismatch retry limits.
 ### 3. Read prerequisites from state in final action tools
 
 Irreversible action tools (`submit_cancellation`, `create_mail_return`,
-`submit_return_pickup`) should read the target `order_id` and collected fields
+`submit_return_pickup`) should read the target `shared.order_id` and collected fields
 from `context.state` rather than trusting LLM-copied parameters, and fail closed
-if any prerequisite flag (`zip_verified`, `return_availability_checked`,
-`return_summary_confirmed`) is missing.
+if any prerequisite flag (`shared.zip_verified`, `returns.availability_checked`,
+`returns.summary_confirmed`) is missing.
 
 Accept the final confirmation flag (`summary_confirmed: bool = False`) on the
 submission tool itself as well as on `update_return_details`. That way, when the
@@ -600,7 +679,7 @@ customer says "Yes, book it", the model can call
 `submit_return_pickup(summary_confirmed=True)` directly in one step without
 needing two sequential tool calls or racing parallel state writes. Any edit to a
 booking field in `update_return_details` resets
-`return_summary_confirmed = False` so the updated summary is read back before
+`returns.summary_confirmed` to `False` so the updated summary is read back before
 booking.
 
 Once the action is done, an intake tool shouldn't change the collected details
@@ -756,10 +835,13 @@ def play_sms_legal_disclosure() -> dict[str, Any]:
 
   Call this directly without replying to the customer first.
   """
-  order_id = context.state.get("order_id") or ""
+  order_id = (context.state.get("shared") or {}).get("order_id") or ""
   if not order_id:
     return {"status": "error", "error": "no_active_order"}
-  context.state["sms_disclosure_played"] = order_id
+  context.state["order_support"] = {
+      **(context.state.get("order_support") or {}),
+      "sms_disclosure_played": order_id,
+  }
   tools.set_next_agent_actions({
       "customized_response": {"content": DISCLOSURE_TEXT, "disable_barge_in": True},
   })
@@ -791,7 +873,7 @@ conversation counts as escalated. Both docstrings tell the model to call the
 tool without replying first, so the customer doesn't get a reply and then a
 separate goodbye. Gate follow-up steps on the state variable the tool sets (the
 sample's `text_order_summary` task shows `send_sms_summary` only once
-`sms_disclosure_played` holds the loaded order's number), and have the follow-up
+`order_support.sms_disclosure_played` holds the loaded order's number), and have the follow-up
 tool check it too.
 
 - The queued text can include values from state or a tool result, like an
@@ -855,7 +937,7 @@ can render and verify it.
   platform attach `<state_update>` notes to the start of the turn. Always use
   double-brace control blocks (`{{% if ... %}}`) and double-brace variables
   (`{{var}}`). Never write `{{var}}` inside a tool-call example in
-  `instruction.txt` (such as `call tool(id='{{order_id}}')`) when `order_id`
+  `instruction.txt` (such as `call tool(id='{{shared.order_id}}')`) when `order_id`
   can be empty, because it renders as `call tool(id='')`.
 
 - **`Part.from_end_session` arguments:** `Part.from_end_session` takes
@@ -870,7 +952,9 @@ can render and verify it.
   between turns, and an undeclared variable in the instruction always renders
   empty, which silently flips its branch. `cxas lint` (V100) checks state
   reads and writes in code, and `check_tool_visibility.py` checks the
-  variables the instruction uses. `NUMBER` variables come back as floats.
+  variables the instruction uses. `NUMBER` variables, and numbers inside
+  OBJECT variables, come back as floats. Group state into OBJECT variables
+  (see [Session variables](#session-variables)).
 
 - **`current_date`:** CES provides `current_date` without a declaration, in
   the app's time zone, rendered like `2026-10-16[America/New_York]`. The
@@ -916,7 +1000,7 @@ can render and verify it.
 
 | Playbook        | Task                     | Tools the task uses                                                                 |
 | --------------- | ------------------------ | ----------------------------------------------------------------------------------- |
-| `order_support` | `check_order_status`     | none (details render from state)                                                    |
+| `order_support` | `check_order_status`     | none (details come from `verify_order_zip`)                                         |
 | `order_support` | `cancel_order`           | `submit_cancellation`                                                               |
 | `order_support` | `text_order_summary`     | `play_sms_legal_disclosure`, `send_sms_summary`                                     |
 | `returns`       | `start_mail_return`      | `create_mail_return`                                                                |

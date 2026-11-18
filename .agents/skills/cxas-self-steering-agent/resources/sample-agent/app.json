@@ -83,139 +83,104 @@
       }
     },
     {
-      "name": "order_id",
-      "description": "Order number of the order that was last looked up.",
+      "name": "shared",
+      "description": "The order the customer is asking about, used by every playbook: its number, status, item and delivery, the on-file shipping ZIP code (never shown to the model), whether the customer verified it, and failed ZIP attempts in the conversation.",
       "schema": {
-        "type": "STRING",
-        "default": ""
+        "type": "OBJECT",
+        "properties": {
+          "order_id": {
+            "type": "STRING"
+          },
+          "order_status": {
+            "type": "STRING"
+          },
+          "order_item": {
+            "type": "STRING"
+          },
+          "order_delivery": {
+            "type": "STRING"
+          },
+          "on_file_zip": {
+            "type": "STRING"
+          },
+          "zip_verified": {
+            "type": "BOOLEAN"
+          },
+          "zip_attempts": {
+            "type": "INTEGER"
+          }
+        },
+        "default": {
+          "order_id": "",
+          "order_status": "",
+          "order_item": "",
+          "order_delivery": "",
+          "on_file_zip": "",
+          "zip_verified": false,
+          "zip_attempts": 0
+        }
       }
     },
     {
-      "name": "order_status",
-      "description": "Status of the order that was last looked up (Processing, Shipped, Delivered, Canceled, Return Started, Return Pickup Scheduled).",
+      "name": "order_support",
+      "description": "order_support playbook state for the selected order: the order number the text message terms were shared for, and the order number whose summary was texted.",
       "schema": {
-        "type": "STRING",
-        "default": ""
+        "type": "OBJECT",
+        "properties": {
+          "sms_disclosure_played": {
+            "type": "STRING"
+          },
+          "sms_summary_sent": {
+            "type": "STRING"
+          }
+        },
+        "default": {
+          "sms_disclosure_played": "",
+          "sms_summary_sent": ""
+        }
       }
     },
     {
-      "name": "order_item",
-      "description": "Item name for the order that was last looked up.",
+      "name": "returns",
+      "description": "returns playbook state for the selected order: the courier pickup details collected so far, whether the summary was confirmed, and the booking once it's made.",
       "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "order_delivery",
-      "description": "Estimated or actual delivery of the order that was last looked up.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "on_file_zip",
-      "description": "Shipping ZIP code stored on the looked-up order, checked by verify_order_zip and never shown in the prompt before verification.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "zip_verified",
-      "description": "Whether the customer verified the shipping ZIP code for the current order.",
-      "schema": {
-        "type": "BOOLEAN",
-        "default": false
-      }
-    },
-    {
-      "name": "zip_attempts",
-      "description": "Number of non-matching ZIP code attempts in the conversation, across all orders.",
-      "schema": {
-        "type": "INTEGER",
-        "default": 0
-      }
-    },
-    {
-      "name": "sms_disclosure_played",
-      "description": "Order number for which the text message terms were shared with the customer.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "sms_summary_sent",
-      "description": "Order number for which the order summary text was sent.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "return_reason",
-      "description": "Validated return reason for a return pickup (damaged, wrong_item, changed_mind, other).",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "return_availability_checked",
-      "description": "Whether pickup days and windows have been checked for the current order.",
-      "schema": {
-        "type": "BOOLEAN",
-        "default": false
-      }
-    },
-    {
-      "name": "return_pickup_day",
-      "description": "Selected pickup day for a return pickup.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "return_pickup_window",
-      "description": "Selected time window for a return pickup (morning or afternoon).",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "return_contact_phone",
-      "description": "Validated 10-digit callback phone number for a return pickup.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "return_summary_confirmed",
-      "description": "Whether the customer confirmed the pre-booking return pickup summary.",
-      "schema": {
-        "type": "BOOLEAN",
-        "default": false
-      }
-    },
-    {
-      "name": "return_pickup_completed",
-      "description": "Whether the return pickup booking has been submitted for the current order.",
-      "schema": {
-        "type": "BOOLEAN",
-        "default": false
-      }
-    },
-    {
-      "name": "return_confirmation_id",
-      "description": "Confirmation ID returned when a return pickup is booked.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
+        "type": "OBJECT",
+        "properties": {
+          "reason": {
+            "type": "STRING"
+          },
+          "availability_checked": {
+            "type": "BOOLEAN"
+          },
+          "pickup_day": {
+            "type": "STRING"
+          },
+          "pickup_window": {
+            "type": "STRING"
+          },
+          "contact_phone": {
+            "type": "STRING"
+          },
+          "summary_confirmed": {
+            "type": "BOOLEAN"
+          },
+          "pickup_completed": {
+            "type": "BOOLEAN"
+          },
+          "confirmation_id": {
+            "type": "STRING"
+          }
+        },
+        "default": {
+          "reason": "",
+          "availability_checked": false,
+          "pickup_day": "",
+          "pickup_window": "",
+          "contact_phone": "",
+          "summary_confirmed": false,
+          "pickup_completed": false,
+          "confirmation_id": ""
+        }
       }
     }
   ],
@@ -228,6 +193,6 @@
   "timeZoneSettings": {
     "timeZone": "America/New_York"
   },
-  "toolExecutionMode": "PARALLEL",
+  "toolExecutionMode": "SEQUENTIAL",
   "errorHandlingSettings": {}
 }

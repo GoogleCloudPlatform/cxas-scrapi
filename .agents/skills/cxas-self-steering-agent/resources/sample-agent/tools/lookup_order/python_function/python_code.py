@@ -49,39 +49,53 @@ def lookup_order(order_number: str) -> dict[str, Any]:
     _reset_order_state(context.state)
     return {"found": False, "order_number": order_number}
 
-  if context.state.get("order_id") == number:
+  shared = context.state.get("shared") or {}
+  if shared.get("order_id") == number:
     # Keep the status and verification of the order already selected.
     return {"found": True, "order_number": number}
 
   _reset_order_state(context.state)
-  context.state["order_id"] = number
-  context.state["order_status"] = order["status"]
-  context.state["order_item"] = order["item"]
-  context.state["order_delivery"] = (
-      f"estimated delivery {order['estimated_delivery']}"
-      if "estimated_delivery" in order
-      else f"delivered {order['delivered_on']}"
-  )
-  context.state["on_file_zip"] = order["zip"]
+  context.state["shared"] = {
+      **(context.state.get("shared") or {}),
+      "order_id": number,
+      "order_status": order["status"],
+      "order_item": order["item"],
+      "order_delivery": (
+          f"estimated delivery {order['estimated_delivery']}"
+          if "estimated_delivery" in order
+          else f"delivered {order['delivered_on']}"
+      ),
+      "on_file_zip": order["zip"],
+  }
   return {"found": True, "order_number": number}
 
 
 def _reset_order_state(state: Any) -> None:
-  """Clears the order and return details kept from the previous order."""
-  for key, val in (
-      ("order_id", ""),
-      ("order_status", ""),
-      ("order_item", ""),
-      ("order_delivery", ""),
-      ("on_file_zip", ""),
-      ("zip_verified", False),
-      ("return_reason", ""),
-      ("return_availability_checked", False),
-      ("return_pickup_day", ""),
-      ("return_pickup_window", ""),
-      ("return_contact_phone", ""),
-      ("return_summary_confirmed", False),
-      ("return_pickup_completed", False),
-      ("return_confirmation_id", ""),
-  ):
-    state[key] = val
+  """Clears the previous order's record and every playbook's state for it.
+
+  zip_attempts stays, since failed ZIP codes count for the whole conversation.
+  """
+  shared = state.get("shared") or {}
+  state["shared"] = {
+      "order_id": "",
+      "order_status": "",
+      "order_item": "",
+      "order_delivery": "",
+      "on_file_zip": "",
+      "zip_verified": False,
+      "zip_attempts": shared.get("zip_attempts") or 0,
+  }
+  state["order_support"] = {
+      "sms_disclosure_played": "",
+      "sms_summary_sent": "",
+  }
+  state["returns"] = {
+      "reason": "",
+      "availability_checked": False,
+      "pickup_day": "",
+      "pickup_window": "",
+      "contact_phone": "",
+      "summary_confirmed": False,
+      "pickup_completed": False,
+      "confirmation_id": "",
+  }

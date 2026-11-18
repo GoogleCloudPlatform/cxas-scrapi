@@ -15,20 +15,21 @@ def create_mail_return(
     dict[str, Any]: Return status, return ID, how the label is delivered, and
       the refund timeline, or an error code when prerequisites are not met.
   """
-  order_id = context.state.get("order_id") or ""
+  order = context.state.get("shared") or {}
+  order_id = order.get("order_id") or ""
   if not order_id:
     return {"status": "error", "error": "no_active_order"}
-  order_status = context.state.get("order_status") or ""
+  order_status = order.get("order_status") or ""
   if order_status != "Delivered":
     return {
         "status": "error",
         "error": "order_not_delivered",
         "order_status": order_status,
     }
-  if not context.state.get("zip_verified"):
+  if not order.get("zip_verified"):
     return {"status": "error", "error": "zip_not_verified"}
 
-  context.state["order_status"] = "Return Started"
+  context.state["shared"] = {**order, "order_status": "Return Started"}
   return {
       "status": "return_started",
       "order_number": order_id,

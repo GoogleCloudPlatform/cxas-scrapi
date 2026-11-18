@@ -12,15 +12,19 @@ def check_return_pickup_availability() -> dict[str, Any]:
     dict[str, Any]: Available pickup days and windows, or an error code if no
       verified delivered order is active.
   """
-  order_id = context.state.get("order_id") or ""
+  order = context.state.get("shared") or {}
+  order_id = order.get("order_id") or ""
   if not order_id:
     return {"status": "error", "error": "no_active_order"}
-  if context.state.get("order_status") != "Delivered":
+  if order.get("order_status") != "Delivered":
     return {"status": "error", "error": "order_not_delivered"}
-  if not context.state.get("zip_verified"):
+  if not order.get("zip_verified"):
     return {"status": "error", "error": "zip_not_verified"}
 
-  context.state["return_availability_checked"] = True
+  context.state["returns"] = {
+      **(context.state.get("returns") or {}),
+      "availability_checked": True,
+  }
   return {
       "status": "ok",
       "available_days": list(AVAILABLE_DAYS),

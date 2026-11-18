@@ -20,7 +20,7 @@ def update_return_details(
 
   Supports initial slot collection, early details volunteered by the customer,
   and edits during the pre-booking summary review. Modifying any detail resets
-  return_summary_confirmed so the updated summary is confirmed before booking.
+  summary_confirmed so the updated summary is confirmed before booking.
 
   Args:
     reason (Optional[str]): Why the customer is returning the item, one of
@@ -39,7 +39,8 @@ def update_return_details(
       not_recorded for any fields skipped because availability was not checked
       yet, or pickup_already_booked once the pickup has been booked.
   """
-  if context.state.get("return_pickup_completed"):
+  returns = dict(context.state.get("returns") or {})
+  if returns.get("pickup_completed"):
     return {"status": "error", "error": "pickup_already_booked"}
 
   updated: dict[str, Any] = {}
@@ -52,12 +53,12 @@ def update_return_details(
           "status": "invalid_reason",
           "valid_reasons": list(VALID_REASONS),
       }
-    context.state["return_reason"] = reason
-    updated["return_reason"] = reason
+    returns["reason"] = reason
+    updated["reason"] = reason
     edited = True
 
   if pickup_day is not None or pickup_window is not None:
-    if not context.state.get("return_availability_checked"):
+    if not returns.get("availability_checked"):
       if pickup_day is not None:
         not_recorded["pickup_day"] = "availability_not_checked"
       if pickup_window is not None:
@@ -66,42 +67,46 @@ def update_return_details(
       if pickup_day is not None:
         matched_day = _match_day(pickup_day)
         if not matched_day:
+          context.state["returns"] = returns
           return {
               "status": "invalid_pickup_day",
               "available_days": list(AVAILABLE_DAYS),
               "updated": updated,
           }
-        context.state["return_pickup_day"] = matched_day
-        updated["return_pickup_day"] = matched_day
+        returns["pickup_day"] = matched_day
+        updated["pickup_day"] = matched_day
         edited = True
       if pickup_window is not None:
         window = pickup_window.strip().lower()
         if window not in VALID_WINDOWS:
+          context.state["returns"] = returns
           return {
               "status": "invalid_pickup_window",
               "valid_windows": list(VALID_WINDOWS),
               "updated": updated,
           }
-        context.state["return_pickup_window"] = window
-        updated["return_pickup_window"] = window
+        returns["pickup_window"] = window
+        updated["pickup_window"] = window
         edited = True
 
   if contact_phone is not None:
     phone_status, formatted_phone = _validate_us_phone(contact_phone)
     if phone_status != "ok":
+      context.state["returns"] = returns
       return {
           "status": phone_status,
           "updated": updated,
       }
-    context.state["return_contact_phone"] = formatted_phone
-    updated["return_contact_phone"] = formatted_phone
+    returns["contact_phone"] = formatted_phone
+    updated["contact_phone"] = formatted_phone
     edited = True
 
   if edited:
-    context.state["return_summary_confirmed"] = False
+    returns["summary_confirmed"] = False
   elif summary_confirmed is not None:
-    context.state["return_summary_confirmed"] = bool(summary_confirmed)
-    updated["return_summary_confirmed"] = bool(summary_confirmed)
+    returns["summary_confirmed"] = bool(summary_confirmed)
+    updated["summary_confirmed"] = bool(summary_confirmed)
+  context.state["returns"] = returns
 
   result: dict[str, Any] = {"status": "updated", "updated": updated}
   if not_recorded:

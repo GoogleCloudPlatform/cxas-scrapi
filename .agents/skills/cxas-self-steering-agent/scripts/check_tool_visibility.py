@@ -56,7 +56,7 @@ VALID_OUTPUT_EXPR = re.compile(
 SINGLE_VAR = re.compile(r"(?<!\{)\{([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\}(?!\})")
 TAG = re.compile(r"\{\{%.*?%\}\}|(?<!\{)\{%.*?%\}(?!\})|\{\{.*?\}\}", re.S)
 PROSE_STATE_CHECK = re.compile(
-    r"\b(?:if|when|once|whether|unless)\s+`?([A-Za-z_]\w*)`?\s*"
+    r"\b(?:if|when|once|whether|unless)\s+`?([A-Za-z_]\w*(?:\.\w+)*)`?\s*"
     r"(?:==|!=|\bis\s+(?:not\s+)?(?:empty|true|false|set|none|null)\b)"
     r"|`([A-Za-z_]\w*)`\s*(?:==|!=)",
     re.I,
@@ -91,6 +91,21 @@ VERBATIM_RESULT = re.compile(
 TOOL_REF = re.compile(r"\{@TOOL:\s*\w+\s*\}")
 # State the router tools may write.
 ROUTER_STATE_KEYS = frozenset({"current_playbook", "current_task"})
+# Flat variables the skill's own design needs: routing, queued actions, the
+# greeting flag, and handoff fields a contact center integration reads.
+FLAT_VARIABLES = frozenset(
+    {
+        "current_playbook",
+        "current_task",
+        "next_agent_actions",
+        "played_greeting",
+        "pending_handoff_reason",
+        "handoff_summary",
+    }
+)
+ROUTING_TAG = re.compile(r"\bcurrent_(?:task|playbook)\b")
+QUOTED = re.compile(r"['\"]([^'\"]+)['\"]")
+TOOL_NAME_REF = re.compile(r"\{@TOOL:\s*(\w+)\s*\}")
 # Static blocks where an always-available tool must not be named.
 NO_TOOL_BLOCKS = ("role", "context", "constraints")
 OPEN_PLAYBOOK_CODE = "tools/open_playbook/python_function/python_code.py"
@@ -136,12 +151,24 @@ def _literal(path: pathlib.Path, name: str) -> Any:
     return None
 
 
+def _empty(schema: dict[str, Any]) -> Any:
+    """Returns a variable's declared default, or an empty value of its type."""
+    if "default" in schema:
+        return schema["default"]
+    kind = schema.get("type")
+    if kind == "OBJECT":
+        return {
+            k: _empty(v) for k, v in (schema.get("properties") or {}).items()
+        }
+    if kind == "ARRAY":
+        return []
+    return {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}.get(kind)
+
+
 def _defaults(app: dict[str, Any]) -> dict[str, Any]:
-    empty = {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}
     out = {}
     for var in app.get("variableDeclarations", []):
-        schema = var.get("schema", {})
-        out[var["name"]] = schema.get("default", empty.get(schema.get("type")))
+        out[var["name"]] = _empty(var.get("schema", {}))
     tz = app.get("timeZoneSettings", {}).get("timeZone", "UTC")
     out.setdefault("current_date", f"{datetime.date.today().isoformat()}[{tz}]")
     return out
@@ -328,7 +355,7 @@ def _syntax_problems(app: _App) -> list[str]:
         )
     for match in PROSE_STATE_CHECK.finditer(prose):
         var = match.group(1) or match.group(2)
-        if var in declared:
+        if var.split(".")[0] in declared:
             snippet = " ".join(match.group(0).split())
             problems.append(
                 f"prose state check on variable {var!r} ({snippet!r}): branch"
@@ -446,6 +473,171 @@ def _router_state_problems(app: _App) -> list[str]:
                     " only current_playbook and current_task, and the tool that"
                     " changes a record clears what depended on it"
                 )
+    return problems
+
+
+def _object_schemas(app: _App) -> dict[str, dict[str, Any]]:
+    """Returns the schema of each declared OBJECT variable."""
+    return {
+        v["name"]: v.get("schema", {})
+        for v in app.config.get("variableDeclarations", [])
+        if v.get("schema", {}).get("type") == "OBJECT"
+    }
+
+
+def _nested_property_problems(app: _App) -> list[str]:
+    """Finds instruction refs to properties an OBJECT variable doesn't declare.
+
+    An undeclared property always renders empty, which silently flips the
+    branch it's in.
+    """
+    problems = []
+    objects = _object_schemas(app)
+    for tag in TAG.findall(app.without_comments):
+        body = QUOTED.sub(" ", tag)
+        for head, child in re.findall(r"(?<![\w.])(\w+)\.(\w+)", body):
+            props = objects.get(head, {}).get("properties")
+            if props and child not in props:
+                problems.append(
+                    f"{head}.{child} isn't a declared property of {head!r}"
+                    f" (declared: {', '.join(sorted(props))}); it always"
+                    " renders empty"
+                )
+    return problems
+
+
+def _segment_playbooks(
+    app: _App, playbook_tasks: dict[str, tuple[str, ...]]
+) -> list[tuple[int, int, set[str] | None]]:
+    """Splits the instruction into segments by playbook.
+
+    Every control tag that tests current_task or current_playbook starts a
+    segment. The segment belongs to the playbooks that tag names, or to every
+    playbook (None) when it names none, like the shared prerequisite block.
+    """
+    task_playbook = {
+        task: playbook
+        for playbook, tasks in playbook_tasks.items()
+        for task in tasks
+    }
+    text = app.without_comments
+    marks = []
+    for match in re.finditer(r"\{\{%.*?%\}\}", text, re.S):
+        tag = match.group(0)
+        if not ROUTING_TAG.search(tag) or "endif" in tag:
+            continue
+        named = set()
+        for name in QUOTED.findall(tag):
+            if name in playbook_tasks:
+                named.add(name)
+            elif name in task_playbook:
+                named.add(task_playbook[name])
+        marks.append((match.start(), named or None))
+    segments = []
+    starts = [0] + [pos for pos, _ in marks]
+    owners = [None] + [named for _, named in marks]
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else len(text)
+        segments.append((start, end, owners[i]))
+    return segments
+
+
+def _flat_variable_problems(
+    app: _App, playbook_tasks: dict[str, tuple[str, ...]]
+) -> list[str]:
+    """Finds flat variables that only one playbook's tasks and tools use.
+
+    Those belong in that playbook's OBJECT variable, so the app doesn't grow a
+    top-level variable for every slot, flag and counter.
+    """
+    if len(playbook_tasks) < 2:
+        return []
+    text = app.without_comments
+    segments = _segment_playbooks(app, playbook_tasks)
+    everything = set(playbook_tasks)
+
+    def owners_at(pos: int) -> set[str]:
+        for start, end, owner in segments:
+            if start <= pos < end:
+                return everything if owner is None else owner
+        return everything
+
+    tool_owners: dict[str, set[str]] = {}
+    for match in TOOL_NAME_REF.finditer(text):
+        tool_owners.setdefault(match.group(1), set()).update(
+            owners_at(match.start())
+        )
+    callback_code = "\n".join(
+        p.read_text(encoding="utf-8")
+        for p in app.path.glob("agents/*/*_callbacks/*/python_code.py")
+    )
+    tool_code = {
+        p.parent.parent.name: p.read_text(encoding="utf-8")
+        for p in app.path.glob("tools/*/python_function/python_code.py")
+    }
+    tag_spans = [m.span() for m in TAG.finditer(text)]
+    problems = []
+    for var in app.config.get("variableDeclarations", []):
+        name = var["name"]
+        kind = var.get("schema", {}).get("type")
+        if name in FLAT_VARIABLES or kind in ("OBJECT", "ARRAY"):
+            continue
+        state_ref = re.compile(rf"[\"']{re.escape(name)}[\"']")
+        if state_ref.search(callback_code):
+            continue
+        used: set[str] = set()
+        ident = re.compile(rf"(?<![\w.]){re.escape(name)}\b")
+        for start, end in tag_spans:
+            if ident.search(text, start, end):
+                used |= owners_at(start)
+        # Only reads count: a shared tool that resets every playbook's state
+        # when the record changes doesn't make a variable shared.
+        read_ref = re.compile(
+            rf"\.get\(\s*[\"']{re.escape(name)}[\"']"
+            rf"|\[\s*[\"']{re.escape(name)}[\"']\s*\](?!\s*=[^=])"
+        )
+        for tool, code in tool_code.items():
+            if read_ref.search(code):
+                used |= tool_owners.get(tool, everything)
+        if len(used) == 1:
+            playbook = next(iter(used))
+            problems.append(
+                f"variable {name!r} is a flat variable that only the"
+                f" {playbook!r} playbook uses; put it in an OBJECT variable"
+                " for that playbook (like the sample's `returns`) so the app"
+                " doesn't declare a top-level variable per slot or flag"
+            )
+    return problems
+
+
+def _parallel_object_problems(app: _App) -> list[str]:
+    """Finds OBJECT variables several tools write while tools run in parallel.
+
+    In PARALLEL mode, tools the model calls in the same step all start from
+    the same state, and each write replaces the whole object, so one tool's
+    keys are lost.
+    """
+    mode = app.config.get("toolExecutionMode", "PARALLEL")
+    if mode == "SEQUENTIAL":
+        return []
+    tool_code = {
+        p.parent.parent.name: p.read_text(encoding="utf-8")
+        for p in app.path.glob("tools/*/python_function/python_code.py")
+    }
+    problems = []
+    for name in sorted(_object_schemas(app)):
+        write = re.compile(rf"\[\s*[\"']{re.escape(name)}[\"']\s*\]\s*=(?!=)")
+        writers = sorted(
+            t for t, code in tool_code.items() if write.search(code)
+        )
+        if len(writers) > 1:
+            problems.append(
+                f"OBJECT variable {name!r} is written by {', '.join(writers)}"
+                f" while toolExecutionMode is {mode}; tools called in the same"
+                " step start from the same state and the last write replaces"
+                " the whole object, so set toolExecutionMode to SEQUENTIAL in"
+                " app.json"
+            )
     return problems
 
 
@@ -774,6 +966,9 @@ def main() -> None:
         + _code_problems(app)
         + _router_problems(app, playbook_tasks)
         + _router_state_problems(app)
+        + _nested_property_problems(app)
+        + _flat_variable_problems(app, playbook_tasks)
+        + _parallel_object_problems(app)
     )
     try:
         template, undeclared = _compile(app)

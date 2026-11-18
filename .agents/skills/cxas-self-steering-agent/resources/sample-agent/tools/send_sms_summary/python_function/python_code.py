@@ -11,12 +11,13 @@ def send_sms_summary() -> dict[str, Any]:
   Returns:
     dict[str, Any]: Delivery status and the order number summarized.
   """
-  order_id = context.state.get("order_id") or ""
+  order_id = (context.state.get("shared") or {}).get("order_id") or ""
+  support = context.state.get("order_support") or {}
   if not order_id:
     return {"status": "error", "error": "no_active_order"}
-  if context.state.get("sms_disclosure_played") != order_id:
+  if support.get("sms_disclosure_played") != order_id:
     return {"status": "error", "error": "sms_disclosure_required"}
-  context.state["sms_summary_sent"] = order_id
+  context.state["order_support"] = {**support, "sms_summary_sent": order_id}
   return {
       "status": "sent",
       "order_number": order_id,
