@@ -1521,6 +1521,17 @@ def test_resolve_and_list_audio_support_evaluation_audio_recording_config(
     )
     t_dual = Traces(app_name=APP, app_dir=str(dual_dir))
     t_dual.trace_config.audio.search_bucket = False
+    dual_apps = MagicMock()
+    monkeypatch.setattr(traces_mod, "Apps", MagicMock(return_value=dual_apps))
+    assert list(t_dual._iter_candidate_audio_buckets(prefer_eval=False)) == [
+        "gs://cymbal-live-audio",
+        "gs://cymbal-eval-audio",
+    ]
+    assert list(t_dual._iter_candidate_audio_buckets(prefer_eval=True)) == [
+        "gs://cymbal-eval-audio",
+        "gs://cymbal-live-audio",
+    ]
+    dual_apps.get_app.assert_not_called()
     assert (
         t_dual.resolve_audio_uri(
             "eval-c2", normalized=_conv_dict(cid="eval-c2", source="EVAL")

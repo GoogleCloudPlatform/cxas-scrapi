@@ -479,6 +479,9 @@ class Traces(Common):
                     seen.add(bucket)
                     yield bucket
 
+        if local_live and local_eval:
+            return
+
         remote_live, remote_eval = self._get_remote_audio_buckets()
         fallback_order = (
             (remote_eval, local_eval, local_live, remote_live)

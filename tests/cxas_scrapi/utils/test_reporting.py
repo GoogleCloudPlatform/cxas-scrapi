@@ -4476,6 +4476,16 @@ def test_resolve_recordings_bucket_and_enrich_html_report(
     mock_traces_cls.assert_called_once_with(
         app_name="projects/p/locations/us/apps/a"
     )
+    mock_traces._get_audio_bucket.assert_called_once_with(prefer_eval=False)
+
+    mock_traces._get_audio_bucket.reset_mock()
+    with patch("cxas_scrapi.core.traces.Traces", return_value=mock_traces):
+        assert (
+            enricher.resolve_recordings_bucket(
+                "projects/p/locations/us/apps/a", prefer_eval=True
+            )
+            == "auto-discovered-bkt/audio-rec"
+        )
     mock_traces._get_audio_bucket.assert_called_once_with(prefer_eval=True)
 
     out_file = tmp_path / "report_enriched.html"
@@ -4515,3 +4525,240 @@ def test_generate_combined_html_report_with_ces_recordings(
     assert "seekAudio('scenario_a__run1'," in content
     assert "call setup before greeting" in content
     assert "dead air 4.50s" in content
+
+
+def test_enrich_html_report_dual_bucket_finds_live_bidi_sim_recording(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
+    """Dual-bucket app locates live BidiRunSession recordings in live-bkt."""
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "audioRecordingConfig": {"gcsBucket": "gs://live-bkt"},
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": "gs://eval-bkt"
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.chdir(app_dir)
+
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    blobs = {
+        f"gs://live-bkt/audio-recording/{today}/sess-1/full-session.wav": (
+            _turn_wav(0.5, 3.0, 0.5)
+        ),
+    }
+    sim_res = [_result()]
+    out_file = tmp_path / "combined_report.html"
+    generate_combined_html_report(
+        sim_results=sim_res,
+        output_path=str(out_file),
+        app_name="projects/p/locations/us/apps/a",
+        enriched_report=True,
+        gcs=FakeGcs(blobs),
+        audio_encoder=_fake_encoder,
+    )
+    assert sim_res[0].get("_run_audio_obj") is not None
+    assert sim_res[0]["_run_audio_obj"].gcs_dir.startswith("gs://live-bkt/")
+
+
+def test_enrich_html_report_dual_bucket_finds_eval_recording(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
+    """Dual-bucket app locates platform eval recordings in eval-bkt."""
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "audioRecordingConfig": {"gcsBucket": "gs://live-bkt"},
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": "gs://eval-bkt"
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.chdir(app_dir)
+
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    blobs = {
+        f"gs://eval-bkt/audio-recording/{today}/sess-1/full-session.wav": (
+            _turn_wav(0.5, 3.0, 0.5)
+        ),
+    }
+    sim_res = [_result()]
+    combined_out = tmp_path / "combined_report.html"
+    generate_combined_html_report(
+        sim_results=sim_res,
+        output_path=str(combined_out),
+        app_name="projects/p/locations/us/apps/a",
+        enriched_report=True,
+        gcs=FakeGcs(blobs),
+        audio_encoder=_fake_encoder,
+    )
+    assert sim_res[0].get("_run_audio_obj") is not None
+    assert sim_res[0]["_run_audio_obj"].gcs_dir.startswith("gs://eval-bkt/")
+
+    standalone_res = [_result()]
+    enriched_out = tmp_path / "report_enriched.html"
+    written = enricher.enrich_html_report(
+        standalone_res,
+        output_path=str(enriched_out),
+        app_id="projects/p/locations/us/apps/a",
+        gcs=FakeGcs(blobs),
+    )
+    assert written == str(enriched_out)
+    assert standalone_res[0].get("_run_audio_obj") is not None
+    assert standalone_res[0]["_run_audio_obj"].gcs_dir.startswith(
+        "gs://eval-bkt/"
+    )
+    assert "gs://eval-bkt/audio-recording" in enriched_out.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_enrich_html_report_dual_bucket_mixed_and_permission_fallback(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
+    """Dual-bucket enrichment handles mixed buckets and 403 fallback."""
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "audioRecordingConfig": {"gcsBucket": "gs://live-bkt"},
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": "gs://eval-bkt"
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.chdir(app_dir)
+
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    blobs = {
+        f"gs://live-bkt/audio-recording/{today}/sess-live/full-session.wav": (
+            _turn_wav(0.5, 2.0, 0.5)
+        ),
+        f"gs://eval-bkt/audio-recording/{today}/sess-eval/full-session.wav": (
+            _turn_wav(0.5, 3.0, 0.5)
+        ),
+    }
+    mixed_res = [
+        _result(name="live_case", session_id="sess-live"),
+        _result(name="eval_case", session_id="sess-eval"),
+    ]
+    out_file = tmp_path / "mixed_report.html"
+    generate_combined_html_report(
+        sim_results=mixed_res,
+        output_path=str(out_file),
+        app_name="projects/p/locations/us/apps/a",
+        enriched_report=True,
+        gcs=FakeGcs(blobs),
+        audio_encoder=_fake_encoder,
+    )
+    assert mixed_res[0]["_run_audio_obj"].gcs_dir.startswith("gs://live-bkt/")
+    assert mixed_res[1]["_run_audio_obj"].gcs_dir.startswith("gs://eval-bkt/")
+
+    class _RestrictedPrimaryGcs(FakeGcs):
+        def list_with_prefix(
+            self, gcs_bucket_uri: str, prefix: str
+        ) -> list[str]:
+            if gcs_bucket_uri == "gs://live-bkt":
+                raise PermissionError("403 Forbidden")
+            return super().list_with_prefix(gcs_bucket_uri, prefix)
+
+    fallback_res = [_result(name="eval_case", session_id="sess-eval")]
+    views = enricher.enrich_sim_results_with_recordings(
+        fallback_res,
+        recordings_bucket=["live-bkt", "eval-bkt"],
+        gcs=_RestrictedPrimaryGcs(blobs),
+        encoder=_fake_encoder,
+    )
+    assert len(views) == 1
+    assert views[0].audio is not None
+    assert views[0].audio.gcs_dir.startswith("gs://eval-bkt/")
+
+    class _AllDeniedGcs(FakeGcs):
+        def list_with_prefix(
+            self, gcs_bucket_uri: str, prefix: str
+        ) -> list[str]:
+            raise PermissionError("403 Forbidden")
+
+    denied_res = [_result(name="denied_case", session_id="sess-denied")]
+    denied_views = enricher.enrich_sim_results_with_recordings(
+        denied_res,
+        recordings_bucket=["live-bkt", "eval-bkt"],
+        gcs=_AllDeniedGcs({}),
+        encoder=_fake_encoder,
+    )
+    assert denied_views[0].audio is None
+    assert "403 Forbidden" in denied_views[0].audio_note
+
+
+def test_resolve_recordings_buckets_dual_eval_only_and_explicit(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
+    """Verifies candidate bucket ordering, eval-only discovery, and override."""
+    dual_dir = tmp_path / "dual"
+    dual_dir.mkdir()
+    (dual_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "audioRecordingConfig": {"gcsBucket": "gs://live-bkt/"},
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": "gs://eval-bkt/"
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.chdir(dual_dir)
+
+    with patch("cxas_scrapi.core.traces.Apps") as mock_apps_cls:
+        assert enricher.resolve_recordings_buckets(
+            "projects/p/locations/us/apps/a"
+        ) == ["live-bkt", "eval-bkt"]
+        assert enricher.resolve_recordings_buckets(
+            "projects/p/locations/us/apps/a", prefer_eval=True
+        ) == ["eval-bkt", "live-bkt"]
+        assert enricher.resolve_recordings_buckets(
+            "projects/p/locations/us/apps/a",
+            explicit_bucket="gs://override-bkt/",
+        ) == ["override-bkt"]
+    mock_apps_cls.assert_not_called()
+
+    eval_only_dir = tmp_path / "eval_only"
+    eval_only_dir.mkdir()
+    (eval_only_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": "gs://eval-only-bkt"
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.chdir(eval_only_dir)
+    mock_apps = MagicMock()
+    mock_apps.get_app.return_value = MagicMock(logging_settings=None)
+    with patch("cxas_scrapi.core.traces.Apps", return_value=mock_apps):
+        assert enricher.resolve_recordings_buckets(
+            "projects/p/locations/us/apps/a"
+        ) == ["eval-only-bkt"]
+        assert (
+            enricher.resolve_recordings_bucket("projects/p/locations/us/apps/a")
+            == "eval-only-bkt"
+        )
