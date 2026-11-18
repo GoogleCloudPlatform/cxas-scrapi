@@ -297,6 +297,12 @@ context.state["return_details"] = details
 Numbers inside objects come back as floats, so cast counters with `int()`
 before comparing or adding. In the instruction, use dot access in conditions
 and output tags: `{{% if not return_details.reason %}}`, `{{order.order_id}}`.
+Use double braces only. A single-brace reference such as `{order.order_id}`
+isn't substituted; CES leaves it in the instruction as written and sends the
+whole object in a `<state_update>` part of the history, every property
+included and formatted like `{order_id=1002, on_file_zip=98101}`, so on-file
+data the model must not see reaches it. `check_tool_visibility.py` rejects
+single-brace references to declared variables.
 
 ## Router tools
 
