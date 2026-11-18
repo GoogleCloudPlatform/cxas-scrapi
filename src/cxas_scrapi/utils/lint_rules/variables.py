@@ -1113,30 +1113,42 @@ def _tool_name(file_path: Path) -> str | None:
 
 
 def _tool_writes(app_root: Path) -> dict[str, dict[str, int]]:
-    """Return ``{tool_name: {top_level_var: first_write_line}}`` (cached).
+    """Return ``{writer: {top_level_var: first_write_line}}`` (cached).
 
-    Only tools count. Callbacks don't run as tool calls, so they can't race
-    with tools the model calls in the same step.
+    Writers are tools plus each agent's before_tool and after_tool callbacks
+    (keyed like ``"Root_Agent before_tool callback"``). Tool callbacks run
+    once per tool call, alongside the other calls in the step, so their
+    writes race like the tool's own. Other callbacks finish before any tool
+    in the step starts, so they don't count.
     """
     key = str(app_root)
     if key in _WRITER_CACHE:
         return _WRITER_CACHE[key]
     writes: dict[str, dict[str, int]] = {}
-    tools_dir = app_root / "tools"
-    if tools_dir.exists():
-        for code in sorted(tools_dir.glob("*/python_function/python_code.py")):
-            try:
-                content = code.read_text()
-            except OSError:
-                continue
-            found: dict[str, int] = {}
-            for kind, var_key, line, _rhs in _collect_state_accesses(content):
-                if kind != "write" or not var_key:
-                    continue
+    sources = [
+        (code.parent.parent.name, code)
+        for code in sorted(
+            app_root.glob("tools/*/python_function/python_code.py")
+        )
+    ]
+    for kind in ("before_tool", "after_tool"):
+        sources += [
+            (f"{code.parents[2].name} {kind} callback", code)
+            for code in sorted(
+                app_root.glob(f"agents/*/{kind}_callbacks/*/python_code.py")
+            )
+        ]
+    for name, code in sources:
+        try:
+            content = code.read_text()
+        except OSError:
+            continue
+        found = writes.setdefault(name, {})
+        for kind, var_key, line, _rhs in _collect_state_accesses(content):
+            if kind == "write" and var_key:
                 found.setdefault(var_key.split(".")[0], line)
-            for var, line in _other_state_writes(content).items():
-                found.setdefault(var, line)
-            writes[code.parent.parent.name] = found
+        for var, line in _other_state_writes(content).items():
+            found.setdefault(var, line)
     _WRITER_CACHE[key] = writes
     return writes
 
