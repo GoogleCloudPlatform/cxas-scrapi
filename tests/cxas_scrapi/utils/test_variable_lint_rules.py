@@ -569,6 +569,39 @@ def test_v105_ignore_option_and_callbacks_not_counted(
     assert ToolVariableSingleWriter().check(path, path.read_text(), ctx) == []
 
 
+@pytest.mark.parametrize(
+    "write",
+    [
+        "context.state['order']['order_id'] = ''",
+        "context.state.pop('order', None)",
+        "del context.state['order']",
+    ],
+)
+def test_v105_counts_nested_pop_and_del_writes(
+    tmp_path: typing.Any, write: str
+) -> None:
+    ctx = _writer_app(
+        tmp_path, {"lookup": _LOOKUP, "reset": f"def r():\n    {write}\n"}
+    )
+    path = _tool_path(tmp_path, "reset")
+    results = ToolVariableSingleWriter().check(path, path.read_text(), ctx)
+    assert len(results) == 1
+    assert "'order'" in results[0].message
+    assert "lookup" in results[0].message
+
+
+def test_v105_local_dict_and_reads_are_not_writes(tmp_path: typing.Any) -> None:
+    body = (
+        "def r():\n"
+        "    result = {}\n"
+        "    result['order'] = context.state.get('order')\n"
+        "    return context.state['order']['order_id']\n"
+    )
+    ctx = _writer_app(tmp_path, {"lookup": _LOOKUP, "read": body})
+    path = _tool_path(tmp_path, "lookup")
+    assert ToolVariableSingleWriter().check(path, path.read_text(), ctx) == []
+
+
 def test_v106_flags_tool_writing_many_flat_variables(
     tmp_path: typing.Any,
 ) -> None:

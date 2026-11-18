@@ -578,7 +578,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     With the default `"toolExecutionMode": "PARALLEL"`, tools the model calls in the same step all start from the same session state, and each write replaces the variable's whole value. When two tools write the same variable (most visibly an OBJECT variable that several tools update), one tool's change can be lost. Callbacks don't count, since they don't run as tool calls. The rule is skipped when `toolExecutionMode` is `SEQUENTIAL`.
 
-    *Triggers:* A tool writes a declared top-level variable that another tool also writes.
+    *Triggers:* A tool writes a declared top-level variable that another tool also writes. Writes include assignments (nested ones like `state["order"]["status"] = x` count for `order`), `update()`, `setdefault()`, `pop()` and `del`.
 
     *Fix:* Give each variable one writer tool. Keep the values a tool writes in its own variable, and store the record's ID with per-record state (for example `verified_order_id`) instead of resetting it from another tool. Switching to `SEQUENTIAL` also avoids the race, at the cost of latency when the model calls several slow tools in one step. To accept a known case, list the variable under `options: V105: ignore: [...]` in `cxaslint.yaml`.
 

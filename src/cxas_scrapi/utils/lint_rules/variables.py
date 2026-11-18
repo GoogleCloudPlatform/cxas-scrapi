@@ -1134,9 +1134,69 @@ def _tool_writes(app_root: Path) -> dict[str, dict[str, int]]:
                 if kind != "write" or not var_key:
                     continue
                 found.setdefault(var_key.split(".")[0], line)
+            for var, line in _other_state_writes(content).items():
+                found.setdefault(var, line)
             writes[code.parent.parent.name] = found
     _WRITER_CACHE[key] = writes
     return writes
+
+
+def _other_state_writes(content: str) -> dict[str, int]:
+    """Return ``{top_level_var: line}`` for writes the access visitor skips.
+
+    Covers nested writes (``state["order"]["status"] = x``), ``del
+    state["x"]`` and ``state.pop("x")``. Each one changes the variable, so it
+    counts as a writer for V105 and V106.
+    """
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(content)
+    except SyntaxError:
+        return {}
+
+    def is_state(node: ast.AST) -> bool:
+        return _StateAccessVisitor._is_state_attr(node) or (
+            isinstance(node, ast.Name) and node.id == "state"
+        )
+
+    def top_key(node: ast.AST, nested: bool) -> str | None:
+        # Walks state["a"]["b"]... down to state["a"].
+        depth = 0
+        while isinstance(node, ast.Subscript):
+            if is_state(node.value):
+                key = _StateAccessVisitor._const_str(node.slice)
+                return key if (depth > 0 or not nested) else None
+            node = node.value
+            depth += 1
+        return None
+
+    found: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets, nested = node.targets, True
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            targets, nested = [node.target], True
+        elif isinstance(node, ast.Delete):
+            targets, nested = node.targets, False
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "pop"
+            and is_state(node.func.value)
+            and node.args
+        ):
+            key = _StateAccessVisitor._const_str(node.args[0])
+            if key:
+                found.setdefault(key, node.lineno)
+            continue
+        else:
+            continue
+        for target in targets:
+            key = top_key(target, nested)
+            if key:
+                found.setdefault(key, target.lineno)
+    return found
 
 
 def _clear_writer_cache() -> None:
