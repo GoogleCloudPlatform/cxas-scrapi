@@ -51,12 +51,11 @@ where it is now, and what to do now. Each block has one job.
 | Block               | Rendered when                                    | What it holds                                                                                    |
 | ------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
 | `<role>`            | always                                           | Who the agent is and what it helps with.                                                         |
-| `<context>`         | always                                           | Facts such as `Today's date is {{current_date}}.`                                                |
 | `<constraints>`     | always                                           | Reply style and hard rules.                                                                      |
 | `<anytime_actions>` | always                                           | The wrap-up rule, the goodbye, the transfer, and what to do when no tool can make a change.      |
 | `<playbook_list>`   | always                                           | The playbooks, and when to open or switch them with `open_playbook`.                             |
 | `<task_list>`       | a playbook is open                               | The open playbook's tasks, when to load or switch them with `load_task`, and the tool list rule. |
-| `<status>`          | always                                           | The open playbook and the loaded task.                                                           |
+| `<status>`          | always                                           | Today's date, the open playbook and the loaded task.                                             |
 | `<pending_handoff>` | a tool set `pending_handoff_reason`              | Optional. Takes the task's place and tells the model to transfer now.                            |
 | `<identify_order>`  | a task is loaded, order not verified             | Optional. The steps every task starts with, written once (rename it for your record).            |
 | `<playbook_rules>`  | a task is loaded and the prerequisite is done    | Rules every task in the playbook shares: switching tasks or records.                             |
@@ -64,10 +63,6 @@ where it is now, and what to do now. Each block has one job.
 
 ```xml
 <role>...</role>
-
-<context>
-Today's date is {{current_date}}.
-</context>
 
 <constraints>...</constraints>
 
@@ -97,6 +92,7 @@ Your tool list only has the tools for the loaded task. Never call a tool that is
 {{% endif %}}
 
 <status>
+Today's date is {{current_date}}.
 {{% if current_task %}}
 Open playbook: `{{current_playbook}}`. Loaded task: `{{current_task}}`.
 {{% elif current_playbook %}}
@@ -159,7 +155,9 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
   (`open_playbook`, `load_task`, then the handoff). Its last rule covers
   changes no tool can make, so the model offers a representative instead of
   reaching for a tool it can't see.
-- `<status>` tells the model where it is. It matters most right after
+- `<status>` tells the model where it is: today's date, the open playbook and
+  the loaded task. Put other facts about the session here too, such as the
+  store line the customer called. It matters most right after
   `open_playbook`, when the next call should load a task.
 - `<pending_handoff>` is the first branch of the task chain, so once a tool
   has decided on a transfer the model doesn't also get the task's current step
@@ -184,6 +182,8 @@ Every task starts by finding the customer's order and verifying its shipping ZIP
   one that owns the overlap ("questions about the return policy belong here
   even when they name a product"), and when a request could fit either, the
   `<playbook_list>` lead tells the model to ask one short question first.
+- Don't name a block `<context>`. CES wraps async tool results in
+  `<context>` tags in the history, and `cxas lint` rejects the tag (I015).
 - Keep the indentation flat. Every rendered line reaches the model, and deep
   indentation only adds whitespace.
 - The CES design guide's `<persona>`, `<taskflow>` and `<subtask>` tags aren't
@@ -874,7 +874,7 @@ can render and verify it.
 
 - **`current_date`:** CES provides `current_date` without a declaration, in
   the app's time zone, rendered like `2026-10-16[America/New_York]`. The
-  sample puts `Today's date is {{current_date}}.` in `<context>`. Python tools
+  sample puts `Today's date is {{current_date}}.` at the top of `<status>`. Python tools
   run on UTC, so a tool that needs today's date should read
   `context.state["current_date"]` instead of calling `datetime.date.today()`.
   `cxas lint` (V100) only knows it's built in for the instruction, so don't

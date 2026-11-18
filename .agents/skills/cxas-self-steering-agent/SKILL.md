@@ -68,10 +68,11 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    `transfer_to_agent(agent_name: "...")` plus history lines like `[Other Agent] said: ...`, so the model announces "transfers" the customer never
    asked about. Keep one agent and swap task instructions inside it.
 1. **Progressive disclosure.** `instruction.txt` is a series of flat top-level
-   blocks, static ones first: `<role>`, `<context>`, `<constraints>`,
+   blocks, static ones first: `<role>`, `<constraints>`,
    `<anytime_actions>` and `<playbook_list>`. Then come the blocks that depend
    on state: `<task_list>` (the open playbook's tasks, rendered whenever
-   `current_playbook` is set), `<status>` (the open playbook and loaded task),
+   `current_playbook` is set), `<status>` (today's date, the open playbook and the
+   loaded task),
    and one chain for the loaded task: `<pending_handoff>` if a tool can decide
    on a transfer, a shared prerequisite block such as `<identify_order>` if the
    tasks start with the same steps, and otherwise `<playbook_rules>` (rules
@@ -203,7 +204,7 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    (plus any other action that must work from any state, such as a transfer to
    another language), so the agent can end the conversation or transfer in one
    model call from any state without opening a playbook. Rules for these tools
-   live only here, never in `<role>`, `<context>` or `<constraints>`, so each
+   live only here, never in `<role>` or `<constraints>`, so each
    trigger has one rule. If a playbook sends transfers somewhere else, gate the
    anytime line off with `{{% if %}}` instead of writing "follow the playbook's
    rule instead". `execute_live_agent_handover` takes a required
@@ -276,14 +277,14 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    without checking in. Name playbooks and tasks differently from tools.
 
 1. Edit `agents/<Root_Agent_Name>/instruction.txt`. Keep the blocks, their
-   order and their tag names (`<role>`, `<context>`, `<constraints>`,
+   order and their tag names (`<role>`, `<constraints>`,
    `<anytime_actions>`, `<playbook_list>`, `<task_list>`, `<status>`,
    `<pending_handoff>`, the shared prerequisite block (`<identify_order>` in
    the sample; rename it for your record, or drop it if tasks share no steps),
    `<playbook_rules>`, and one `<task name="...">` block per task with
    `<task_rules>`, `<collected>` and `<current_step>` inside) but rewrite their
    content for the new agent: the business and use cases in `<role>`,
-   `Today's date is {{current_date}}.` in `<context>` if anything depends on
+   `Today's date is {{current_date}}.` in `<status>` if anything depends on
    dates, its rules in `<constraints>`, and your playbooks, tasks and step
    chains in place of the sample's. Also change `GREETING` in
    `agents/<Root_Agent_Name>/before_model_callbacks/before_model_callbacks_01/python_code.py`
@@ -343,7 +344,7 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    `afterModelCallbacks`, names shared by a playbook or task and a tool, router
    lists that don't match the instruction, routers writing other state or
    reading `rationale`, tool names outside `{@TOOL: ...}` or in `<role>`,
-   `<context>` or `<constraints>`, tools visible at the start that
+   or `<constraints>`, tools visible at the start that
    `<anytime_actions>` doesn't name, registered tools nothing uses, and a
    visible `end_session` or `set_next_agent_actions`. To check branches that
    depend on other state, pass the full state, including the playbook and task,
