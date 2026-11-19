@@ -304,7 +304,7 @@ def test_real_content_change_still_drifts_after_normalization(
     assert ours["tools/verify_tpin"].sha256 != live["tools/verify_tpin"].sha256
 
 
-def test_non_default_logging_settings_and_locked_still_drift(
+def test_non_default_logging_settings_still_drift(
     tmp_path: Path,
 ) -> None:
     live_dir = tmp_path / "live"
@@ -320,13 +320,18 @@ def test_non_default_logging_settings_and_locked_still_drift(
         != extract_normalized_resources(live_dir)["app"].sha256
     )
 
-    app["loggingSettings"] = {
-        "conversationLoggingSettings": {"retentionWindow": "31536000s"}
-    }
+
+def test_app_lock_state_is_control_plane_not_drift(tmp_path: Path) -> None:
+    """CES never exports `locked` (GetApp reported locked=True while the
+    export's app.json had no `locked` key), and push applies the lock via
+    UpdateApp, so the bundle's declared lock must not read as drift."""
+    ours_dir = tmp_path / "ours"
+    shutil.copytree(ROUNDTRIP_DIR / "ours", ours_dir)
+    app = _read_json(ours_dir / "app.json")
     app["locked"] = True
-    _write_json(live_dir / "app.json", app)
-    # ours fixture is unlocked (false/absent) -> lock difference is real drift.
+    _write_json(ours_dir / "app.json", app)
+    assert "locked" not in _read_json(ROUNDTRIP_DIR / "live" / "app.json")
     assert (
-        ours["app"].sha256
-        != extract_normalized_resources(live_dir)["app"].sha256
+        extract_normalized_resources(ours_dir)["app"].sha256
+        == extract_normalized_resources(ROUNDTRIP_DIR / "live")["app"].sha256
     )

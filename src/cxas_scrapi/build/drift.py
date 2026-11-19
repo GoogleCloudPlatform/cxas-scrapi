@@ -61,8 +61,11 @@ ORDER_INSENSITIVE_STRING_LIST_KEYS: frozenset[str] = frozenset(
 # Lists of objects identified by their `name` that CES re-orders on export.
 NAME_KEYED_LIST_KEYS: frozenset[str] = frozenset({"variableDeclarations"})
 # app.json keys that describe the CES control plane rather than bundle content:
-# `displayName` is chosen at push time (`cxas push --display-name`).
-APP_CONTROL_PLANE_KEYS: frozenset[str] = frozenset({"displayName"})
+# `displayName` is chosen at push time (`cxas push --display-name`); `locked`
+# is never present in a CES export (GetApp reports it, the export omits it) and
+# is applied by `cxas push` via UpdateApp after import (FW09 governs the
+# bundle's declaration).
+APP_CONTROL_PLANE_KEYS: frozenset[str] = frozenset({"displayName", "locked"})
 # Values CES adds server-side when a bundle does not set them. A key is
 # ignored only when its normalized value equals the server default, so a real
 # override (e.g. a shorter retention window) still reads as drift.
