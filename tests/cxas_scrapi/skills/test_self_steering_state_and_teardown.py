@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import pathlib
@@ -148,3 +149,85 @@ def test_action_tools_write_next_agent_actions_directly(
         assert queued["end_session"]["escalated"] is expected_escalated
     else:
         assert "end_session" not in queued
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "kwargs", "expected_escalated"),
+    [
+        (
+            "graceful_end_session",
+            {"goodbye_message": "Thanks for calling!"},
+            False,
+        ),
+        (
+            "execute_live_agent_handover",
+            {
+                "reason": "customer_requested_agent",
+                "pre_transfer_message": "Transferring you now.",
+            },
+            True,
+        ),
+    ],
+)
+def test_callback_requeues_end_session_without_repeating_goodbye(
+    tool_name: str,
+    kwargs: dict[str, Any],
+    expected_escalated: bool,
+) -> None:
+    """Streaming mid-goodbye turns re-emit end_session without waking LLM."""
+    run_locally = _load_run_locally()
+    app_cfg = json.loads((_SAMPLE_DIR / "app.json").read_text(encoding="utf-8"))
+    state = {**run_locally._defaults(app_cfg), "played_greeting": True}
+    runner = run_locally.Runner(_SAMPLE_DIR, state)
+
+    runner.call_tool(tool_name, kwargs)
+    first_response, _ = runner.run_callback()
+    assert first_response is not None
+    assert first_response.content is not None
+    first_parts = first_response.content.parts or []
+    assert any(p.inline_data is not None for p in first_parts)
+    assert any(p.has_function_call("end_session") for p in first_parts)
+
+    # Simulate speech or keypad input arriving during streaming voice audio
+    # before the call closes, triggering a second callback pass.
+    second_response, _ = runner.run_callback()
+    assert second_response is not None, (
+        "Second callback pass returned None and woke model after end_session"
+    )
+    assert second_response.content is not None
+    second_parts = second_response.content.parts or []
+    assert not any(p.inline_data is not None for p in second_parts)
+    end_calls = [
+        p.function_call
+        for p in second_parts
+        if p.has_function_call("end_session") and p.function_call is not None
+    ]
+    assert len(end_calls) == 1
+    assert end_calls[0].args["session_escalated"] is expected_escalated
+
+
+def test_callback_clears_non_terminal_customized_response_after_one_pass() -> (
+    None
+):
+    """Non-ending disclosures play once and let the next turn call the LLM."""
+    run_locally = _load_run_locally()
+    app_cfg = json.loads((_SAMPLE_DIR / "app.json").read_text(encoding="utf-8"))
+    state = {**run_locally._defaults(app_cfg), "played_greeting": True}
+    runner = run_locally.Runner(_SAMPLE_DIR, state)
+
+    runner.call_tool("play_sms_legal_disclosure", {})
+    first_response, _ = runner.run_callback()
+    assert first_response is not None
+    assert first_response.content is not None
+    first_parts = first_response.content.parts or []
+    assert len(first_parts) == 1
+    assert first_parts[0].inline_data is not None
+    payload = json.loads(
+        base64.b64decode(first_parts[0].inline_data.data or b"")
+    )
+    assert "messaging" in payload["content"].lower()
+
+    second_response, request = runner.run_callback()
+    assert second_response is None
+    hidden = set(request.config.excluded_tools or [])
+    assert "open_playbook" not in hidden

@@ -291,8 +291,15 @@ def _handle_next_agent_actions(callback_context, llm_request):
   if end_session := actions.get("end_session"):
     # Part.from_end_session takes reason and escalated (not session_escalated).
     parts.append(Part.from_end_session(**end_session))
+    callback_context.state["next_agent_actions"] = {"end_session": end_session}
   return LlmResponse.from_parts(parts=parts)
 ```
+
+Keeping `{"end_session": end_session}` in `next_agent_actions` latches session
+teardown across streaming `BidiRunSession` voice turns: if speech or keypad
+input arrives while the goodbye or transfer audio is still playing and starts
+another turn before the stream closes, the callback re-sends `end_session`
+without repeating `customized_response` or waking the model.
 
 `graceful_end_session(goodbye_message)` queues the goodbye with `{"reason":
 "completed", "escalated": False}`, and `execute_live_agent_handover(reason,
