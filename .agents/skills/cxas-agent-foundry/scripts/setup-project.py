@@ -77,6 +77,14 @@ def main() -> typing.Any:
     parser.add_argument("--name", help="Project folder name (defaults to app-id or must be provided for new agents)")
     parser.add_argument("--modality", choices=["audio", "text"], help="Agent modality (required for new agents, auto-detected for existing)")
     parser.add_argument("--location", default="us", help="GCP location (default: us)")
+    parser.add_argument(
+        "--gemini-location",
+        default=None,
+        help=(
+            "Optional Google Cloud location for Gemini and TTS calls "
+            "(e.g. europe-west4)"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -147,6 +155,18 @@ def main() -> typing.Any:
         app_name = folder_name
         deployed_app_id = None
 
+    config_path = os.path.join(project_dir, "gecx-config.json")
+    existing_gemini_location = None
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, encoding="utf-8") as f:
+                existing_data = json.load(f)
+                existing_gemini_location = existing_data.get(
+                    "gemini_location"
+                ) or existing_data.get("vertex_location")
+        except (json.JSONDecodeError, OSError):
+            pass
+
     # Write gecx-config.json
     config = {
         "gcp_project_id": args.project_id,
@@ -158,9 +178,11 @@ def main() -> typing.Any:
         "modality": modality,
         "default_channel": modality,
     }
+    resolved_gemini_loc = args.gemini_location or existing_gemini_location
+    if resolved_gemini_loc:
+        config["gemini_location"] = resolved_gemini_loc
 
-    config_path = os.path.join(project_dir, "gecx-config.json")
-    with open(config_path, "w") as f:
+    with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
     print(f"Wrote: {config_path}")
 

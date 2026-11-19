@@ -32,11 +32,12 @@ Usage:
     config = load_config()                         # full config dict
     evals_dir = get_project_path("evals", "goldens")  # /workspace/<project>/evals/goldens
 """
-import typing
-
+from collections.abc import Callable
+import inspect
 import json
 import os
 import sys
+import typing
 
 
 _project_dir = None
@@ -133,14 +134,15 @@ def load_config() -> typing.Any:
     """Load gecx-config.json from the active project and return the full config dict.
 
     Required keys: gcp_project_id, deployed_app_id
-    Optional keys: location (default: "us"), modality, default_channel, app_dir
+    Optional keys: location (default: "us"), gemini_location, modality,
+        default_channel, app_dir
     """
     config_file = get_project_path("gecx-config.json")
     if not os.path.exists(config_file):
         print(f"Error: {config_file} not found. Create gecx-config.json with your project settings.")
         sys.exit(1)
 
-    with open(config_file) as f:
+    with open(config_file, encoding="utf-8") as f:
         config = json.load(f)
 
     project = config.get("gcp_project_id")
@@ -153,6 +155,103 @@ def load_config() -> typing.Any:
     # Store the resolved project dir in config for convenience
     config["_project_dir"] = resolve_project_dir()
     return config
+
+
+def _load_optional_config() -> dict[str, typing.Any]:
+    """Best-effort load gecx-config.json without calling sys.exit."""
+    root = _find_workspace_root()
+    candidates: list[str] = []
+
+    # 1. GECX_PROJECT env var
+    env_proj = os.environ.get("GECX_PROJECT")
+    if env_proj:
+        base = root or os.getcwd()
+        candidates.append(os.path.join(base, env_proj, "gecx-config.json"))
+
+    # 2. .active-project pointer (when root exists)
+    if root:
+        pointer = os.path.join(root, ".active-project")
+        if os.path.isfile(pointer):
+            try:
+                with open(pointer, encoding="utf-8") as pf:
+                    target = pf.read().strip()
+                if target:
+                    candidates.append(
+                        os.path.join(root, target, "gecx-config.json")
+                    )
+            except OSError:
+                pass
+
+    # 3. ./gecx-config.json in CWD
+    candidates.append(os.path.join(os.getcwd(), "gecx-config.json"))
+
+    # 4. Single <subdir>/gecx-config.json under root
+    if root and os.path.isdir(root):
+        try:
+            subdir_configs = [
+                os.path.join(root, entry, "gecx-config.json")
+                for entry in os.listdir(root)
+                if not entry.startswith(".")
+                and os.path.isdir(os.path.join(root, entry))
+                and os.path.isfile(
+                    os.path.join(root, entry, "gecx-config.json")
+                )
+            ]
+            if len(subdir_configs) == 1:
+                candidates.append(subdir_configs[0])
+        except OSError:
+            pass
+
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as cf:
+                    data = json.load(cf)
+                if isinstance(data, dict):
+                    return data
+            except (json.JSONDecodeError, OSError):
+                continue
+    return {}
+
+
+def resolve_gemini_location_from_config(
+    explicit: str | None = None,
+    cfg: dict[str, typing.Any] | None = None,
+) -> str:
+    """Resolve Gemini location from explicit arg, env, config, or 'global'.
+
+    Precedence:
+    1. `explicit` CLI/caller argument
+    2. `GOOGLE_CLOUD_LOCATION` environment variable
+    3. `cfg['gemini_location']` or legacy `cfg['vertex_location']`, falling
+       back to active `gecx-config.json` when unset or empty
+    4. `'global'`
+    """
+    for candidate in (explicit, os.environ.get("GOOGLE_CLOUD_LOCATION")):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+
+    if cfg is not None:
+        for key in ("gemini_location", "vertex_location"):
+            cfg_loc = cfg.get(key)
+            if isinstance(cfg_loc, str) and cfg_loc.strip():
+                return cfg_loc.strip()
+
+    fallback_cfg = _load_optional_config()
+    for key in ("gemini_location", "vertex_location"):
+        cfg_loc = fallback_cfg.get(key)
+        if isinstance(cfg_loc, str) and cfg_loc.strip():
+            return cfg_loc.strip()
+    return "global"
+
+
+def gemini_location_kwarg(
+    target: Callable[..., typing.Any], location: str
+) -> dict[str, str]:
+    """Return gemini_location or legacy vertex_location kwarg for target."""
+    if "gemini_location" in inspect.signature(target).parameters:
+        return {"gemini_location": location}
+    return {"vertex_location": location}
 
 
 def load_app_name() -> typing.Any:
