@@ -1,0 +1,13 @@
+{
+  "displayName": "verify_tpin",
+  "executionType": "SYNCHRONOUS",
+  "openApiTool": {
+    "apiAuthentication": {
+      "serviceAgentIdTokenAuthConfig": {}
+    },
+    "description": "Verify telephone banking PIN against Cymbal Bank ID / Filial-Kundennummer for Cymbal Bank via server-side BFA.",
+    "name": "verify_tpin",
+    "openApiSchema": "tools/verify_tpin/open_api_tool/open_api_schema.yaml",
+    "url": "https://bfa.cymbal.synthetic-bank.internal/v1/auth/verify-tpin"
+  }
+}
