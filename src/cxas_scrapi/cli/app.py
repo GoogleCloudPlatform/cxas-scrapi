@@ -603,6 +603,44 @@ def app_push(args: argparse.Namespace) -> str | None:
     )
 
 
+def _bundle_declares_lock(app_dir: str) -> bool:
+    """True when the bundle's app.json declares the governed lock (FW09)."""
+    app_json = Path(app_dir) / "app.json"
+    if not app_json.is_file():
+        return False
+    try:
+        data = json.loads(app_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and data.get("locked") is True
+
+
+def _stage_unlocked_import_payload(app_dir: str, staging_root: Path) -> Path:
+    """Copies the bundle and sets app.json `locked` to false for import.
+
+    CES rejects importing into an app that is (or would become) locked
+    (FAILED_PRECONDITION "App ... is locked"), so the lock is applied with
+    UpdateApp after import instead of travelling inside the payload.
+    """
+    staged = staging_root / Path(app_dir).resolve().name
+    shutil.copytree(app_dir, staged)
+    app_json = staged / "app.json"
+    data = json.loads(app_json.read_text(encoding="utf-8"))
+    data["locked"] = False
+    app_json.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return staged
+
+
+def _is_app_locked(apps_client: Apps, app_name: str) -> bool:
+    try:
+        return getattr(apps_client.get_app(app_name), "locked", False) is True
+    except Exception as e:  # noqa: BLE001
+        print(f"Warning: could not read lock state of {app_name}: {e}")
+        return False
+
+
 def _app_push(
     app_dir: str,
     apps_client: Apps = None,
@@ -632,7 +670,31 @@ def _app_push(
         getattr(args, "native_python_env", False) if args else False
     )
 
+    desired_lock = _bundle_declares_lock(app_dir)
+    was_locked = bool(target_app_name) and _is_app_locked(
+        apps_client, target_app_name
+    )
+    relock_target: str | None = None
+    staging_dir: str | None = None
+    payload_dir = app_dir
+
     try:
+        if was_locked:
+            print(
+                f"Target app {target_app_name} is locked; unlocking it for "
+                "import (it is re-locked afterwards)..."
+            )
+            apps_client.update_app(target_app_name, locked=False)
+            relock_target = target_app_name
+        if desired_lock:
+            staging_dir = tempfile.mkdtemp(prefix="cxas_push_")
+            payload_dir = str(
+                _stage_unlocked_import_payload(app_dir, Path(staging_dir))
+            )
+            print(
+                "Bundle declares locked=true (governed lock): importing with "
+                "locked=false and applying the lock after import."
+            )
         # Inject explicit env_file if provided
         env_path: Path | None = None
         if env_file:
@@ -655,7 +717,7 @@ def _app_push(
 
         resolved_vars: list[str] = []
         package_app_archive(
-            Path(app_dir),
+            Path(payload_dir),
             Path(temp_zip),
             env_path,
             native_python_env=native_python_env,
@@ -716,12 +778,32 @@ def _app_push(
             )
             args.created_version_name = version_name
 
+        if (desired_lock or was_locked) and app_name:
+            print(f"Locking app {app_name} (locked=true)...")
+            apps_client.update_app(app_name, locked=True)
+            relock_target = None
+            print(f"App {app_name} is locked.")
+
         return app_name
 
     except Exception as e:
         print(f"Failed to push app: {e}")
         sys.exit(1)
     finally:
+        if relock_target:
+            print(
+                f"Push did not complete; restoring lock on {relock_target}..."
+            )
+            try:
+                apps_client.update_app(relock_target, locked=True)
+            except Exception as relock_err:  # noqa: BLE001
+                print(
+                    f"ERROR: failed to restore lock on {relock_target}: "
+                    f"{relock_err}",
+                    file=sys.stderr,
+                )
+        if staging_dir and os.path.exists(staging_dir):
+            shutil.rmtree(staging_dir, ignore_errors=True)
         if os.path.exists(temp_zip):
             os.remove(temp_zip)
 
