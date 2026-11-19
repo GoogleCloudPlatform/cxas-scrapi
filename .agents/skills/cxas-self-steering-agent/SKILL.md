@@ -6,7 +6,7 @@ description: >-
   center agent: one root agent, Jinja progressive disclosure (playbooks and
   tasks loaded through open_playbook and load_task, dynamic tool hiding) and
   deterministic actions (greeting, verbatim text, goodbye and live agent
-  handoff through set_next_agent_actions). Ships a working sample agent to
+  handoff through next_agent_actions). Ships a working sample agent to
   start from. Use when creating a new CXAS agent, adding playbooks, tasks or
   tools to an agent built this way, replacing a steering agent with
   sub-agents or a single big prompt, or finding out why such an agent sees or
@@ -98,9 +98,9 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    task..." rule at the end of `<current_task_status>`.
 1. **Deterministic actions only where they matter.** Use code for the greeting,
    for text that must be word for word (a tool that sets a state flag and
-   queues a `customized_response` through `set_next_agent_actions`), and for
-   the goodbye and live agent handoff (a tool that queues the message together
-   with `end_session`). The model still decides when to call the tool, the
+   queues a `customized_response` in `context.state["next_agent_actions"]`),
+   and for the goodbye and live agent handoff (a tool that queues the message
+   together with `end_session`). The model still decides when to call the tool, the
    result says what happened, and the text lands in the history as the agent's
    own reply. Don't chain workflow steps inside tools or switch `current_task`
    from code; later turns can't explain actions their instructions don't
@@ -149,8 +149,9 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    and delete the `order_id`, `order_status` and `sms_disclosure_played`
    variables from `app.json`. Keep `open_playbook`, `load_task`,
    `graceful_end_session`, `execute_live_agent_handover`,
-   `set_next_agent_actions` and `end_session`, and the `current_playbook`,
-   `current_task`, `next_agent_actions` and `played_greeting` variables. Reword
+   `set_next_agent_actions` (kept registered for compatibility) and
+   `end_session`, and the `current_playbook`, `current_task`,
+   `next_agent_actions` and `played_greeting` variables. Reword
    the docstring and default message of `execute_live_agent_handover` if the
    handoff goes to someone other than a representative. Write each new tool in
    the same shape as a sample tool

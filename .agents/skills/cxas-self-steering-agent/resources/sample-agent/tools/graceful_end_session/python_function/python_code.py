@@ -17,7 +17,7 @@ def graceful_end_session(goodbye_message: Optional[str] = None) -> None:
       conversation ends.
   """
   message = (goodbye_message or "").strip() or DEFAULT_GOODBYE
-  tools.set_next_agent_actions({
+  context.state["next_agent_actions"] = {
       "customized_response": {"content": message, "disable_barge_in": True},
       "end_session": {"reason": "completed", "escalated": False},
-  })
+  }

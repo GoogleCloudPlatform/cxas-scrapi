@@ -17,10 +17,10 @@ def play_sms_legal_disclosure() -> dict[str, Any]:
     dict[str, Any]: Whether the terms were shared.
   """
   context.state["sms_disclosure_played"] = True
-  tools.set_next_agent_actions({
+  context.state["next_agent_actions"] = {
       "customized_response": {
           "content": DISCLOSURE_TEXT,
           "disable_barge_in": True,
       },
-  })
+  }
   return {"success": True, "status": "terms_shared"}

@@ -234,8 +234,8 @@ def _handle_dynamic_tool_hiding(
     function call". The rule at the end of `<current_task_status>` covers the
     rest.
 -   Register every tool in the root agent's `tools` list, including the
-    platform's `end_session` and the `set_next_agent_actions` helper. Hiding
-    decides what the model sees per call.
+    platform's `end_session` and the `set_next_agent_actions` compatibility
+    helper. Hiding decides what the model sees per call.
 
 ## Deterministic actions
 
@@ -260,29 +260,19 @@ def _handle_initial_greeting(callback_context, llm_request):
   return LlmResponse.from_parts(parts=[Part.from_customized_response(content=GREETING)])
 ```
 
-Exact wording goes through a tool that queues it with `set_next_agent_actions`,
-a small Python tool that stores actions in the `next_agent_actions` state
-variable:
+Exact wording goes through a tool that writes
+`context.state["next_agent_actions"]` directly inside the tool the model called:
 
 ```python
-def set_next_agent_actions(customized_response=None, end_session=None) -> None:
-  """Queues the agent's next reply and actions so they play without calling the model."""
-  actions = context.state["next_agent_actions"] = {}
-  if customized_response:
-    actions["customized_response"] = customized_response
-  if end_session:
-    actions["end_session"] = end_session
-
-
 def play_sms_legal_disclosure() -> dict[str, Any]:
   """Shares the text message terms word for word and asks the customer if we can text them.
 
   Call this directly without replying to the customer first.
   """
   context.state["sms_disclosure_played"] = True
-  tools.set_next_agent_actions({
+  context.state["next_agent_actions"] = {
       "customized_response": {"content": DISCLOSURE_TEXT, "disable_barge_in": True},
-  })
+  }
   return {"success": True, "status": "terms_shared"}
 ```
 
@@ -291,7 +281,7 @@ handler, which plays the queued actions without calling the model:
 
 ```python
 def _handle_next_agent_actions(callback_context, llm_request):
-  """Plays what a tool queued with set_next_agent_actions, without calling the model."""
+  """Plays what a tool queued in next_agent_actions, without calling the model."""
   actions = callback_context.state.pop("next_agent_actions", None)
   if not actions:
     return None
@@ -317,14 +307,15 @@ too.
 -   The queued text can include values from state or a tool result, like an
     order number or a date. What matters is that the model doesn't get to
     rephrase it.
--   One tool calls another with `tools.<tool_name>({...})`, arguments in one
-    dict, the way the sample's tools call `set_next_agent_actions`. The call
-    returns a response object, and `.json()["result"]` is the other tool's
-    return value. Code can call any registered tool, whether the model can see
-    it or not. The nested call shows up under the outer tool in `cxas trace
-    get`, but not as a separate call in the conversation history. To share logic
-    between tools, put it in a helper tool, register it, and keep its name out
-    of the instruction so the model never sees it.
+-   One tool can call another for stateless shared logic with
+    `tools.<tool_name>({...})`, arguments in one dict (`set_next_agent_actions`
+    is kept registered only for compatibility). The call returns a response
+    object, and `.json()["result"]` is the other tool's return value. Code can
+    call any registered tool, whether the model can see it or not. The nested
+    call shows up under the outer tool in `cxas trace get`, but not as a
+    separate call in the conversation history. Always write `context.state` in
+    the outer tool the model called rather than inside a nested helper tool,
+    because isolated tool sandboxes discard nested `context.state` writes.
 
 ## The callback
 

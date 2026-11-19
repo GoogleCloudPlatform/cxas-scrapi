@@ -34,7 +34,7 @@ def before_model_callback(
 def _handle_next_agent_actions(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-  """Plays what a tool queued with set_next_agent_actions, without calling the model."""
+  """Plays what a tool queued in next_agent_actions, without calling the model."""
   actions = callback_context.state.pop("next_agent_actions", None)
   if not actions:
     return None
