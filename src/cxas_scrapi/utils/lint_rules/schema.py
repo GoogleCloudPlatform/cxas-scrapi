@@ -13,10 +13,11 @@
 # limitations under the License.
 
 
-"""CES schema validation rules (V001-V007).
+"""CES schema validation rules (V001-V008).
 
 Validates that resource configs (app, agent, tool, toolset, guardrail,
-evaluation, evaluation_expectation) conform to the CES protobuf schema.
+evaluation, evaluation_expectation, evaluation_dataset) conform to the CES
+protobuf schema.
 Ported from ``utils/validator.py`` — the linter is now the single
 validation tool.
 """
@@ -32,6 +33,7 @@ from google.cloud.ces_v1beta import types
 from google.protobuf import json_format
 
 from cxas_scrapi.utils.linter import (
+    AGENT_CONFIG_SUFFIXES,
     LintContext,
     LintResult,
     Rule,
@@ -43,20 +45,18 @@ from cxas_scrapi.utils.linter import (
 
 
 def _load_json_or_yaml(directory: Path, file_name: str) -> typing.Any:
-    """Load config from ``<file_name>.yaml`` or ``<file_name>.json``."""
-    yaml_path = directory / f"{file_name}.yaml"
-    json_path = directory / f"{file_name}.json"
-
-    if yaml_path.exists():
-        with open(yaml_path) as f:
-            return yaml.safe_load(f)
-    elif json_path.exists():
-        with open(json_path) as f:
-            return json.load(f)
-    else:
-        raise FileNotFoundError(
-            f"Missing {file_name}.yaml or {file_name}.json in {directory}"
-        )
+    """Load config from ``<file_name>.json``, ``.yaml``, or ``.yml``."""
+    for suffix in AGENT_CONFIG_SUFFIXES:
+        candidate = directory / f"{file_name}{suffix}"
+        if candidate.exists():
+            text = candidate.read_text(encoding="utf-8")
+            return (
+                json.loads(text) if suffix == ".json" else yaml.safe_load(text)
+            )
+    raise FileNotFoundError(
+        f"Missing {file_name}.json, {file_name}.yaml, or {file_name}.yml "
+        f"in {directory}"
+    )
 
 
 _NON_PATH_KEYS: frozenset[str] = frozenset(
@@ -99,7 +99,7 @@ def _resolve_paths(
         isinstance(data, str)
         and "://" not in data
         and not any(c.isspace() for c in data)
-        and data.endswith((".txt", ".py", ".yaml", ".json"))
+        and data.endswith((".txt", ".py", ".yaml", ".yml", ".json"))
     ):
         path_to_check = Path(data)
         resolved = False
@@ -428,6 +428,16 @@ _RESOURCE_SCHEMAS = [
         (),
         False,
     ),
+    (
+        "V008",
+        "schema-eval-dataset-valid",
+        "Evaluation dataset config conforms to CES proto schema",
+        "eval_dataset_config",
+        types.EvaluationDataset,
+        None,
+        (),
+        False,
+    ),
 ]
 
 
@@ -471,6 +481,8 @@ class SchemaValid(Rule):
             data = _load_json_or_yaml(resource_dir, config_name)
         except FileNotFoundError as e:
             return [self.make_result(rel, f"Missing config: {e}")]
+        except (json.JSONDecodeError, yaml.YAMLError) as e:
+            return [self.make_result(rel, f"Invalid config syntax: {e}")]
 
         if not isinstance(data, dict):
             return [
@@ -556,6 +568,7 @@ class SchemaValid(Rule):
             "guardrail_config": "guardrails",
             "evaluation_config": "evaluations",
             "eval_expectation_config": "evaluationExpectations",
+            "eval_dataset_config": "evaluationDatasets",
         }
         cat = target_to_category.get(self.target)
         if cat:

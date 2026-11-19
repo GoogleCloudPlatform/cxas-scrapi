@@ -34,6 +34,8 @@ from cxas_scrapi.utils.linter import (
     LintResult,
     Rule,
     Severity,
+    find_agent_config,
+    load_structured_config,
     rule,
 )
 
@@ -49,6 +51,17 @@ class InvalidJson(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
+        if file_path.suffix in (".yaml", ".yml"):
+            try:
+                yaml.safe_load(content)
+            except yaml.YAMLError as e:
+                return [
+                    self.make_result(
+                        file=rel,
+                        message=f"Invalid YAML: {e}",
+                    )
+                ]
+            return []
         try:
             json.loads(content)
         except json.JSONDecodeError as e:
@@ -102,16 +115,15 @@ class AgentToolNotExists(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name == "app.json":
+        if file_path.name in ("app.json", "app.yaml", "app.yml"):
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = load_structured_config(file_path, content)
+        if data is None:
             return []
 
         results = []
-        for tool in data.get("tools", []):
+        for tool in data.get("tools") or []:
             if tool not in context.all_known_tools:
                 results.append(
                     self.make_result(
@@ -163,15 +175,12 @@ def _resolve_agent_dir(agents_dir: Path, agent_ref: str) -> Path | None:
             continue
         if subdir.name.replace(" ", "_").lower() == ref_norm:
             return subdir
-        agent_json = subdir / f"{subdir.name}.json"
-        if agent_json.exists():
-            try:
-                agent_data = json.loads(agent_json.read_text())
-            except (json.JSONDecodeError, OSError):
-                continue
-            if (
-                isinstance(agent_data, dict)
-                and agent_data.get("displayName") == agent_ref
+        cfg_path = find_agent_config(subdir)
+        if cfg_path is not None:
+            agent_data = load_structured_config(cfg_path)
+            if agent_data is not None and (
+                agent_data.get("displayName") == agent_ref
+                or agent_data.get("display_name") == agent_ref
             ):
                 return subdir
 
@@ -190,15 +199,12 @@ class AgentMissingInstruction(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name == "app.json":
+        if file_path.name in ("app.json", "app.yaml", "app.yml"):
             return []
 
-        try:
-            data = json.loads(content)
-            if isinstance(data, dict) and (_NON_LLM_AGENT_KEYS & data.keys()):
-                return []
-        except json.JSONDecodeError:
-            pass
+        data = load_structured_config(file_path, content)
+        if data is not None and (_NON_LLM_AGENT_KEYS & data.keys()):
+            return []
 
         agent_dir = file_path.parent
         instruction = agent_dir / "instruction.txt"
@@ -233,12 +239,11 @@ class RootAgentMissingEndSession(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name != "app.json":
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = load_structured_config(file_path, content)
+        if data is None:
             return []
 
         root_agent_name = data.get("rootAgent")
@@ -251,18 +256,17 @@ class RootAgentMissingEndSession(Rule):
         if not agent_dir:
             return []
 
-        agent_json = agent_dir / f"{agent_dir.name}.json"
-        if not agent_json.exists():
-            agent_json = agent_dir / f"{root_agent_name}.json"
-        if not agent_json.exists():
+        agent_cfg = find_agent_config(agent_dir) or find_agent_config(
+            agent_dir, root_agent_name
+        )
+        if agent_cfg is None:
             return []
 
-        try:
-            agent_data = json.loads(agent_json.read_text())
-        except (json.JSONDecodeError, OSError):
+        agent_data = load_structured_config(agent_cfg)
+        if agent_data is None:
             return []
 
-        tools = agent_data.get("tools", [])
+        tools = agent_data.get("tools") or []
         if "end_session" not in tools:
             return [
                 self.make_result(
@@ -303,12 +307,11 @@ class AppRootAgentValidation(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name != "app.json":
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = load_structured_config(file_path, content)
+        if data is None:
             return []
 
         results = []
@@ -376,11 +379,10 @@ class AppRootAgentValidation(Rule):
             )
             return results
 
-        # 5. Check if <rootAgent>.json exists
-        agent_json = agent_dir / f"{agent_dir.name}.json"
+        # 5. Check if <rootAgent>.(json|yaml|yml) exists
         if (
-            not agent_json.exists()
-            and not (agent_dir / f"{root_agent_name}.json").exists()
+            find_agent_config(agent_dir) is None
+            and find_agent_config(agent_dir, root_agent_name) is None
         ):
             results.append(
                 self.make_result(
@@ -518,12 +520,11 @@ class CompositeAudioProfile(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        if file_path.name != "app.json":
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = load_structured_config(file_path, content)
+        if data is None:
             return []
 
         results = []
@@ -664,12 +665,11 @@ class CompositeAccentSpecification(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        if file_path.name != "app.json":
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = load_structured_config(file_path, content)
+        if data is None:
             return []
 
         audio_cfg = (
@@ -738,12 +738,11 @@ class CompositeMultilangCoverage(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        if file_path.name != "app.json":
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = load_structured_config(file_path, content)
+        if data is None:
             return []
 
         lang_settings = (
@@ -891,12 +890,11 @@ class CompositeSamplingTemperature(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        if file_path.name != "app.json":
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = load_structured_config(file_path, content)
+        if data is None:
             return []
 
         model_settings = (
@@ -1156,3 +1154,63 @@ class AppVariableDefaultsAndEnvVars(Rule):
                 )
 
         return results
+
+
+def _is_app_only_composite_model(normalized_model: str) -> bool:
+    """Return True if `normalized_model` is a CES composite model alias."""
+    return (
+        normalized_model == "gemini-composite"
+        or normalized_model.startswith("gemini-composite-")
+    )
+
+
+@rule("config")
+class AgentCompositeModelPlacement(Rule):
+    """Rejects composite model aliases in agent-level modelSettings.model."""
+
+    id = "A019"
+    name = "agent-composite-model-placement"
+    description = (
+        "Rejects gemini-composite-* models in agent-level modelSettings.model "
+        "(composite models can only be set in app.json)"
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if file_path.name in ("app.json", "app.yaml", "app.yml"):
+            return []
+
+        data = load_structured_config(file_path, content)
+        if data is None:
+            return []
+
+        model_settings = data.get("modelSettings") or data.get("model_settings")
+        if not isinstance(model_settings, dict):
+            return []
+
+        raw_model = model_settings.get("model")
+        if not isinstance(raw_model, str) or not raw_model.strip():
+            return []
+
+        normalized = raw_model.strip().rstrip("/").lower().rsplit("/", 1)[-1]
+        if not _is_app_only_composite_model(normalized):
+            return []
+
+        rel = _rel_or_str(file_path, context.project_root)
+        return [
+            self.make_result(
+                file=rel,
+                message=(
+                    f"Agent config sets modelSettings.model to "
+                    f"'{raw_model.strip()}', which can only be configured at "
+                    "the app level (app.json/app.yaml)"
+                ),
+                fix=(
+                    f"Move modelSettings.model='{raw_model.strip()}' to "
+                    "app.json and remove it from the agent config (or set a "
+                    "non-composite per-agent model override)"
+                ),
+            )
+        ]

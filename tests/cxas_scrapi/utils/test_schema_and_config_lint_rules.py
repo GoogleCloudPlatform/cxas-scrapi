@@ -21,12 +21,21 @@ from unittest.mock import patch
 import pytest
 
 from cxas_scrapi.utils.lint_rules.config import (
+    AgentCompositeModelPlacement,
     AgentMissingInstruction,
     AppRootAgentValidation,
     AppVariableDefaultsAndEnvVars,
     RootAgentMissingEndSession,
 )
-from cxas_scrapi.utils.linter import LintContext, build_registry
+from cxas_scrapi.utils.linter import (
+    Discovery,
+    LintConfig,
+    LintContext,
+    LintReport,
+    build_context,
+    build_registry,
+    run_rules,
+)
 
 
 @pytest.fixture
@@ -447,3 +456,177 @@ def test_a017_flags_undeclared_or_non_placeholder_override_in_env_file(
     assert any(
         "Variable 'unknown_flag'" in m and "not declared" in m for m in messages
     )
+
+
+def test_a019_rejects_composite_models_on_agents_but_allows_app_and_standard(
+    tmp_path: Path,
+) -> None:
+    a019 = AgentCompositeModelPlacement()
+    ctx = LintContext(
+        project_root=tmp_path, app_dir=tmp_path, evals_dir=tmp_path
+    )
+
+    # Allowed at app level
+    app_json = tmp_path / "app.json"
+    app_json.write_text(
+        json.dumps(
+            {
+                "name": "voice_app",
+                "displayName": "Voice App",
+                "rootAgent": "root_agent",
+                "modelSettings": {"model": "gemini-composite-v2"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert a019.check(app_json, app_json.read_text(), ctx) == []
+
+    # Allowed non-composite override on agent
+    std_agent = tmp_path / "agents" / "billing_agent" / "billing_agent.json"
+    std_agent.parent.mkdir(parents=True)
+    (std_agent.parent / "instruction.txt").write_text(
+        "<role>Billing</role>\n<persona>Helpful</persona>\n"
+        "<constraints>Today is {{current_date}}.</constraints>\n"
+        "<taskflow>Help</taskflow>\n",
+        encoding="utf-8",
+    )
+    std_agent.write_text(
+        json.dumps(
+            {
+                "displayName": "billing_agent",
+                "instruction": "agents/billing_agent/instruction.txt",
+                "modelSettings": {"model": "gemini-2.5-flash"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert a019.check(std_agent, std_agent.read_text(), ctx) == []
+
+    # Rejected on root agent (.yaml), sub-agent (.json), and sub-agent (.yml)
+    root_yaml = tmp_path / "agents" / "root_agent" / "root_agent.yaml"
+    root_yaml.parent.mkdir(parents=True)
+    (root_yaml.parent / "instruction.txt").write_text(
+        "<role>Root</role>\n<persona>Warm</persona>\n"
+        "<constraints>Today is {{current_date}}.</constraints>\n"
+        "<taskflow>Route to {@AGENT: billing_agent}, {@AGENT: sub_agent}, "
+        "{@AGENT: yml_agent}, or {@AGENT: remote_df_sub}.</taskflow>\n",
+        encoding="utf-8",
+    )
+    root_yaml.write_text(
+        "displayName: root_agent\n"
+        "instruction: agents/root_agent/instruction.txt\n"
+        "tools:\n"
+        "  - end_session\n"
+        "childAgents:\n"
+        "  - billing_agent\n"
+        "  - sub_agent\n"
+        "  - yml_agent\n"
+        "  - remote_df_sub\n"
+        "modelSettings:\n"
+        "  model: gemini-composite-v2\n",
+        encoding="utf-8",
+    )
+
+    sub_json = tmp_path / "agents" / "sub_agent" / "sub_agent.json"
+    sub_json.parent.mkdir(parents=True)
+    (sub_json.parent / "instruction.txt").write_text(
+        "<role>Sub</role>\n<persona>Calm</persona>\n"
+        "<constraints>Today is {{current_date}}.</constraints>\n"
+        "<taskflow>Handle</taskflow>\n",
+        encoding="utf-8",
+    )
+    sub_json.write_text(
+        json.dumps(
+            {
+                "displayName": "sub_agent",
+                "instruction": "agents/sub_agent/instruction.txt",
+                "modelSettings": {
+                    "model": "publishers/google/models/gemini-composite-v1"
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    yml_agent = tmp_path / "agents" / "yml_agent" / "yml_agent.yml"
+    yml_agent.parent.mkdir(parents=True)
+    (yml_agent.parent / "instruction.txt").write_text(
+        "<role>Yml</role>\n<persona>Clear</persona>\n"
+        "<constraints>Today is {{current_date}}.</constraints>\n"
+        "<taskflow>Assist</taskflow>\n",
+        encoding="utf-8",
+    )
+    yml_agent.write_text(
+        "displayName: yml_agent\n"
+        "instruction: agents/yml_agent/instruction.txt\n"
+        "modelSettings:\n"
+        "  model: models/gemini-composite-v3\n",
+        encoding="utf-8",
+    )
+
+    remote_df_yaml = (
+        tmp_path / "agents" / "remote_df_sub" / "remote_df_sub.yaml"
+    )
+    remote_df_yaml.parent.mkdir(parents=True)
+    remote_df_yaml.write_text(
+        "displayName: remote_df_sub\nremoteDialogflowAgent: {}\n",
+        encoding="utf-8",
+    )
+
+    # Full run_rules (no specific_rules filter) validates JSON/YAML/YML cleanly
+    app_json.write_text(
+        json.dumps(
+            {
+                "name": "projects/p/locations/global/apps/voice_app",
+                "displayName": "Voice App",
+                "rootAgent": "root_agent",
+            }
+        ),
+        encoding="utf-8",
+    )
+    disc = Discovery(tmp_path, tmp_path / "evals")
+    cfg = LintConfig()
+    full_ctx = build_context(tmp_path, cfg, disc)
+    report = LintReport()
+    run_rules(build_registry(), cfg, full_ctx, disc, report)
+    assert [r.rule_id for r in report.errors] == ["A019", "A019", "A019"]
+    flagged_files = {Path(r.file).name for r in report.errors}
+    assert flagged_files == {
+        "root_agent.yaml",
+        "sub_agent.json",
+        "yml_agent.yml",
+    }
+
+
+def test_malformed_yaml_agent_config_reports_lint_errors_without_crashing(
+    tmp_path: Path,
+) -> None:
+    app_json = tmp_path / "app.json"
+    app_json.write_text(
+        json.dumps(
+            {
+                "name": "projects/p/locations/global/apps/broken_yaml_app",
+                "displayName": "Broken YAML App",
+                "rootAgent": "root_agent",
+            }
+        ),
+        encoding="utf-8",
+    )
+    root_yaml = tmp_path / "agents" / "root_agent" / "root_agent.yaml"
+    root_yaml.parent.mkdir(parents=True)
+    (root_yaml.parent / "instruction.txt").write_text(
+        "<role>Root</role>\n<persona>Calm</persona>\n"
+        "<context>{{current_date}}</context>\n<taskflow>Help</taskflow>\n",
+        encoding="utf-8",
+    )
+    root_yaml.write_text("displayName: [unclosed\n", encoding="utf-8")
+
+    disc = Discovery(tmp_path, tmp_path / "evals")
+    cfg = LintConfig()
+    ctx = build_context(tmp_path, cfg, disc)
+    report = LintReport()
+    run_rules(build_registry(), cfg, ctx, disc, report)
+
+    rule_ids = {r.rule_id for r in report.errors}
+    assert "A001" in rule_ids
+    assert "V002" in rule_ids

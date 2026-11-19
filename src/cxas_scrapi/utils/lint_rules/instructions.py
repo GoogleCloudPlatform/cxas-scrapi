@@ -19,7 +19,6 @@ Validates agent instruction files against CXAS design guide best practices.
 
 import ast
 import contextlib
-import json
 import re
 import warnings
 from pathlib import Path
@@ -29,22 +28,20 @@ from cxas_scrapi.utils.linter import (
     LintResult,
     Rule,
     Severity,
+    find_agent_config,
+    load_structured_config,
     rule,
 )
 
 TOOL_REF_PATTERN = re.compile(r"\{@TOOL:\s*([^}]+)\}")
 
 
-def _load_agent_config(file_path: Path) -> dict | None:
-    """Load the agent JSON config adjacent to an instruction file."""
-    agent_dir = file_path.parent
-    agent_json = agent_dir / f"{agent_dir.name}.json"
-    if not agent_json.exists():
-        return None
-    try:
-        return json.loads(agent_json.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
+def _load_agent_config(file_path: Path) -> tuple[dict | None, Path | None]:
+    """Load the agent config adjacent to an instruction file."""
+    cfg_path = find_agent_config(file_path.parent)
+    if cfg_path is None:
+        return None, None
+    return load_structured_config(cfg_path), cfg_path
 
 
 def _extract_tool_refs(content: str) -> set[str]:
@@ -479,11 +476,11 @@ class UnusedToolInConfig(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        config = _load_agent_config(file_path)
-        if not config:
+        config, cfg_path = _load_agent_config(file_path)
+        if not config or cfg_path is None:
             return []
 
-        config_tools = set(config.get("tools", []))
+        config_tools = set(config.get("tools") or [])
         instruction_refs = _extract_tool_refs(content)
         app_root = context.app_root or file_path.parent.parent.parent
         global_inst = app_root / "global_instruction.txt"
@@ -497,14 +494,10 @@ class UnusedToolInConfig(Rule):
                 file_path.parent, app_root, unused
             )
 
-        agent_json_rel = str(
-            (file_path.parent / f"{file_path.parent.name}.json").relative_to(
-                context.project_root
-            )
-        )
+        agent_cfg_rel = str(cfg_path.relative_to(context.project_root))
         return [
             self.make_result(
-                file=agent_json_rel,
+                file=agent_cfg_rel,
                 message=(
                     f"Agent config lists tool"
                     f" '{tool}' but instruction"
