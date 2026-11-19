@@ -1,0 +1,79 @@
+intent,phrase
+order_status,Where is my package right now
+order_status,Check the delivery status of my recent order
+order_status,When is my shipment expected to arrive
+order_status,Can you give me the tracking number for my order
+order_status,Has my order shipped yet
+order_status,Track my recent purchase delivery date
+cancel_order,I want to cancel my entire order immediately
+cancel_order,Please stop my order before it ships out
+cancel_order,Cancel the purchase I just placed today
+cancel_order,Can you void my whole order and refund me
+cancel_order,I changed my mind please cancel my order
+cancel_order,Stop shipment and cancel all items in my order
+modify_order,I need to change the shipping address on my order
+modify_order,Can I remove one item from my existing order
+modify_order,Upgrade the shipping speed on my current order
+modify_order,Update the item quantity in my recent order
+modify_order,Edit the delivery details on an order I placed
+modify_order,Modify the items in my pending order
+report_damaged_item,The item in my package arrived cracked and broken
+report_damaged_item,My order was delivered damaged and defective
+report_damaged_item,The product inside the box is shattered
+report_damaged_item,I received a damaged item in my delivery today
+report_damaged_item,Something in my shipment arrived in broken condition
+report_damaged_item,The merchandise I received is physically defective
+report_missing_item,One of the items is missing from my delivered box
+report_missing_item,Tracking says delivered but my package never arrived
+report_missing_item,My shipment arrived incomplete with missing parts
+report_missing_item,I did not receive all the items I ordered
+report_missing_item,My package was marked delivered but nothing is here
+report_missing_item,Part of my order was left out of the shipment
+start_return,I want to start a return for my recent purchase
+start_return,Send me a prepaid return shipping label please
+start_return,How do I mail back an item for a refund
+start_return,I need to exchange an item I received yesterday
+start_return,Initiate a new product return on my account
+start_return,Help me return an item from my last order
+return_policy,How many days do I have to return an item
+return_policy,What is your standard return and exchange policy
+return_policy,Are final sale items eligible for a refund
+return_policy,Do you charge restocking fees under your return policy
+return_policy,Can I return an opened item under your rules
+return_policy,Explain the return window and refund rules
+check_credit_balance,What is the current balance on my credit card
+check_credit_balance,Check my available credit limit and statement total
+check_credit_balance,How much do I owe on my credit account right now
+check_credit_balance,Tell me the minimum payment and balance on my credit card
+check_credit_balance,Check the outstanding balance on my credit line
+check_credit_balance,What is my current credit card payoff amount
+check_gift_card_balance,How much money is left on my gift card
+check_gift_card_balance,Check the remaining balance on a prepaid gift card
+check_gift_card_balance,Can you look up the funds available on my gift voucher
+check_gift_card_balance,What is the remaining value on this gift card
+check_gift_card_balance,Verify the balance left on my digital gift card
+check_gift_card_balance,See how much balance remains on my gift certificate
+billing_dispute,I was charged twice for the same transaction on my statement
+billing_dispute,Why is there an unexpected fee on my monthly bill
+billing_dispute,The amount billed on my statement does not match my receipt
+billing_dispute,I need to dispute an incorrect overcharge on my invoice
+billing_dispute,Explain this unfamiliar billing adjustment on my account
+billing_dispute,My refund credit is missing from my billing statement
+report_fraud,Someone made unauthorized charges on my stolen card
+report_fraud,I want to report identity theft and fraudulent activity
+report_fraud,My payment card was lost or stolen please freeze it
+report_fraud,There are transactions on my account that I never authorized
+report_fraud,My online account was hacked by someone else
+report_fraud,Report a compromised card and unauthorized purchase
+vip_concierge_support,Connect me with my dedicated executive concierge advisor
+vip_concierge_support,Schedule a priority VIP concierge callback session
+vip_concierge_support,Access my enterprise tier concierge benefits
+vip_concierge_support,Request white glove account management assistance
+vip_concierge_support,Book a dedicated VIP specialist consultation
+vip_concierge_support,Use my enterprise concierge priority support line
+live_agent,Please connect me to a live human representative
+live_agent,I need to speak with a real customer support agent
+live_agent,Transfer me to a live advisor right away
+live_agent,Let me talk to a human supervisor on the phone
+live_agent,Can I chat with a live support person instead
+live_agent,Put me through to a live customer service specialist
