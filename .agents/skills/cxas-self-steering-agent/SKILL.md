@@ -61,7 +61,10 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    only when the model asks for it through a tool.
 1. **One root agent, no sub-agents.** A sub-agent handoff reaches the model as
    `transfer_to_agent(agent_name: "...")` plus history lines like `[Other Agent] said: ...`, so the model announces "transfers" the customer never
-   asked about. Keep one agent and swap task instructions inside it.
+   asked about. Keep one agent and swap task instructions inside it (if a
+   guardrail uses `transferAgent`, list only that escalation handler agent in
+   `childAgents` with no domain tool names in its description, while the
+   callback hides `transfer_to_agent`).
 1. **Progressive disclosure.** `instruction.txt` has a `<taskflow>` with three
    parts gated on the `current_playbook` and `current_task` variables: the
    playbook list (always shown), the open playbook's task list, and the loaded
@@ -251,7 +254,10 @@ is in the instruction it got for that state.
 
 ## Checklist
 
-- [ ] The root agent has no child agents.
+- [ ] The root agent has no conversational child agents (only guardrail
+  `transferAgent` handler agents may appear in `childAgents`, with no domain
+  tool names in their descriptions, while the callback hides
+  `transfer_to_agent`).
 - [ ] For a new agent, none of the sample's order tools or variables are left,
   and `GREETING`, the agent `description` and `<role>` describe it.
 - [ ] `VALID_PLAYBOOKS` and `PLAYBOOK_TASKS` match the instruction exactly.
