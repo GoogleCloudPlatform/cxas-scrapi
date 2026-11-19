@@ -1,6 +1,26 @@
 # Changelog
 
 
+## [1.12.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.11.0...v1.12.0) (2026-11-19)
+
+
+### Features
+
+* **arc:** cxas arc — CLI and client for the CX Agent Studio AI assistant ([282bc19](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/282bc19fe71af206b756e6565aebf333bb2ef958))
+* **env:** support boolean templating and overrides in environment configs ([eebf50f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/eebf50f59e8fef900e1bc13b682cf289e80725ee))
+* **skills:** add cxas-self-steering-agent skill ([810c33a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/810c33a18632fb45a3a58b442e18f7436aee8257))
+* **trace:** surface Python tool/callback span logs and per-turn raw JSON ([f9683cb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f9683cbd8e3e5440cf215c461fc73bd02c72e35b))
+
+
+### Bug Fixes
+
+* **cli:** prune resources deleted in CXAS on `cxas pull --overwrite` ([6f88ce1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6f88ce17c7f75b4b15f8c39eada69005b5ca29b3))
+* **cli:** prune resources deleted in CXAS on `cxas pull --overwrite` ([2eef242](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2eef24260ac5ac1696c2fdd0a66f11899924cb2c)), closes [#394](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/394)
+* harden CES SDK compatibility, lazy package imports, and non-TTY/symlink guards ([64de29d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/64de29d243bee16d3f99e5edbd66f237c0ab9af7))
+* **reporting:** search all candidate audio buckets for dual-bucket apps ([540531f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/540531f9faa78d2dec013ba956e27eb69b913c7f))
+* **trace:** resolve evaluationAudioRecordingConfig bucket for eval audio ([98f961e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/98f961ec0a1e4aa001fe0a852d0427dc8ca74747))
+* **trace:** resolve evaluationAudioRecordingConfig bucket for eval audio ([f8763c0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f8763c07b10509938ce16c4c4aed5ea8703b3a53))
+
 ## [1.11.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.10.0...v1.11.0) (2026-11-09)
 
 
