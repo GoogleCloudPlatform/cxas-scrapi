@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the `cxas push` pre-push firewall and 3-way drift gate."""
+"""Unit tests for the `cxas push` pre-push lint gate and 3-way drift gate."""
 
 import json
 import shutil
@@ -23,15 +23,77 @@ from unittest import mock
 
 import pytest
 
-from cxas_scrapi.build import (
-    compile_blueprint,
-    package_bundle_zip,
-    write_lockfile,
-)
+from cxas_scrapi.build import build_app, write_lockfile
 from cxas_scrapi.cli import main as cli_main
+from cxas_scrapi.core.packaging import package_app_archive
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
-BLUEPRINT_DIR = FIXTURES_DIR / "cymbal_blueprint"
+
+
+def _write_rung1_source(root: Path) -> tuple[Path, Path]:
+    """Minimal Rung 1 core/ + manifests/ for the drift-gate fixtures."""
+    core = root / "core"
+    _write_json(
+        core / "app.json",
+        {
+            "name": "cymbal-retail-digital",
+            "displayName": "@@brand.display_name@@ Conversational Banking",
+            "rootAgent": "root_agent",
+            "toolExecutionMode": "SEQUENTIAL",
+        },
+    )
+    (core / "global_instruction.txt").write_text(
+        "You assist @@brand.display_name@@ customers.\n", encoding="utf-8"
+    )
+    agents = {
+        "root_agent": (
+            "Route card questions to {@AGENT: credit_cards_agent} and "
+            "escalations to {@AGENT: human_interaction_agent}.\n"
+        ),
+        "credit_cards_agent": "Handle @@brand.display_name@@ card requests.\n",
+        "human_interaction_agent": "Escalate to a live advisor.\n",
+    }
+    for name, instr in agents.items():
+        data: dict[str, Any] = {
+            "displayName": name,
+            "description": f"{name} for @@brand.display_name@@",
+            "instruction": f"agents/{name}/instruction.txt",
+            "tools": ["end_session"] if name == "root_agent" else [],
+        }
+        if name == "root_agent":
+            data["childAgents"] = [
+                "credit_cards_agent",
+                "human_interaction_agent",
+            ]
+        _write_json(core / "agents" / name / f"{name}.json", data)
+        (core / "agents" / name / "instruction.txt").write_text(
+            instr, encoding="utf-8"
+        )
+    man = root / "manifests"
+    (man / "brands" / "cymbal_retail").mkdir(parents=True)
+    (man / "brands" / "cymbal_retail" / "identity.yaml").write_text(
+        "brand_id: cymbal_retail\ndisplay_name: Cymbal Retail Bank\n",
+        encoding="utf-8",
+    )
+    (man / "brands" / "cymbal_retail" / "channel_policy.yaml").write_text(
+        "brand_id: cymbal_retail\nchannels:\n  WEB: {}\n", encoding="utf-8"
+    )
+    (man / "envs").mkdir(parents=True)
+    (man / "envs" / "dev.yaml").write_text(
+        "environment: dev\nlocked: true\n", encoding="utf-8"
+    )
+    return core, man
+
+
+def _compile_rung1(dist_dir: Path, *, write_locks: bool = False) -> Path:
+    core, man = _write_rung1_source(dist_dir.parent / "rung1_src")
+    bundle = dist_dir / "cymbal_retail-digital"
+    build_app(core, man, "cymbal_retail", "WEB", "dev", bundle)
+    if write_locks:
+        write_lockfile(bundle)
+    return bundle
+
+
 TARGET_APP_NAME = "projects/test-proj/locations/us/apps/cymbal-retail-digital"
 
 
@@ -133,17 +195,11 @@ def _invoke_cxas_push(argv: list[str]) -> None:
         cli_main.main()
 
 
-def test_push_aborts_before_import_app_on_firewall_violation(
+def test_push_aborts_before_import_app_on_lint_violation(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     lock_path = dist_dir / "cymbal_retail-digital.lock.json"
     live_clean = _materialize_live_snapshot(
@@ -152,10 +208,11 @@ def test_push_aborts_before_import_app_on_firewall_violation(
         FIXTURES_DIR / "live_volatile_overlay",
     )
 
-    app_json_path = bundle_dir / "app.json"
-    app_json = _read_json(app_json_path)
-    app_json["locked"] = False
-    _write_json(app_json_path, app_json)
+    gi_path = bundle_dir / "global_instruction.txt"
+    gi_path.write_text(
+        gi_path.read_text(encoding="utf-8") + "Call @@brand.support@@.\n",
+        encoding="utf-8",
+    )
 
     with pytest.raises(SystemExit) as exc_info:
         _invoke_cxas_push(
@@ -168,14 +225,12 @@ def test_push_aborts_before_import_app_on_firewall_violation(
                 "test-proj",
                 "--location",
                 "us",
-                "--firewall",
+                "--lint",
                 "--check-drift",
                 "--live-dir",
                 str(live_clean),
                 "--lockfile",
                 str(lock_path),
-                "--blueprint",
-                str(BLUEPRINT_DIR),
             ]
         )
     assert exc_info.value.code == 1
@@ -186,13 +241,7 @@ def test_push_aborts_before_import_app_on_live_drift(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     lock_path = dist_dir / "cymbal_retail-digital.lock.json"
     live_drift = _materialize_live_snapshot(
@@ -212,14 +261,12 @@ def test_push_aborts_before_import_app_on_live_drift(
                 "test-proj",
                 "--location",
                 "us",
-                "--firewall",
+                "--lint",
                 "--check-drift",
                 "--live-dir",
                 str(live_drift),
                 "--lockfile",
                 str(lock_path),
-                "--blueprint",
-                str(BLUEPRINT_DIR),
             ]
         )
     assert exc_info.value.code == 1
@@ -230,12 +277,7 @@ def test_push_aborts_before_import_app_on_live_conflict(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-    )
+    _compile_rung1(dist_dir)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     lock_path = write_lockfile(bundle_dir)
 
@@ -266,14 +308,12 @@ def test_push_aborts_before_import_app_on_live_conflict(
                 "test-proj",
                 "--location",
                 "us",
-                "--firewall",
+                "--lint",
                 "--check-drift",
                 "--live-dir",
                 str(live_conflict),
                 "--lockfile",
                 str(lock_path),
-                "--blueprint",
-                str(BLUEPRINT_DIR),
                 "--conflicts-dir",
                 str(conflicts_dir),
             ]
@@ -287,13 +327,7 @@ def test_push_aborts_before_import_app_on_live_orphan(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     lock_path = dist_dir / "cymbal_retail-digital.lock.json"
     live_orphan = _materialize_live_snapshot(
@@ -313,14 +347,12 @@ def test_push_aborts_before_import_app_on_live_orphan(
                 "test-proj",
                 "--location",
                 "us",
-                "--firewall",
+                "--lint",
                 "--check-drift",
                 "--live-dir",
                 str(live_orphan),
                 "--lockfile",
                 str(lock_path),
-                "--blueprint",
-                str(BLUEPRINT_DIR),
             ]
         )
     assert exc_info.value.code == 1
@@ -331,13 +363,7 @@ def test_push_succeeds_and_calls_import_app_when_clean(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     lock_path = dist_dir / "cymbal_retail-digital.lock.json"
     live_clean = _materialize_live_snapshot(
@@ -356,14 +382,12 @@ def test_push_succeeds_and_calls_import_app_when_clean(
             "test-proj",
             "--location",
             "us",
-            "--firewall",
+            "--lint",
             "--check-drift",
             "--live-dir",
             str(live_clean),
             "--lockfile",
             str(lock_path),
-            "--blueprint",
-            str(BLUEPRINT_DIR),
         ]
     )
 
@@ -378,13 +402,7 @@ def test_push_succeeds_when_force_ours_resolves_dirty_resource(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     lock_path = dist_dir / "cymbal_retail-digital.lock.json"
     live_drift = _materialize_live_snapshot(
@@ -403,14 +421,12 @@ def test_push_succeeds_when_force_ours_resolves_dirty_resource(
             "test-proj",
             "--location",
             "us",
-            "--firewall",
+            "--lint",
             "--check-drift",
             "--live-dir",
             str(live_drift),
             "--lockfile",
             str(lock_path),
-            "--blueprint",
-            str(BLUEPRINT_DIR),
             "--force-ours",
             "agents/human_interaction_agent",
         ]
@@ -423,13 +439,7 @@ def test_push_check_drift_without_live_dir_exports_live_zip_and_aborts_on_drift(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     lock_path = dist_dir / "cymbal_retail-digital.lock.json"
 
@@ -438,7 +448,7 @@ def test_push_check_drift_without_live_dir_exports_live_zip_and_aborts_on_drift(
         tmp_path / "live_drift_export" / "cymbal_retail-digital",
         FIXTURES_DIR / "live_cymbal_retail_digital_drift",
     )
-    exported_zip = package_bundle_zip(
+    exported_zip = package_app_archive(
         live_drift, tmp_path / "remote_drift_export.zip"
     )
     exported_bytes = exported_zip.read_bytes()
@@ -470,12 +480,10 @@ def test_push_check_drift_without_live_dir_exports_live_zip_and_aborts_on_drift(
                 "test-proj",
                 "--location",
                 "us",
-                "--firewall",
+                "--lint",
                 "--check-drift",
                 "--lockfile",
                 str(lock_path),
-                "--blueprint",
-                str(BLUEPRINT_DIR),
             ]
         )
     assert exc_info.value.code == 1
@@ -487,13 +495,7 @@ def test_push_check_drift_without_live_dir_exports_live_zip_and_imports_when_cle
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     lock_path = dist_dir / "cymbal_retail-digital.lock.json"
 
@@ -502,7 +504,7 @@ def test_push_check_drift_without_live_dir_exports_live_zip_and_imports_when_cle
         tmp_path / "live_clean_export" / "cymbal_retail-digital",
         FIXTURES_DIR / "live_volatile_overlay",
     )
-    exported_zip = package_bundle_zip(
+    exported_zip = package_app_archive(
         live_clean, tmp_path / "remote_clean_export.zip"
     )
     exported_bytes = exported_zip.read_bytes()
@@ -521,12 +523,10 @@ def test_push_check_drift_without_live_dir_exports_live_zip_and_imports_when_cle
             "test-proj",
             "--location",
             "us",
-            "--firewall",
+            "--lint",
             "--check-drift",
             "--lockfile",
             str(lock_path),
-            "--blueprint",
-            str(BLUEPRINT_DIR),
         ]
     )
 
@@ -534,19 +534,20 @@ def test_push_check_drift_without_live_dir_exports_live_zip_and_imports_when_cle
     mock_apps_client.import_app.assert_called_once()
 
 
-def test_s2_push_firewall_succeeds_for_standalone_default_agent_bundle(
+def test_s2_push_lint_succeeds_for_standalone_default_agent_bundle(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     standalone_dir = tmp_path / "standalone_app"
     _write_json(
         standalone_dir / "app.json",
         {
+            "name": "standalone-app",
             "displayName": "Standalone Banking Assistant",
             "globalInstruction": "global_instruction.txt",
             "guardrails": [],
             "locked": True,
             "modelSettings": {
-                "model": "gemini-2.5-flash-001",
+                "model": "gemini-3.5-flash",
                 "temperature": 1.0,
             },
             "rootAgent": "default_agent",
@@ -564,8 +565,8 @@ def test_s2_push_firewall_succeeds_for_standalone_default_agent_bundle(
             "description": "Entry routing agent",
             "displayName": "default_agent",
             "instruction": "agents/default_agent/instruction.txt",
-            "modelSettings": {"model": "gemini-2.5-flash-001"},
-            "tools": [],
+            "modelSettings": {"model": "gemini-3.5-flash"},
+            "tools": ["end_session"],
         },
     )
     (
@@ -580,7 +581,7 @@ def test_s2_push_firewall_succeeds_for_standalone_default_agent_bundle(
             "description": "Billing specialist agent",
             "displayName": "billing_agent",
             "instruction": "agents/billing_agent/instruction.txt",
-            "modelSettings": {"model": "gemini-2.5-flash-001"},
+            "modelSettings": {"model": "gemini-3.5-flash"},
             "tools": [],
         },
     )
@@ -598,7 +599,7 @@ def test_s2_push_firewall_succeeds_for_standalone_default_agent_bundle(
             "test-proj",
             "--location",
             "us",
-            "--firewall",
+            "--lint",
         ]
     )
     mock_apps_client.import_app.assert_called_once()
@@ -610,13 +611,7 @@ def test_s3_push_check_drift_handles_corrupt_zip_and_export_rpc_error_cleanly(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     lock_path = dist_dir / "cymbal_retail-digital.lock.json"
 
@@ -676,24 +671,19 @@ def test_s3_push_check_drift_handles_corrupt_zip_and_export_rpc_error_cleanly(
     mock_apps_client.import_app.assert_not_called()
 
 
-def test_s3_push_firewall_fails_fast_before_remote_lookup_or_export(
+def test_s3_push_lint_fails_fast_before_remote_lookup_or_export(
     tmp_path: Path,
     mock_apps_client: Any,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
-    app_json_path = bundle_dir / "app.json"
-    app_json = _read_json(app_json_path)
-    app_json["locked"] = False
-    _write_json(app_json_path, app_json)
+    gi_path = bundle_dir / "global_instruction.txt"
+    gi_path.write_text(
+        gi_path.read_text(encoding="utf-8") + "Call @@brand.support@@.\n",
+        encoding="utf-8",
+    )
 
     capsys.readouterr()
     with pytest.raises(SystemExit) as exc_info:
@@ -707,10 +697,8 @@ def test_s3_push_firewall_fails_fast_before_remote_lookup_or_export(
                 "test-proj",
                 "--location",
                 "us",
-                "--firewall",
+                "--lint",
                 "--check-drift",
-                "--blueprint",
-                str(BLUEPRINT_DIR),
             ]
         )
     assert exc_info.value.code == 1
@@ -727,13 +715,7 @@ def test_s4_push_check_drift_auto_discovers_sibling_lockfile_when_omitted(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     dist_dir = tmp_path / "dist"
-    compile_blueprint(
-        BLUEPRINT_DIR,
-        dist_dir,
-        brand="cymbal_retail",
-        modality="digital",
-        write_locks=True,
-    )
+    _compile_rung1(dist_dir, write_locks=True)
     bundle_dir = dist_dir / "cymbal_retail-digital"
     sibling_lock = dist_dir / "cymbal_retail-digital.lock.json"
     assert sibling_lock.is_file()
@@ -743,7 +725,7 @@ def test_s4_push_check_drift_auto_discovers_sibling_lockfile_when_omitted(
         tmp_path / "live_deleted_guide",
         FIXTURES_DIR / "live_volatile_overlay",
     )
-    shutil.rmtree(live_deleted / "agents" / "guide_agent")
+    shutil.rmtree(live_deleted / "agents" / "human_interaction_agent")
 
     capsys.readouterr()
     with pytest.raises(SystemExit) as exc_info:
@@ -764,5 +746,5 @@ def test_s4_push_check_drift_auto_discovers_sibling_lockfile_when_omitted(
         )
     assert exc_info.value.code == 1
     err_out = capsys.readouterr().err
-    assert "agents/guide_agent=DRIFT" in err_out
+    assert "agents/human_interaction_agent=DRIFT" in err_out
     mock_apps_client.import_app.assert_not_called()

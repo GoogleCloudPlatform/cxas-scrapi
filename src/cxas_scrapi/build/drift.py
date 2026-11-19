@@ -27,18 +27,16 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from cxas_scrapi.build.blueprint_schemas import (
-    BlueprintCompilerError,
+from cxas_scrapi.build.bundle_io import (
+    BuildGateError,
     DriftGateError,
     DriftReport,
-    FirewallError,
     NormalizedResource,
     ResourceDrift,
     load_json_dict_strict,
     read_utf8_strict,
     write_canonical_json,
 )
-from cxas_scrapi.build.firewall import run_firewall
 from cxas_scrapi.core.python_bundler import (
     PythonBundlerError,
     inspect_entrypoint_bundle,
@@ -46,8 +44,6 @@ from cxas_scrapi.core.python_bundler import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-    from cxas_scrapi.build.firewall import FirewallProfile
 
 VOLATILE_JSON_KEYS: frozenset[str] = frozenset(
     {"uuid", "uid", "etag", "createTime", "updateTime"}
@@ -63,8 +59,8 @@ NAME_KEYED_LIST_KEYS: frozenset[str] = frozenset({"variableDeclarations"})
 # app.json keys that describe the CES control plane rather than bundle content:
 # `displayName` is chosen at push time (`cxas push --display-name`); `locked`
 # is never present in a CES export (GetApp reports it, the export omits it) and
-# is applied by `cxas push` via UpdateApp after import (FW09 governs the
-# bundle's declaration).
+# is applied by `cxas push` via UpdateApp after import (the env manifest's
+# `locked:` declares it in the compiled app.json).
 APP_CONTROL_PLANE_KEYS: frozenset[str] = frozenset({"displayName", "locked"})
 # Values CES adds server-side when a bundle does not set them. A key is
 # ignored only when its normalized value equals the server default, so a real
@@ -198,9 +194,7 @@ def extract_normalized_resources(
     """Extracts volatile-stripped canonical resources from an app export dir."""
     root = Path(app_dir).resolve()
     if not root.is_dir():
-        raise BlueprintCompilerError(
-            f"App export directory does not exist: {root}"
-        )
+        raise BuildGateError(f"App export directory does not exist: {root}")
 
     resources: dict[str, NormalizedResource] = {}
 
@@ -295,7 +289,7 @@ def extract_normalized_resources(
                                 )
                             )
                         except PythonBundlerError as exc:
-                            raise BlueprintCompilerError(str(exc)) from exc
+                            raise BuildGateError(str(exc)) from exc
                         extra_files[rel_posix] = clean_py.replace(
                             "\r\n", "\n"
                         ).splitlines()
@@ -353,13 +347,13 @@ def _load_lockfile_resources(
     data = load_json_dict_strict(lockfile_path, context="lockfile")
     raw_res = data.get("resources", {})
     if not isinstance(raw_res, dict):
-        raise BlueprintCompilerError(
+        raise BuildGateError(
             f"Invalid lockfile {lockfile_path}: 'resources' must be an object."
         )
     loaded: dict[str, NormalizedResource] = {}
     for res_id, entry in raw_res.items():
         if not isinstance(entry, dict) or "sha256" not in entry:
-            raise BlueprintCompilerError(
+            raise BuildGateError(
                 f"Invalid lockfile {lockfile_path}: resource {res_id!r} "
                 "must be an object containing 'sha256'."
             )
@@ -424,7 +418,7 @@ def _two_way_conflict_lines(
             merged.extend(live_lines[i1:i2])
             merged.append("=======")
             merged.extend(ours_lines[j1:j2])
-            merged.append(">>>>>>> blueprint")
+            merged.append(">>>>>>> ours")
             hunk_count += 1
     return merged, hunk_count
 
@@ -561,12 +555,12 @@ def _resolve_resource_selectors(
     for raw_sel in selectors:
         sel = raw_sel.strip()
         if not sel:
-            raise BlueprintCompilerError(
+            raise BuildGateError(
                 f"Empty resource selector passed to {flag_name}."
             )
         if "/" in sel or sel == "app":
             if sel not in all_id_set:
-                raise BlueprintCompilerError(
+                raise BuildGateError(
                     f"Unknown resource selector {sel!r} for {flag_name}. "
                     f"Available resources: {sorted(all_id_set)}"
                 )
@@ -578,12 +572,12 @@ def _resolve_resource_selectors(
                 if rid == sel or rid.rsplit("/", 1)[-1] == sel
             ]
             if not matches:
-                raise BlueprintCompilerError(
+                raise BuildGateError(
                     f"Unknown bare-leaf selector {sel!r} for {flag_name}. "
                     f"Available resources: {sorted(all_id_set)}"
                 )
             if len(matches) > 1:
-                raise BlueprintCompilerError(
+                raise BuildGateError(
                     f"Ambiguous bare-leaf selector {sel!r} for {flag_name} "
                     f"matches multiple resources {matches}; specify full "
                     "'<category>/<name>'."
@@ -604,7 +598,7 @@ def _write_adopted_shared_modules(
     lib_parent = env_content_root if use_env_content else ours_bundle
     for mod_name, mod_src in sorted(parsed_modules.items()):
         if mod_name != "python_lib" and not mod_name.startswith("python_lib."):
-            raise BlueprintCompilerError(
+            raise BuildGateError(
                 "Refusing to write shared module outside python_lib: "
                 f"{mod_name!r}"
             )
@@ -615,7 +609,7 @@ def _write_adopted_shared_modules(
         )
         rel_path = Path(rel_str)
         if ".." in rel_path.parts:
-            raise BlueprintCompilerError(
+            raise BuildGateError(
                 f"Invalid module path {rel_str!r} in shared bundle."
             )
         target_py = lib_parent / rel_path
@@ -689,7 +683,7 @@ def _adopt_live_resource_into_ours(
                             read_utf8_strict(src_file, context="live JSON")
                         )
                     except ValueError as exc:
-                        raise BlueprintCompilerError(
+                        raise BuildGateError(
                             f"Corrupt JSON in {src_file}: {exc}"
                         ) from exc
                 norm_obj = normalize_json_obj(raw_obj, is_root=is_root_json)
@@ -717,7 +711,7 @@ def _adopt_live_resource_into_ours(
                         )
                     )
                 except PythonBundlerError as exc:
-                    raise BlueprintCompilerError(str(exc)) from exc
+                    raise BuildGateError(str(exc)) from exc
                 dst_file.write_text(
                     clean_py.replace("\r\n", "\n"),
                     encoding="utf-8",
@@ -815,13 +809,11 @@ def check_drift(
     *,
     lockfile_path: Path | str | None = None,
     lockfile: Path | str | None = None,
-    blueprint_dir: Path | str | None = None,
     conflicts_dir: Path | str | None = None,
     accept_live: Sequence[str] = (),
     force_ours: Sequence[str] = (),
     git_mirror: Path | str | None = None,
     git_mirror_dir: Path | str | None = None,
-    firewall_profile: FirewallProfile = "strict",
 ) -> DriftReport:
     """Runs per-resource 3-way (`base` vs. `ours` vs. `live`) drift check."""
     dist_root = Path(dist_dir).resolve()
@@ -832,7 +824,7 @@ def check_drift(
     if eff_lock is not None:
         resolved_lock = Path(eff_lock).resolve()
         if not resolved_lock.is_file():
-            raise BlueprintCompilerError(
+            raise BuildGateError(
                 f"Explicit lockfile does not exist: {resolved_lock}"
             )
     else:
@@ -867,7 +859,7 @@ def check_drift(
     )
     overlap = sorted(accept_resolved & force_resolved)
     if overlap:
-        raise BlueprintCompilerError(
+        raise BuildGateError(
             f"Resource(s) {overlap} cannot specify both --accept-live and "
             "--force-ours."
         )
@@ -966,24 +958,6 @@ def check_drift(
             )
 
         if lock_updated:
-            fw_violations = run_firewall(
-                ours_bundle,
-                blueprint_dir=blueprint_dir,
-                profile=firewall_profile,
-            )
-            if fw_violations:
-                if ours_bundle.exists():
-                    shutil.rmtree(ours_bundle)
-                if backup_bundle.is_dir():
-                    shutil.copytree(backup_bundle, ours_bundle)
-                summary = "; ".join(str(v) for v in fw_violations)
-                raise FirewallError(
-                    f"Refusing --accept-live for {app_id}: accepted live "
-                    "state violates static firewall "
-                    f"({len(fw_violations)} violation(s)): {summary}",
-                    violations=fw_violations,
-                )
-
             refreshed_ours = extract_normalized_resources(ours_bundle)
             ours_map = dict(refreshed_ours)
             for acc_id in accepted_ids:
@@ -1045,35 +1019,13 @@ def enforce_pre_push_gate(
     app_id: str | None = None,
     live_dir: Path | str | None = None,
     lockfile_path: Path | str | None = None,
-    blueprint_dir: Path | str | None = None,
     conflicts_dir: Path | str | None = None,
     force_ours: Sequence[str] = (),
-    run_static_firewall: bool = True,
-    firewall_profile: FirewallProfile = "strict",
 ) -> DriftReport | None:
-    """Enforces static firewall and optional 3-way drift gate prior to push."""
-    if firewall_profile not in ("strict", "standard"):
-        raise BlueprintCompilerError(
-            f"Unsupported firewall profile {firewall_profile!r}; "
-            "expected 'strict' or 'standard'."
-        )
+    """Enforces the optional 3-way drift gate prior to push."""
     raw_dir = Path(app_dir).resolve()
     eff_app_id = app_id or raw_dir.name
     bundle_dir = _resolve_app_bundle_dir(raw_dir, eff_app_id)
-
-    if run_static_firewall:
-        violations = run_firewall(
-            bundle_dir,
-            blueprint_dir=blueprint_dir,
-            profile=firewall_profile,
-        )
-        if violations:
-            summary = "; ".join(str(v) for v in violations)
-            raise DriftGateError(
-                f"Push refused for {eff_app_id}: {len(violations)} firewall "
-                f"violation(s): {summary}",
-                violations=violations,
-            )
 
     if live_dir is not None:
         report = check_drift(
@@ -1081,10 +1033,8 @@ def enforce_pre_push_gate(
             bundle_dir,
             live_dir,
             lockfile_path=lockfile_path,
-            blueprint_dir=blueprint_dir,
             conflicts_dir=conflicts_dir,
             force_ours=force_ours,
-            firewall_profile=firewall_profile,
         )
         if report.has_unresolved:
             dirty = [

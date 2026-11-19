@@ -28,7 +28,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from cxas_scrapi.build import BlueprintCompilerError, enforce_pre_push_gate
+from cxas_scrapi.build import BuildGateError, enforce_pre_push_gate
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.python_bundler import (
@@ -406,14 +406,14 @@ def _export_live_app_to_dir(
                 lro_resp = export_res.result()
                 raw_bytes = getattr(lro_resp, "app_content", None)
             if not isinstance(raw_bytes, (bytes, bytearray)):
-                raise BlueprintCompilerError(
+                raise BuildGateError(
                     f"Failed to export live app {target_app_name!r} for drift "
                     "gate."
                 )
-    except BlueprintCompilerError:
+    except BuildGateError:
         raise
     except Exception as exc:
-        raise BlueprintCompilerError(
+        raise BuildGateError(
             f"Failed to export live app {target_app_name!r} for drift gate: "
             f"{exc}"
         ) from exc
@@ -429,14 +429,14 @@ def _export_live_app_to_dir(
                 if os.path.commonpath(
                     [str(abs_extract), str(dest_member)]
                 ) != str(abs_extract):
-                    raise BlueprintCompilerError(
+                    raise BuildGateError(
                         f"Unsafe archive path in live export: {info.filename}"
                     )
             zf.extractall(abs_extract)
-    except BlueprintCompilerError:
+    except BuildGateError:
         raise
     except (OSError, zipfile.BadZipFile) as exc:
-        raise BlueprintCompilerError(
+        raise BuildGateError(
             f"Invalid ZIP archive exported from live app "
             f"{target_app_name!r}: {exc}"
         ) from exc
@@ -457,19 +457,41 @@ def _export_live_app_to_dir(
     return abs_extract
 
 
+def _run_lint_gate(app_dir: str, args: argparse.Namespace) -> None:
+    """`cxas push --lint`: refuses the push on any lint error."""
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
+        collect_lint_report,
+    )
+
+    manifests_dir = getattr(args, "manifests_dir", None)
+    report = collect_lint_report(
+        Path(app_dir),
+        manifests_dir=Path(manifests_dir) if manifests_dir else None,
+    )
+    if report.errors:
+        print(
+            f"Pre-push gate failed: lint reported {len(report.errors)} "
+            "error(s):",
+            file=sys.stderr,
+        )
+        for err in report.errors:
+            print(
+                f"  [{err.rule_id}] {err.file}: {err.message}", file=sys.stderr
+            )
+        sys.exit(1)
+    print(f"Lint gate passed: 0 error(s), {len(report.warnings)} warning(s).")
+
+
 def _maybe_run_pre_push_gate(
     app_dir: str,
     apps_client: Apps | None,
     target_app_name: str | None,
     args: argparse.Namespace | None,
-    *,
-    firewall_already_ran: bool = False,
 ) -> None:
-    """Runs static firewall and/or 3-way drift gate prior to importing."""
+    """Runs the 3-way drift gate prior to importing (when requested)."""
     if args is None:
         return
 
-    run_fw = bool(getattr(args, "firewall", False)) and not firewall_already_ran
     live_dir = getattr(args, "live_dir", None)
     lockfile = getattr(args, "lockfile", None)
     want_drift = bool(
@@ -477,18 +499,16 @@ def _maybe_run_pre_push_gate(
         or live_dir is not None
         or lockfile is not None
     )
-    if not run_fw and not want_drift:
+    if not want_drift:
         return
 
-    blueprint_dir = getattr(args, "blueprint", None)
     conflicts_dir = getattr(args, "conflicts_dir", None)
     force_ours = tuple(getattr(args, "force_ours", None) or ())
-    firewall_profile = getattr(args, "firewall_profile", "strict") or "strict"
 
     try:
-        if want_drift and live_dir is None:
+        if live_dir is None:
             if not target_app_name or apps_client is None:
-                raise BlueprintCompilerError(
+                raise BuildGateError(
                     "Pre-push drift check without --live-dir requires an "
                     "existing target app (--to or --app-name)."
                 )
@@ -496,35 +516,34 @@ def _maybe_run_pre_push_gate(
                 eff_live_dir = _export_live_app_to_dir(
                     apps_client, target_app_name, Path(tmp_live_root)
                 )
-                enforce_pre_push_gate(
+                report = enforce_pre_push_gate(
                     app_dir,
                     live_dir=eff_live_dir,
                     lockfile_path=lockfile,
-                    blueprint_dir=blueprint_dir,
                     conflicts_dir=conflicts_dir,
                     force_ours=force_ours,
-                    run_static_firewall=run_fw,
-                    firewall_profile=firewall_profile,
                 )
         else:
-            enforce_pre_push_gate(
+            report = enforce_pre_push_gate(
                 app_dir,
                 live_dir=live_dir,
                 lockfile_path=lockfile,
-                blueprint_dir=blueprint_dir,
                 conflicts_dir=conflicts_dir,
                 force_ours=force_ours,
-                run_static_firewall=run_fw,
-                firewall_profile=firewall_profile,
             )
-    except (BlueprintCompilerError, PythonBundlerError) as exc:
+    except (BuildGateError, PythonBundlerError) as exc:
         print(f"Pre-push gate failed: {exc}", file=sys.stderr)
         sys.exit(1)
+    if report is not None:
+        n_clean = sum(1 for r in report.resources if r.status == "CLEAN")
+        print(
+            f"Drift gate passed: {n_clean}/{len(report.resources)} "
+            "resource(s) CLEAN, 0 unresolved."
+        )
 
 
 def app_push(args: argparse.Namespace) -> str | None:
     """Handles the 'push' command."""
-    # We will reuse the deploy_agent logic from main.py, slightly adjusted.
     app_dir = args.app_dir if args.app_dir else "."
     print(f"Pushing app from {app_dir}...")
 
@@ -532,7 +551,6 @@ def app_push(args: argparse.Namespace) -> str | None:
     app_name_arg = getattr(args, "app_name", None)
     identifier = target_app or app_name_arg
 
-    run_fw = bool(getattr(args, "firewall", False))
     live_dir_arg = getattr(args, "live_dir", None)
     lockfile_arg = getattr(args, "lockfile", None)
     want_drift = bool(
@@ -550,9 +568,11 @@ def app_push(args: argparse.Namespace) -> str | None:
         )
         sys.exit(1)
 
+    if getattr(args, "lint", False):
+        _run_lint_gate(app_dir, args)
+
     gate_ran_offline = False
-    firewall_ran_offline = False
-    if (run_fw or want_drift) and not needs_remote_export:
+    if want_drift and not needs_remote_export:
         _maybe_run_pre_push_gate(
             app_dir=app_dir,
             apps_client=None,
@@ -560,21 +580,6 @@ def app_push(args: argparse.Namespace) -> str | None:
             args=args,
         )
         gate_ran_offline = True
-    elif run_fw and needs_remote_export:
-        firewall_profile = (
-            getattr(args, "firewall_profile", "strict") or "strict"
-        )
-        try:
-            enforce_pre_push_gate(
-                app_dir,
-                blueprint_dir=getattr(args, "blueprint", None),
-                run_static_firewall=True,
-                firewall_profile=firewall_profile,
-            )
-        except (BlueprintCompilerError, PythonBundlerError) as exc:
-            print(f"Pre-push gate failed: {exc}", file=sys.stderr)
-            sys.exit(1)
-        firewall_ran_offline = True
 
     if identifier:
         apps_client, app_name, display_name = _resolve_app_args(
@@ -599,12 +604,11 @@ def app_push(args: argparse.Namespace) -> str | None:
         env_file=getattr(args, "env_file", None),
         args=args,
         _skip_pre_push_gate=gate_ran_offline,
-        _firewall_already_ran=firewall_ran_offline,
     )
 
 
 def _bundle_declares_lock(app_dir: str) -> bool:
-    """True when the bundle's app.json declares the governed lock (FW09)."""
+    """True when the bundle's app.json declares the governed lock."""
     app_json = Path(app_dir) / "app.json"
     if not app_json.is_file():
         return False
@@ -651,7 +655,6 @@ def _app_push(
     args: argparse.Namespace | None = None,
     *,
     _skip_pre_push_gate: bool = False,
-    _firewall_already_ran: bool = False,
 ) -> str | None:
     """Helper to push an app to CXAS."""
     if not _skip_pre_push_gate:
@@ -660,7 +663,6 @@ def _app_push(
             apps_client=apps_client,
             target_app_name=target_app_name,
             args=args,
-            firewall_already_ran=_firewall_already_ran,
         )
 
     from cxas_scrapi.core.packaging import package_app_archive
@@ -1068,6 +1070,12 @@ def app_lint(args: argparse.Namespace) -> None:
         model_override=model_override,
         env_file=resolved_env_file,
     )
+    manifests_arg = getattr(args, "manifests_dir", None)
+    context.manifests_dir = (
+        Path(manifests_arg).resolve() if manifests_arg else None
+    )
+    context.brand_id = getattr(args, "brand", None)
+    context.channel = getattr(args, "channel", None)
 
     if not json_output:
         print(f"Linting app: {discovery.app_root.name}")

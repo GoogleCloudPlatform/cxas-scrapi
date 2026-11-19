@@ -2806,16 +2806,23 @@ def get_parser() -> argparse.ArgumentParser:
         help="Synthesize pythonEnvFiles.yaml without mutating python_code.py",
     )
     parser_push.add_argument(
-        "--firewall",
+        "--lint",
         action="store_true",
         default=False,
-        help="Run static architecture firewall (FW01-FW10) before pushing.",
+        help=(
+            "Run `cxas lint` on the app directory before pushing and refuse "
+            "the push on any lint error (includes polymorphic rules "
+            "P001-P005 when brand context is available)."
+        ),
     )
     parser_push.add_argument(
-        "--firewall-profile",
-        choices=["strict", "standard"],
-        default="strict",
-        help="Firewall enforcement profile when --firewall is enabled.",
+        "--manifests-dir",
+        default=None,
+        help=(
+            "Rung 1 manifests directory, giving the --lint gate brand/channel "
+            "context (brand and channel come from the bundle's "
+            "deployments/*.yaml written by `cxas build`)."
+        ),
     )
     parser_push.add_argument(
         "--check-drift",
@@ -2835,11 +2842,6 @@ def get_parser() -> argparse.ArgumentParser:
         "--lockfile",
         default=None,
         help="Baseline <app>.lock.json lockfile path for pre-push drift check.",
-    )
-    parser_push.add_argument(
-        "--blueprint",
-        default=None,
-        help="Optional blueprint directory for pre-push firewall/drift check.",
     )
     parser_push.add_argument(
         "--conflicts-dir",
@@ -2870,6 +2872,24 @@ def get_parser() -> argparse.ArgumentParser:
         "--app-dir",
         default=".",
         help="Path to the app directory to lint (default: current directory).",
+    )
+    parser_lint.add_argument(
+        "--manifests-dir",
+        default=None,
+        help=(
+            "Rung 1 manifests directory used by polymorphic rules P001/P004 "
+            "(brand/channel come from deployments/*.yaml or --brand/--channel)."
+        ),
+    )
+    parser_lint.add_argument(
+        "--brand",
+        default=None,
+        help="Brand ID override for polymorphic lint rules.",
+    )
+    parser_lint.add_argument(
+        "--channel",
+        default=None,
+        help="Channel override for polymorphic lint rules.",
     )
     parser_lint.add_argument(
         "--env-file",

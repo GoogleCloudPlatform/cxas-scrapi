@@ -14,12 +14,11 @@
 
 """Regression tests for gaps found pushing a compiled bundle to real CES.
 
-1. FW09 vs CES import: CES rejects importing a bundle whose app.json has
-   ``locked: true`` (FAILED_PRECONDITION "App ... is locked"). The bundle keeps
-   ``locked: true`` as a governance declaration, and ``cxas push`` imports with
-   ``locked=false`` and applies the lock through ``UpdateApp`` afterwards.
-2. FW10 vs lint A005: CES built-in system tools (``end_session``) are
-   referenced by name with no ``tools/`` directory.
+1. Governed lock: CES rejects importing a bundle whose app.json has
+   ``locked: true`` (FAILED_PRECONDITION "App ... is locked"). ``cxas push``
+   imports with ``locked=false`` and applies the lock via ``UpdateApp``.
+2. CES system tools (``end_session``) are referenced by name with no
+   ``tools/`` directory; lint's platform-tool allowlist is the single source.
 3. Drift normalizer: CES round-trip canonicalization must read as CLEAN.
 """
 
@@ -33,19 +32,16 @@ from typing import Any
 from unittest import mock
 
 import pytest
-import yaml
 
-from cxas_scrapi.build import compile_blueprint, write_lockfile
+from cxas_scrapi.build import write_lockfile
 from cxas_scrapi.build.drift import (
     check_drift,
     extract_normalized_resources,
 )
-from cxas_scrapi.build.firewall import CES_SYSTEM_TOOLS, run_firewall
 from cxas_scrapi.cli import main as cli_main
-from cxas_scrapi.utils.linter import LintContext
+from cxas_scrapi.utils.linter import CES_PLATFORM_SYSTEM_TOOLS, LintContext
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
-BLUEPRINT_DIR = FIXTURES_DIR / "cymbal_blueprint"
 ROUNDTRIP_DIR = FIXTURES_DIR / "ces_roundtrip_digital"
 TARGET_APP_NAME = "projects/test-proj/locations/us/apps/cymbal-retail-digital"
 
@@ -62,64 +58,25 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def _compile_cymbal(
-    tmp_path: Path, blueprint_dir: Path = BLUEPRINT_DIR
-) -> Path:
-    out = tmp_path / "dist"
-    compile_blueprint(
-        blueprint_dir,
-        out,
-        brand_filter="cymbal_retail",
-        modality_filter="digital",
-    )
-    return out / "cymbal_retail-digital"
+def _locked_bundle(tmp_path: Path) -> Path:
+    """Real compiled bundle (sanitized fixture) declaring the governed lock."""
+    bundle = tmp_path / "bundle"
+    shutil.copytree(ROUNDTRIP_DIR / "ours", bundle)
+    app = _read_json(bundle / "app.json")
+    app["locked"] = True
+    _write_json(bundle / "app.json", app)
+    return bundle
 
 
-# --------------------------------------------------------------------------
-# Fix 2: FW10 system-tool allowlist (agrees with lint A005 platform tools)
-# --------------------------------------------------------------------------
-
-
-def test_fw10_system_tool_allowlist_matches_lint_platform_tools() -> None:
-    assert "end_session" in CES_SYSTEM_TOOLS
-    assert set(CES_SYSTEM_TOOLS) == set(
+def test_system_tool_allowlist_is_lints_platform_tools() -> None:
+    assert "end_session" in CES_PLATFORM_SYSTEM_TOOLS
+    assert set(CES_PLATFORM_SYSTEM_TOOLS) == set(
         LintContext(Path("."), Path("."), Path(".")).platform_tools
     )
 
 
-def test_fw10_allows_end_session_without_tool_dir_but_flags_unknown(
-    tmp_path: Path,
-) -> None:
-    bp_copy = tmp_path / "bp"
-    shutil.copytree(BLUEPRINT_DIR, bp_copy)
-    bp_yaml = bp_copy / "blueprint.yaml"
-    data = yaml.safe_load(bp_yaml.read_text(encoding="utf-8"))
-    data["root_agent"]["tools"] = ["end_session"]
-    bp_yaml.write_text(
-        yaml.safe_dump(data, allow_unicode=True), encoding="utf-8"
-    )
-
-    bundle = _compile_cymbal(tmp_path, bp_copy)
-    root_json = _read_json(bundle / "agents" / "root_agent" / "root_agent.json")
-    assert root_json["tools"] == ["end_session"]
-    assert not (bundle / "tools" / "end_session").exists()
-
-    violations = run_firewall(bundle, blueprint_dir=bp_copy)
-    assert [v for v in violations if v.rule_id == "FW10"] == []
-
-    root_json["tools"] = ["end_session", "bogus_tool"]
-    _write_json(bundle / "agents" / "root_agent" / "root_agent.json", root_json)
-    fw10 = [
-        v
-        for v in run_firewall(bundle, blueprint_dir=bp_copy)
-        if v.rule_id == "FW10"
-    ]
-    assert len(fw10) == 1
-    assert "bogus_tool" in fw10[0].message
-
-
 # --------------------------------------------------------------------------
-# Fix 1: push imports unlocked, then applies the governed lock
+# Governed lock: push imports unlocked, then applies the lock
 # --------------------------------------------------------------------------
 
 
@@ -161,7 +118,7 @@ def _push(argv: list[str]) -> None:
 def test_push_imports_unlocked_payload_then_applies_lock(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
-    bundle = _compile_cymbal(tmp_path)
+    bundle = _locked_bundle(tmp_path)
     assert _read_json(bundle / "app.json")["locked"] is True
 
     manager = mock.MagicMock()
@@ -175,9 +132,6 @@ def test_push_imports_unlocked_payload_then_applies_lock(
             "--to",
             TARGET_APP_NAME,
             "--overwrite",
-            "--firewall",
-            "--blueprint",
-            str(BLUEPRINT_DIR),
         ]
     )
 
@@ -198,7 +152,7 @@ def test_push_unlocks_already_locked_target_then_relocks(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
     mock_apps_client.get_app.return_value.locked = True
-    bundle = _compile_cymbal(tmp_path)
+    bundle = _locked_bundle(tmp_path)
 
     manager = mock.MagicMock()
     manager.attach_mock(mock_apps_client.import_app, "import_app")
@@ -219,7 +173,7 @@ def test_push_relocks_previously_locked_target_when_import_fails(
 ) -> None:
     mock_apps_client.get_app.return_value.locked = True
     mock_apps_client.import_app.side_effect = RuntimeError("boom")
-    bundle = _compile_cymbal(tmp_path)
+    bundle = _locked_bundle(tmp_path)
 
     with pytest.raises(SystemExit):
         _push(
@@ -235,7 +189,7 @@ def test_push_relocks_previously_locked_target_when_import_fails(
 def test_push_unlocked_bundle_to_unlocked_target_never_calls_update_app(
     tmp_path: Path, mock_apps_client: Any
 ) -> None:
-    bundle = _compile_cymbal(tmp_path)
+    bundle = _locked_bundle(tmp_path)
     app = _read_json(bundle / "app.json")
     app["locked"] = False
     _write_json(bundle / "app.json", app)
