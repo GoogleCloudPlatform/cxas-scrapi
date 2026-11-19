@@ -887,3 +887,96 @@ def test_trace_transcribe_audio_failure(fake_traces: typing.Any) -> None:
     args = _ns(conversation_id="c1")
     with pytest.raises(SystemExit):
         trace_cli.trace_transcribe_audio(args)
+
+
+def test_trace_transcribe_audio_table_out_writes_utf8_report(
+    fake_traces: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    fake_traces.reprocess_transcriptions.return_value = {
+        "source_table": "p.d.src",
+        "output_table": "p.d.dst",
+        "dry_run": True,
+        "model_used": "gemini-3.5-flash",
+        "only_non_english": False,
+        "total_user_turns_inspected": 1,
+        "total_turns_reprocessed": 1,
+        "overall_wer": 0.0,
+        "average_turn_wer": 0.0,
+        "turns": [
+            {
+                "conversation_id": "c1",
+                "turn_index": 1,
+                "ces_transcript": "café 你好",
+                "gemini_transcript": "café 你好",
+                "contains_non_english": True,
+                "reprocessed": True,
+                "appended_to_bq": False,
+                "wer": 0.0,
+                "substitutions": 0,
+                "deletions": 0,
+                "insertions": 0,
+            }
+        ],
+    }
+    out_file = tmp_path / "wer_table.txt"
+    args = _ns(
+        conversation_id="c1",
+        output_table="dst",
+        source_table=None,
+        dataset=None,
+        project=None,
+        model="gemini-3.5-flash",
+        only_non_english=False,
+        dry_run=True,
+        limit=None,
+        format="table",
+        out=str(out_file),
+    )
+    trace_cli.trace_transcribe_audio(args)
+    assert out_file.exists()
+    written = out_file.read_text(encoding="utf-8")
+    assert "café 你好" in written
+    assert written.count("Overall WER:") == 1
+    assert "\x1b[" not in written
+    stdout = capsys.readouterr().out
+    assert "café 你好" in stdout
+    assert f"Wrote report to {out_file}" in stdout
+
+
+def test_trace_transcribe_audio_empty_csv_still_creates_out_file(
+    fake_traces: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    fake_traces.reprocess_transcriptions.return_value = {
+        "source_table": "p.d.src",
+        "output_table": None,
+        "dry_run": True,
+        "model_used": "gemini-3.5-flash",
+        "only_non_english": False,
+        "total_user_turns_inspected": 0,
+        "total_turns_reprocessed": 0,
+        "overall_wer": None,
+        "average_turn_wer": None,
+        "turns": [],
+    }
+    out_file = tmp_path / "empty.csv"
+    args = _ns(
+        conversation_id="c1",
+        output_table=None,
+        source_table=None,
+        dataset=None,
+        project=None,
+        model="gemini-3.5-flash",
+        only_non_english=False,
+        dry_run=True,
+        limit=None,
+        format="csv",
+        out=str(out_file),
+    )
+    trace_cli.trace_transcribe_audio(args)
+    assert out_file.exists()
+    assert out_file.read_text(encoding="utf-8") == ""
+    assert f"Wrote report to {out_file}" in capsys.readouterr().out
