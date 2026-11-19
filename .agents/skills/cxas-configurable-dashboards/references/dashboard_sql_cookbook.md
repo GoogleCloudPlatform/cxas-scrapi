@@ -1,12 +1,18 @@
-# CCAI Insights Configurable Dashboards: BigQuery SQL Cookbook & `conversations` Table Reference
+# CCAI Insights Configurable Dashboards: BigQuery SQL Cookbook & `{INSIGHT_DASH_VIEW}` Schema Reference
 
-This reference guide provides a complete specification of the mirrored **`conversations`** BigQuery table schema in Contact Center AI (CCAI) Insights, followed by production-ready SQL recipes for authoring **Configurable Dashboards**.
+This reference guide documents the `{INSIGHT_DASH_VIEW}` BigQuery view schema in Contact Center AI (CCAI) Insights, followed by SQL recipes for **Configurable Dashboards**.
+
+> [!IMPORTANT]
+> Every Configurable Dashboard `generative_insights.sql_query` must query `FROM {INSIGHT_DASH_VIEW}`. CCAI Insights binds `{INSIGHT_DASH_VIEW}` to the project's deduplicated conversations view at query time. Querying `FROM conversations` directly fails in Configurable Dashboards.
 
 ---
 
-## 1. `conversations` Table Column Definitions
+## 1. `{INSIGHT_DASH_VIEW}` Column Definitions
 
-The `conversations` table provides a denormalized, queryable record for each processed customer conversation in CCAI Insights.
+`{INSIGHT_DASH_VIEW}` provides a denormalized, queryable record for each processed customer conversation in CCAI Insights.
+
+> [!NOTE]
+> Projects without full conversation metadata export enabled omit fields such as `custom_labels`, `agent_display_name`, `agent_team`, and per-question text or rationale from `{INSIGHT_DASH_VIEW}`. Use `agent_id` and `normalized_score` when targeting restricted views.
 
 Find the column definitions in the following table.
 
@@ -17,7 +23,7 @@ Find the column definitions in the following table.
 | conversation_update_time | TIMESTAMP (NULLABLE) | Timestamp of the last mutation (update) on the conversation. |
 | conversation_start_time | TIMESTAMP (NULLABLE) | Timestamp when the conversation originally occurred. |
 | conversation_expiry_time | TIMESTAMP (NULLABLE) | Timestamp when the conversation is scheduled for deletion under TTL. |
-| conversation_export_time | TIMESTAMP (NULLABLE) | Timestamp when the record was written to {{bigquery_name}}. |
+| conversation_export_time | TIMESTAMP (NULLABLE) | Timestamp when the record was written to BigQuery. |
 | conversation_ccai_data_source | RECORD (NULLABLE) | Source mapping (contains dialogflow_conversation resource path). |
 | latest_analysis_time | TIMESTAMP (NULLABLE) | Timestamp of the most recent NLP / QM analysis execution. |
 | turn_count | INTEGER (NULLABLE) | Total number of conversational turns. |
@@ -30,13 +36,13 @@ Find the column definitions in the following table.
 | issue_dimension_metadata | RECORD (REPEATED) | Issue model topic assignments (issue_id, issue_display_name, issue_model_id). |
 | agent_dimension_metadata | RECORD (REPEATED) | Metadata on human or automated agents (agent_id, agent_display_name, agent_team, agent_type, deployment_id, version_id). |
 | end_user_dimension_metadata | RECORD (NULLABLE) | End-user identifiers (obfuscated_external_user_id, end_user_info). |
-| qa_scorecard_results | RECORD (REPEATED) | Quality Management scorecard results, question answers, scores, and tag results. |
+| qa_scorecard_results | RECORD (REPEATED) | Quality Management scorecard results (qa_scorecard_id, qa_scorecard, normalized_score, score, potential_score, qa_tag_results, qa_question_scores). |
 | correlation_info | RECORD (NULLABLE) | Multi-segment call correlation & stitching IDs (full_conversation_correlation_id, correlation_types). |
 | medium | STRING (NULLABLE) | Communication channel (PHONE_CALL, CHAT). |
 | custom_labels | RECORD (REPEATED) | Customer-defined metadata key-value pairs (label_key, label_value). |
 | knowledge_search_results | RECORD (REPEATED) | Generative Knowledge Assist (GKA) search annotations, citations, URLs, and feedback. |
 | knowledge_assist_results | RECORD (REPEATED) | Proactive Knowledge Assist (PGKA) suggestions, source documents, click feedback, and dismissals. |
-| dialogflow_conversation_profile_id | STRING (NULLABLE) | {{dialogflow_name}} conversation profile ID. |
+| dialogflow_conversation_profile_id | STRING (NULLABLE) | Dialogflow conversation profile ID. |
 | summarization_results | RECORD (REPEATED) | Summaries, agent feedback summaries, edit distance insertions/deletions, and generator flags. |
 | smart_reply_results | RECORD (REPEATED) | Smart Reply suggestions, display status, and click events. |
 | dialogflow_interaction_data | RECORD (REPEATED) | Per-turn interaction details (intents, match types, webhooks, tool latencies, LLM/TTS latencies, end-to-end latency). |
@@ -46,8 +52,8 @@ Find the column definitions in the following table.
 | ai_coach_results | RECORD (REPEATED) | Real-time AI Agent Coaching suggestions, triggers, tool calls, and agent adoption. |
 | total_customer_message_count | INTEGER (NULLABLE) | Total count of messages sent by the customer. |
 | total_agent_message_count | INTEGER (NULLABLE) | Total count of messages sent by the agent. |
-| aa_supervisor_monitoring_status | RECORD (NULLABLE) | {{agent_assist_name}} supervisor monitoring state, supervisor ID/username, and escalation events. |
-| ccai_transcription_metadata | RECORD (NULLABLE) | {{speech_name}} configuration (language code, alternative languages, STT model, phrase sets). |
+| aa_supervisor_monitoring_status | RECORD (NULLABLE) | Agent Assist supervisor monitoring state, supervisor ID/username, and escalation events. |
+| ccai_transcription_metadata | RECORD (NULLABLE) | Cloud Speech-to-Text configuration (language code, alternative languages, STT model, phrase sets). |
 | user_agent_interaction_events | RECORD (REPEATED) | Detailed participant event log with timestamps and roles. |
 | user_agent_interaction_histogram | RECORD (REPEATED) | Interaction time interval windows (start_time, end_time). |
 
@@ -61,8 +67,7 @@ Find the column definitions in the following table.
 ```sql
 SELECT
   COUNT(DISTINCT conversation_id) AS total_conversations
-FROM conversations
-WHERE conversation_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+FROM {INSIGHT_DASH_VIEW}
 ```
 
 #### Hourly Call Volume Heatmap / Distribution (Bar Chart)
@@ -70,8 +75,7 @@ WHERE conversation_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 D
 SELECT
   EXTRACT(HOUR FROM conversation_start_time) AS hour_of_day,
   COUNT(1) AS call_volume
-FROM conversations
-WHERE conversation_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+FROM {INSIGHT_DASH_VIEW}
 GROUP BY 1
 ORDER BY hour_of_day ASC
 ```
@@ -81,7 +85,7 @@ ORDER BY hour_of_day ASC
 SELECT
   COALESCE(medium, 'UNKNOWN') AS medium,
   COUNT(1) AS volume
-FROM conversations
+FROM {INSIGHT_DASH_VIEW}
 GROUP BY 1
 ORDER BY volume DESC
 ```
@@ -95,13 +99,12 @@ ORDER BY volume DESC
 SELECT
   ROUND(SAFE_DIVIDE(
     COUNTIF(
-      EXISTS(SELECT 1 FROM UNNEST(agent_dimension_metadata) WHERE agent_type = 'VIRTUAL_AGENT')
+      EXISTS(SELECT 1 FROM UNNEST(agent_dimension_metadata) WHERE agent_type = 'AUTOMATED_AGENT')
       AND NOT COALESCE(dialogflow_interaction_aggregated_metadata.contains_live_agent_handoff, FALSE)
     ),
-    COUNTIF(EXISTS(SELECT 1 FROM UNNEST(agent_dimension_metadata) WHERE agent_type = 'VIRTUAL_AGENT'))
+    COUNTIF(EXISTS(SELECT 1 FROM UNNEST(agent_dimension_metadata) WHERE agent_type = 'AUTOMATED_AGENT'))
   ) * 100, 1) AS containment_percentage
-FROM conversations
-WHERE conversation_start_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+FROM {INSIGHT_DASH_VIEW}
 ```
 
 #### Daily Escalation Trend (Line Chart)
@@ -114,7 +117,7 @@ SELECT
     COUNTIF(COALESCE(dialogflow_interaction_aggregated_metadata.contains_live_agent_handoff, FALSE)),
     COUNT(1)
   ) * 100, 1) AS escalation_rate
-FROM conversations
+FROM {INSIGHT_DASH_VIEW}
 GROUP BY 1
 ORDER BY call_date ASC
 ```
@@ -128,8 +131,8 @@ ORDER BY call_date ASC
 SELECT
   issue.issue_display_name AS issue_category,
   ROUND(AVG(duration_nanos / 1e9), 0) AS avg_duration_sec
-FROM conversations,
-UNNEST(issue_dimension_metadata) AS issue
+FROM {INSIGHT_DASH_VIEW}
+CROSS JOIN UNNEST(issue_dimension_metadata) AS issue
 WHERE duration_nanos > 0
 GROUP BY 1
 ORDER BY avg_duration_sec DESC
@@ -138,13 +141,14 @@ LIMIT 10
 
 #### High-Silence Outlier Conversations (Table)
 ```sql
+-- Substitute agent.agent_display_name when full conversation metadata export is enabled.
 SELECT
   conversation_id,
-  agent.agent_display_name AS agent_name,
+  agent.agent_id AS agent_id,
   ROUND(duration_nanos / 1e9, 0) AS duration_seconds,
   silence_percentage,
   turn_count
-FROM conversations
+FROM {INSIGHT_DASH_VIEW}
 LEFT JOIN UNNEST(agent_dimension_metadata) AS agent
 WHERE silence_percentage > 25.0 AND (duration_nanos / 1e9) > 180
 ORDER BY silence_percentage DESC
@@ -164,8 +168,8 @@ SELECT
     ELSE 'NEUTRAL'
   END AS sentiment_category,
   COUNT(1) AS count,
-  ROUND(COUNT(1) * 100.0 / SUM(COUNT(1)) OVER(), 1) AS percentage
-FROM conversations
+  ROUND(SAFE_DIVIDE(COUNT(1) * 100.0, SUM(COUNT(1)) OVER ()), 1) AS percentage
+FROM {INSIGHT_DASH_VIEW}
 WHERE client_sentiment_score IS NOT NULL
 GROUP BY 1
 ORDER BY count DESC
@@ -176,7 +180,7 @@ ORDER BY count DESC
 SELECT
   DATE(conversation_start_time) AS date,
   ROUND(AVG(client_sentiment_score), 2) AS avg_sentiment_score
-FROM conversations
+FROM {INSIGHT_DASH_VIEW}
 WHERE client_sentiment_score IS NOT NULL
 GROUP BY 1
 ORDER BY date ASC
@@ -188,14 +192,15 @@ ORDER BY date ASC
 
 #### Agent QA Scorecard Leaderboard (Table)
 ```sql
+-- Substitute agent.agent_display_name when full conversation metadata export is enabled.
 SELECT
-  agent.agent_display_name AS agent_name,
-  COUNT(1) AS evaluated_conversations,
-  ROUND(AVG(qa.score) * 100, 1) AS average_qa_score
-FROM conversations,
-UNNEST(agent_dimension_metadata) AS agent,
-UNNEST(qa_scorecard_results) AS qa
-WHERE agent.agent_display_name IS NOT NULL AND qa.score IS NOT NULL
+  agent.agent_id AS agent_id,
+  COUNT(DISTINCT conversation_id) AS evaluated_conversations,
+  ROUND(AVG(qa.normalized_score) * 100, 1) AS average_qa_score
+FROM {INSIGHT_DASH_VIEW}
+CROSS JOIN UNNEST(agent_dimension_metadata) AS agent
+CROSS JOIN UNNEST(qa_scorecard_results) AS qa
+WHERE agent.agent_id IS NOT NULL AND qa.normalized_score IS NOT NULL
 GROUP BY 1
 HAVING evaluated_conversations >= 5
 ORDER BY average_qa_score DESC
@@ -205,10 +210,11 @@ ORDER BY average_qa_score DESC
 ```sql
 SELECT
   DATE(conversation_start_time) AS date,
-  COUNTIF(qa.score < 0.70) AS low_score_count,
-  ROUND(SAFE_DIVIDE(COUNTIF(qa.score < 0.70), COUNT(1)) * 100, 2) AS low_score_percentage
-FROM conversations,
-UNNEST(qa_scorecard_results) AS qa
+  COUNTIF(qa.normalized_score < 0.70) AS low_score_count,
+  ROUND(SAFE_DIVIDE(COUNTIF(qa.normalized_score < 0.70), COUNT(1)) * 100, 2) AS low_score_percentage
+FROM {INSIGHT_DASH_VIEW}
+CROSS JOIN UNNEST(qa_scorecard_results) AS qa
+WHERE qa.normalized_score IS NOT NULL
 GROUP BY 1
 ORDER BY date ASC
 ```
@@ -223,8 +229,8 @@ SELECT
   issue.issue_display_name AS issue_category,
   COUNT(1) AS total_conversations,
   COUNTIF(COALESCE(dialogflow_interaction_aggregated_metadata.contains_live_agent_handoff, FALSE)) AS escalated_count
-FROM conversations,
-UNNEST(issue_dimension_metadata) AS issue
+FROM {INSIGHT_DASH_VIEW}
+CROSS JOIN UNNEST(issue_dimension_metadata) AS issue
 GROUP BY 1
 ORDER BY total_conversations DESC
 LIMIT 10
@@ -236,12 +242,13 @@ LIMIT 10
 
 #### Extracting Autolabel Key-Value Pairs from `custom_labels` (REPEATED)
 ```sql
+-- Requires full conversation metadata export (custom_labels is omitted from restricted views).
 SELECT
   labels.label_value AS agent_domain,
   COUNT(1) AS total_calls,
   ROUND(AVG(duration_nanos / 1e9), 0) AS avg_handle_time_sec
-FROM conversations,
-UNNEST(custom_labels) AS labels
+FROM {INSIGHT_DASH_VIEW}
+CROSS JOIN UNNEST(custom_labels) AS labels
 WHERE labels.label_key = 'agent_domain'
 GROUP BY 1
 ORDER BY total_calls DESC

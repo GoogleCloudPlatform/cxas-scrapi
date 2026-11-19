@@ -2,6 +2,10 @@
 
 This cookbook provides ready-to-use **Vega-Lite specifications** and **BigQuery SQL queries** for authoring charts in CCAI Insights Configurable Dashboards.
 
+> [!NOTE]
+> - Every `sql_query` must query `FROM {INSIGHT_DASH_VIEW}`, which CCAI Insights binds to the project's conversations view at query time.
+> - Include `data: {values: []}` in each `chart_spec`. `cxas insights push-dashboards` injects `$schema` and `data: {values: []}` onto non-empty `chart_spec` mappings when omitted, while direct REST calls require both to pass server-side Vega-Lite validation.
+
 ---
 
 ## 1. Score Card (`SCORE_CARD`)
@@ -20,8 +24,9 @@ chart:
     generative_insights:
       sql_query: >-
         SELECT COUNT(DISTINCT conversation_id) AS total_calls
-        FROM conversations
+        FROM {INSIGHT_DASH_VIEW}
       chart_spec:
+        data: {values: []}
         mark: "text"
         encoding:
           text: {field: "total_calls", type: "quantitative"}
@@ -40,11 +45,15 @@ chart:
       sql_query: >-
         SELECT
           ROUND(SAFE_DIVIDE(
-            COUNTIF(NOT REGEXP_CONTAINS(COALESCE(labels, ''), '(?i)escalat')),
-            COUNT(1)
+            COUNTIF(
+              EXISTS(SELECT 1 FROM UNNEST(agent_dimension_metadata) WHERE agent_type = 'AUTOMATED_AGENT')
+              AND NOT COALESCE(dialogflow_interaction_aggregated_metadata.contains_live_agent_handoff, FALSE)
+            ),
+            COUNTIF(EXISTS(SELECT 1 FROM UNNEST(agent_dimension_metadata) WHERE agent_type = 'AUTOMATED_AGENT'))
           ) * 100, 1) AS containment_rate
-        FROM conversations
+        FROM {INSIGHT_DASH_VIEW}
       chart_spec:
+        data: {values: []}
         mark: "text"
         encoding:
           text: {field: "containment_rate", type: "quantitative"}
@@ -68,14 +77,16 @@ chart:
     generative_insights:
       sql_query: >-
         SELECT
-          issue_category,
+          issue.issue_display_name AS issue_category,
           COUNT(1) AS call_count
-        FROM conversations
-        WHERE issue_category IS NOT NULL
+        FROM {INSIGHT_DASH_VIEW}
+        CROSS JOIN UNNEST(issue_dimension_metadata) AS issue
+        WHERE issue.issue_display_name IS NOT NULL
         GROUP BY 1
         ORDER BY call_count DESC
         LIMIT 10
       chart_spec:
+        data: {values: []}
         mark: "bar"
         encoding:
           x: {field: "call_count", type: "quantitative", title: "Total Calls"}
@@ -94,13 +105,15 @@ chart:
     generative_insights:
       sql_query: >-
         SELECT
-          DATE(start_time) AS call_date,
-          agent_type,
+          DATE(conversation_start_time) AS call_date,
+          agent.agent_type AS agent_type,
           COUNT(1) AS volume
-        FROM conversations
+        FROM {INSIGHT_DASH_VIEW}
+        CROSS JOIN UNNEST(agent_dimension_metadata) AS agent
         GROUP BY 1, 2
         ORDER BY call_date ASC
       chart_spec:
+        data: {values: []}
         mark: "bar"
         encoding:
           x: {field: "call_date", type: "temporal", title: "Date"}
@@ -126,17 +139,24 @@ chart:
     generative_insights:
       sql_query: >-
         SELECT
-          DATE(start_time) AS date,
+          DATE(conversation_start_time) AS date,
           COUNT(1) AS total_conversations,
-          COUNTIF(REGEXP_CONTAINS(COALESCE(labels, ''), '(?i)escalat')) AS escalations
-        FROM conversations
+          COUNTIF(
+            COALESCE(dialogflow_interaction_aggregated_metadata.contains_live_agent_handoff, FALSE)
+          ) AS escalations
+        FROM {INSIGHT_DASH_VIEW}
         GROUP BY 1
         ORDER BY date ASC
       chart_spec:
+        data: {values: []}
+        transform:
+          - fold: ["total_conversations", "escalations"]
+            as: ["metric", "count"]
         mark: {"type": "line", "point": true}
         encoding:
           x: {field: "date", type: "temporal", title: "Date"}
-          y: {field: "total_conversations", type: "quantitative", title: "Calls"}
+          y: {field: "count", type: "quantitative", title: "Calls"}
+          color: {field: "metric", type: "nominal", title: "Series"}
 ```
 
 ### Recipe 3.2: Average Handle Time (AHT) in Seconds
@@ -150,12 +170,14 @@ chart:
     generative_insights:
       sql_query: >-
         SELECT
-          DATE(start_time) AS date,
-          ROUND(AVG(duration_seconds), 0) AS avg_duration_sec
-        FROM conversations
+          DATE(conversation_start_time) AS date,
+          ROUND(AVG(duration_nanos / 1e9), 0) AS avg_duration_sec
+        FROM {INSIGHT_DASH_VIEW}
+        WHERE duration_nanos > 0
         GROUP BY 1
         ORDER BY date ASC
       chart_spec:
+        data: {values: []}
         mark: "line"
         encoding:
           x: {field: "date", type: "temporal", title: "Date"}
@@ -180,12 +202,17 @@ chart:
     generative_insights:
       sql_query: >-
         SELECT
-          sentiment_category,
+          CASE
+            WHEN client_sentiment_score > 0.25 THEN 'POSITIVE'
+            WHEN client_sentiment_score < -0.25 THEN 'NEGATIVE'
+            ELSE 'NEUTRAL'
+          END AS sentiment_category,
           COUNT(1) AS count
-        FROM conversations
-        WHERE sentiment_category IS NOT NULL
+        FROM {INSIGHT_DASH_VIEW}
+        WHERE client_sentiment_score IS NOT NULL
         GROUP BY 1
       chart_spec:
+        data: {values: []}
         mark: {"type": "arc", "innerRadius": 50}
         encoding:
           theta: {field: "count", type: "quantitative"}
@@ -208,15 +235,24 @@ chart:
   data_source:
     generative_insights:
       sql_query: >-
+        -- Substitute agent.agent_display_name when full conversation metadata export is enabled.
         SELECT
-          agent_name,
-          COUNT(1) AS evaluated_calls,
-          ROUND(AVG(qa_score) * 100, 1) AS avg_qa_percentage,
-          COUNTIF(compliance_violation = TRUE) AS compliance_violations
-        FROM conversations
-        WHERE agent_name IS NOT NULL
+          agent.agent_id AS agent_id,
+          COUNT(DISTINCT conversation_id) AS evaluated_calls,
+          ROUND(AVG(qa.normalized_score) * 100, 1) AS avg_qa_percentage,
+          COUNT(DISTINCT IF(qa.normalized_score < 0.70, conversation_id, NULL)) AS low_score_calls
+        FROM {INSIGHT_DASH_VIEW}
+        CROSS JOIN UNNEST(agent_dimension_metadata) AS agent
+        CROSS JOIN UNNEST(qa_scorecard_results) AS qa
+        WHERE agent.agent_id IS NOT NULL AND qa.normalized_score IS NOT NULL
         GROUP BY 1
         ORDER BY avg_qa_percentage DESC
       chart_spec:
-        mark: "table"
+        data: {values: []}
+        mark: "text"
+        encoding:
+          col01: {field: "agent_id", type: "nominal", title: "Agent ID"}
+          col02: {field: "evaluated_calls", type: "quantitative", title: "Evaluated Calls"}
+          col03: {field: "avg_qa_percentage", type: "quantitative", title: "Avg QA (%)"}
+          col04: {field: "low_score_calls", type: "quantitative", title: "Low Score Calls"}
 ```
