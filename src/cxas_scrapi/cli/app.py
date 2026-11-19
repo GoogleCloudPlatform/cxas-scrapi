@@ -25,7 +25,7 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
@@ -36,6 +36,9 @@ from cxas_scrapi.utils.env_vars import (
     preserve_env_var_placeholders_on_pull,
     resolve_app_env_variables_in_dir,
 )
+
+if TYPE_CHECKING:
+    from cxas_scrapi.utils.linter import LintReport, RuleRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -375,6 +378,15 @@ def app_push(args: argparse.Namespace) -> str | None:
     """Handles the 'push' command."""
     # We will reuse the deploy_agent logic from main.py, slightly adjusted.
     app_dir = args.app_dir if args.app_dir else "."
+    if getattr(args, "lint", False):
+        lint_report = _lint_app_dir(
+            Path(app_dir).resolve(),
+            env_file=getattr(args, "env_file", None),
+            direct_app_only=True,
+        )
+        if lint_report.errors:
+            lint_report.print_and_exit()
+        lint_report.print_report()
     print(f"Pushing app from {app_dir}...")
 
     target_app = getattr(args, "to", None)
@@ -718,13 +730,9 @@ def app_lint(args: argparse.Namespace) -> None:
     """Handles the 'lint' command."""
     from cxas_scrapi.utils.linter import (  # noqa: PLC0415
         SINGLE_RESOURCE_RULES,
-        Discovery,
-        LintConfig,
         LintContext,
         LintReport,
-        build_context,
         build_registry,
-        run_rules,
     )
 
     registry = build_registry()
@@ -764,21 +772,92 @@ def app_lint(args: argparse.Namespace) -> None:
         return
 
     # Full app lint
-    project_root = Path(getattr(args, "app_dir", ".")).resolve()
-    config = LintConfig.load(project_root)
-
-    app_dir = project_root / config.app_dir
-    evals_dir = project_root / config.evals_dir
+    target_dir = Path(getattr(args, "app_dir", None) or ".").resolve()
 
     limit_agents = None
     agents_arg = getattr(args, "agents", None)
     if agents_arg:
-        limit_agents = set(a.strip() for a in agents_arg.split(","))
+        limit_agents = {a.strip() for a in agents_arg.split(",")}
 
     limit_tools = None
     tools_arg = getattr(args, "tools", None)
     if tools_arg:
-        limit_tools = set(t.strip() for t in tools_arg.split(","))
+        limit_tools = {t.strip() for t in tools_arg.split(",")}
+
+    specific_rules = None
+    rule_arg = getattr(args, "rule", None)
+    if rule_arg:
+        specific_rules = {r.strip() for r in rule_arg.split(",")}
+
+    report = _lint_app_dir(
+        target_dir,
+        env_file=getattr(args, "env_file", None),
+        json_output=json_output,
+        limit_agents=limit_agents,
+        limit_tools=limit_tools,
+        model_override=model_override,
+        model_only=model_only,
+        only_category=getattr(args, "only", None),
+        specific_rules=specific_rules,
+        validate_only=getattr(args, "validate_only", False),
+        registry=registry,
+    )
+    report.print_and_exit(json_output, show_fixes)
+
+
+def _lint_app_dir(
+    target_dir: Path,
+    *,
+    env_file: str | None = None,
+    direct_app_only: bool = False,
+    json_output: bool = False,
+    limit_agents: set[str] | None = None,
+    limit_tools: set[str] | None = None,
+    model_override: str | None = None,
+    model_only: bool = False,
+    only_category: str | None = None,
+    specific_rules: set[str] | None = None,
+    validate_only: bool = False,
+    registry: "RuleRegistry | None" = None,
+) -> "LintReport":
+    """Run offline lint discovery and rule execution against `target_dir`."""
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
+        Discovery,
+        LintConfig,
+        LintReport,
+        build_context,
+        build_registry,
+        run_rules,
+    )
+
+    has_manifest = (target_dir / "app.json").is_file() or (
+        target_dir / "app.yaml"
+    ).is_file()
+    if direct_app_only and not has_manifest:
+        print(f"ERROR: No app.json or app.yaml found in {target_dir}")
+        print(
+            "Pass --app-dir pointing directly to the app directory "
+            "containing app.json or app.yaml."
+        )
+        sys.exit(1)
+
+    if has_manifest:
+        project_root = LintConfig.find_project_root(target_dir)
+        config = LintConfig.load(project_root)
+        app_dir = target_dir
+        if project_root != target_dir:
+            evals_candidate = project_root / config.evals_dir
+            if not evals_candidate.is_dir() and (target_dir / "evals").is_dir():
+                evals_dir = target_dir / "evals"
+            else:
+                evals_dir = evals_candidate
+        else:
+            evals_dir = project_root / config.evals_dir
+    else:
+        project_root = target_dir
+        config = LintConfig.load(project_root)
+        app_dir = project_root / config.app_dir
+        evals_dir = project_root / config.evals_dir
 
     discovery = Discovery(
         app_dir,
@@ -795,8 +874,6 @@ def app_lint(args: argparse.Namespace) -> None:
                 "Use --app-dir to specify the app location."
             )
         else:
-            import json  # noqa: PLC0415
-
             print(
                 json.dumps(
                     [
@@ -813,9 +890,7 @@ def app_lint(args: argparse.Namespace) -> None:
             )
         sys.exit(1)
 
-    env_file_arg = getattr(args, "env_file", None)
-    resolved_env_file = Path(env_file_arg).resolve() if env_file_arg else None
-
+    resolved_env_file = Path(env_file).resolve() if env_file else None
     context = build_context(
         project_root,
         config,
@@ -839,17 +914,13 @@ def app_lint(args: argparse.Namespace) -> None:
         print(f"  Evals:     {len(evals)}")
 
     categories = None
-    if getattr(args, "validate_only", False):
+    if validate_only:
         categories = ["structure", "config", "schema"]
-    elif getattr(args, "only", None):
-        categories = [args.only]
-
-    specific_rules = None
-    rule_arg = getattr(args, "rule", None)
-    if rule_arg:
-        specific_rules = set(r.strip() for r in rule_arg.split(","))
+    elif only_category:
+        categories = [only_category]
 
     report = LintReport()
+    registry = registry or build_registry()
     run_rules(
         registry,
         config,
@@ -860,8 +931,7 @@ def app_lint(args: argparse.Namespace) -> None:
         specific_rules=specific_rules,
         model_only=model_only,
     )
-
-    report.print_and_exit(json_output, show_fixes)
+    return report
 
 
 def app_init(args: argparse.Namespace) -> None:

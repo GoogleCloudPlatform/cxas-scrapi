@@ -17,6 +17,7 @@
 
 import json
 import typing
+from pathlib import Path
 
 import pytest
 
@@ -340,6 +341,20 @@ def test_lint_config_is_ignored() -> None:
     assert config.is_ignored("app/__pycache__/foo.pyc") is True
     assert config.is_ignored("tests/test_something.py") is True
     assert config.is_ignored("app/agents/root/instruction.txt") is False
+
+
+def test_lint_config_find_project_root_resolves_relative_cwd(
+    tmp_path: typing.Any,
+    monkeypatch: typing.Any,
+) -> None:
+    """find_project_root(Path('.')) resolves cwd and finds ancestor config."""
+    (tmp_path / "cxaslint.yaml").write_text("app_dir: cxas_app/Cymbal\n")
+    nested_app = tmp_path / "cxas_app" / "Cymbal"
+    nested_app.mkdir(parents=True)
+
+    monkeypatch.chdir(nested_app)
+
+    assert LintConfig.find_project_root(Path(".")) == tmp_path.resolve()
 
 
 # ── Discovery ────────────────────────────────────────────────────────────

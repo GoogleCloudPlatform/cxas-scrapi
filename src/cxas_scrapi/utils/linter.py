@@ -26,6 +26,8 @@ Configuration lives in ``cxaslint.yaml``.
 import fnmatch
 import json
 import re
+import sys
+import tempfile
 import typing
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -141,12 +143,10 @@ class LintReport:
     def to_json(self) -> str:
         return json.dumps([r.to_dict() for r in self.results], indent=2)
 
-    def print_and_exit(
+    def print_report(
         self, json_output: bool = False, show_fixes: bool = False
     ) -> None:
-        """Print results and exit with code 1 if errors, 0 otherwise."""
-        import sys  # noqa: PLC0415
-
+        """Print lint results without exiting."""
         if json_output:
             print(self.to_json())
         else:
@@ -160,6 +160,11 @@ class LintReport:
             else:
                 print("\nLint PASSED (no errors).")
 
+    def print_and_exit(
+        self, json_output: bool = False, show_fixes: bool = False
+    ) -> None:
+        """Print results and exit with code 1 if errors, 0 otherwise."""
+        self.print_report(json_output=json_output, show_fixes=show_fixes)
         sys.exit(1 if self.errors else 0)
 
 
@@ -433,6 +438,25 @@ class LintConfig:
     options: dict[str, dict] = field(default_factory=dict)
     ignore: list[str] = field(default_factory=list)
     per_file: dict[str, dict[str, str]] = field(default_factory=dict)
+
+    @classmethod
+    def find_project_root(cls, app_dir: Path, max_parents: int = 3) -> Path:
+        """Find nearest ancestor `cxaslint.yaml` within repo/home bounds."""
+        app_dir = app_dir.resolve()
+        if (app_dir / "cxaslint.yaml").is_file() or (app_dir / ".git").exists():
+            return app_dir
+        stop_dirs = {
+            Path(tempfile.gettempdir()).resolve(),
+            Path.home().resolve(),
+        }
+        for parent in app_dir.parents[:max_parents]:
+            if parent in stop_dirs:
+                break
+            if (parent / "cxaslint.yaml").is_file():
+                return parent
+            if (parent / ".git").exists():
+                break
+        return app_dir
 
     @classmethod
     def load(cls, project_root: Path) -> "LintConfig":
@@ -902,7 +926,7 @@ def build_context(
     return LintContext(
         project_root=project_root,
         app_dir=discovery.app_dir,
-        evals_dir=project_root / config.evals_dir,
+        evals_dir=discovery.evals_dir,
         model=resolved_model,
         agent_models=agent_models,
         all_agent_names=set(agents.keys()),
