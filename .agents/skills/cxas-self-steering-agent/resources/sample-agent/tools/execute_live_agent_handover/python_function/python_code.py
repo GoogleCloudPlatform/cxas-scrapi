@@ -25,8 +25,8 @@ def execute_live_agent_handover(
   """
   handoff_reason = (reason or "").strip() or "customer_requested_agent"
   message = (pre_transfer_message or "").strip() or DEFAULT_TRANSFER_MESSAGE
-  tools.set_next_agent_actions({
+  context.state["next_agent_actions"] = {
       "customized_response": {"content": message, "disable_barge_in": True},
       "end_session": {"reason": handoff_reason, "escalated": True},
-  })
+  }
   return {"status": "transferring", "reason": handoff_reason}

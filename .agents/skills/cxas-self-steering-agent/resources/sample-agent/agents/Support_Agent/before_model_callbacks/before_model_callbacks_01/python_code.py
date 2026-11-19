@@ -34,7 +34,7 @@ def before_model_callback(
 def _handle_next_agent_actions(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-  """Plays what a tool queued with set_next_agent_actions, without calling the model."""
+  """Plays what a tool queued in next_agent_actions, without calling the model."""
   actions = callback_context.state.pop("next_agent_actions", None)
   if not actions:
     return None
@@ -45,6 +45,7 @@ def _handle_next_agent_actions(
   if end_session := actions.get("end_session"):
     # Part.from_end_session takes reason and escalated (not session_escalated).
     parts.append(Part.from_end_session(**end_session))
+    callback_context.state["next_agent_actions"] = {"end_session": end_session}
   return LlmResponse.from_parts(parts=parts)
 
 
