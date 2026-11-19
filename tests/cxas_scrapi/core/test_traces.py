@@ -1194,7 +1194,7 @@ def test_get_user_audio_uris(
     monkeypatch.setattr(
         traces_obj,
         "list_audio_files",
-        lambda cid, start_time=None: [
+        lambda cid, start_time=None, *, prefer_eval=False: [
             "gs://bucket/dir/METADATA.json",
             "gs://bucket/dir/full-session.wav",
             "gs://bucket/dir/agent-turn-1.wav",
@@ -1219,7 +1219,7 @@ def test_get_agent_audio_uris(
     monkeypatch.setattr(
         traces_obj,
         "list_audio_files",
-        lambda cid, start_time=None: [
+        lambda cid, start_time=None, *, prefer_eval=False: [
             "gs://bucket/dir/METADATA.json",
             "gs://bucket/dir/full-session.wav",
             "gs://bucket/dir/agent-turn-2.wav",
@@ -1237,7 +1237,9 @@ def test_get_agent_audio_uris_empty_without_recordings(
     traces_obj: typing.Any, monkeypatch: typing.Any
 ) -> None:
     monkeypatch.setattr(
-        traces_obj, "list_audio_files", lambda cid, start_time=None: []
+        traces_obj,
+        "list_audio_files",
+        lambda cid, start_time=None, *, prefer_eval=False: [],
     )
     assert traces_obj.get_agent_audio_uris("c1") == {}
 
@@ -1328,7 +1330,7 @@ def test_transcribe_user_turns(
     monkeypatch.setattr(
         traces_obj,
         "get_user_audio_uris",
-        lambda cid: {
+        lambda cid, start_time=None, *, prefer_eval=False: {
             1: "gs://bucket/dir/user-turn-1.wav",
             2: "gs://bucket/dir/user-turn-2.wav",
             3: "gs://bucket/dir/user-turn-3.wav",
@@ -1382,7 +1384,7 @@ def test_transcribe_user_turns_only_non_english(
     monkeypatch.setattr(
         traces_obj,
         "get_user_audio_uris",
-        lambda cid: {
+        lambda cid, start_time=None, *, prefer_eval=False: {
             1: "gs://bucket/dir/user-turn-1.wav",
             2: "gs://bucket/dir/user-turn-2.wav",
         },
@@ -1450,7 +1452,9 @@ def test_reprocess_transcriptions_and_bq_append(
     monkeypatch.setattr(
         traces_obj,
         "get_user_audio_uris",
-        lambda cid: {1: "gs://bucket/dir/user-turn-1.wav"},
+        lambda cid, start_time=None, *, prefer_eval=False: {
+            1: "gs://bucket/dir/user-turn-1.wav"
+        },
     )
 
     res = traces_obj.reprocess_transcriptions(
@@ -1465,3 +1469,360 @@ def test_reprocess_transcriptions_and_bq_append(
     assert res["turns"][0]["gemini_transcript"] == "Updated user speech"
     assert res["turns"][0]["appended_to_bq"] is True
     assert mock_bq.insert_rows_json.called
+
+
+def test_resolve_and_list_audio_support_evaluation_audio_recording_config(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
+    # 1. App with ONLY evaluationAudioRecordingConfig in app.json
+    eval_only_dir = tmp_path / "eval_only"
+    eval_only_dir.mkdir()
+    (eval_only_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": "gs://cymbal-eval-audio"
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.chdir(eval_only_dir)
+    t_eval_only = Traces(app_name=APP, app_dir=str(eval_only_dir))
+    t_eval_only.history = MagicMock()
+    t_eval_only.history.get_conversation.return_value = _conv_dict(
+        cid="eval-c1", source="EVAL"
+    )
+    t_eval_only.trace_config.audio.search_bucket = False
+    assert (
+        t_eval_only.resolve_audio_uri("eval-c1")
+        == "gs://cymbal-eval-audio/eval-c1.wav"
+    )
+
+    # 2. App with BOTH live and eval buckets prefers eval bucket for EVAL
+    #    conversations and live bucket for LIVE conversations, while falling
+    #    back across buckets during GCS discovery.
+    dual_dir = tmp_path / "dual"
+    dual_dir.mkdir()
+    (dual_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "audioRecordingConfig": {
+                        "gcsBucket": "gs://cymbal-live-audio"
+                    },
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": "gs://cymbal-eval-audio"
+                    },
+                }
+            }
+        )
+    )
+    t_dual = Traces(app_name=APP, app_dir=str(dual_dir))
+    t_dual.trace_config.audio.search_bucket = False
+    dual_apps = MagicMock()
+    monkeypatch.setattr(traces_mod, "Apps", MagicMock(return_value=dual_apps))
+    assert list(t_dual._iter_candidate_audio_buckets(prefer_eval=False)) == [
+        "gs://cymbal-live-audio",
+        "gs://cymbal-eval-audio",
+    ]
+    assert list(t_dual._iter_candidate_audio_buckets(prefer_eval=True)) == [
+        "gs://cymbal-eval-audio",
+        "gs://cymbal-live-audio",
+    ]
+    dual_apps.get_app.assert_not_called()
+    assert (
+        t_dual.resolve_audio_uri(
+            "eval-c2", normalized=_conv_dict(cid="eval-c2", source="EVAL")
+        )
+        == "gs://cymbal-eval-audio/eval-c2.wav"
+    )
+    assert (
+        t_dual.resolve_audio_uri(
+            "live-c2", normalized=_conv_dict(cid="live-c2", source="LIVE")
+        )
+        == "gs://cymbal-live-audio/live-c2.wav"
+    )
+
+    # list_audio_files falls back from live bucket to eval bucket when called
+    # without prefer_eval=True, and probes eval bucket first when prefer_eval=True.
+    probed_buckets: list[str] = []
+    fake_gcs = MagicMock()
+
+    def _find_dir(
+        bucket: str, conversation_id: str, prefix_hints: list[str]
+    ) -> str | None:
+        probed_buckets.append(bucket)
+        if bucket == "gs://cymbal-eval-audio":
+            return f"evaluations/{conversation_id}/"
+        return None
+
+    fake_gcs.find_dir_for_conversation.side_effect = _find_dir
+    fake_gcs.list_with_prefix.return_value = [
+        "gs://cymbal-eval-audio/evaluations/eval-c2/agent-turn-1.wav"
+    ]
+    monkeypatch.setattr(
+        traces_mod, "GCSUtils", MagicMock(return_value=fake_gcs)
+    )
+
+    files_default = t_dual.list_audio_files("eval-c2")
+    assert files_default == [
+        "gs://cymbal-eval-audio/evaluations/eval-c2/agent-turn-1.wav"
+    ]
+    assert probed_buckets == [
+        "gs://cymbal-live-audio",
+        "gs://cymbal-eval-audio",
+    ]
+
+    probed_buckets.clear()
+    files_prefer_eval = t_dual.list_audio_files("eval-c2", prefer_eval=True)
+    assert files_prefer_eval == [
+        "gs://cymbal-eval-audio/evaluations/eval-c2/agent-turn-1.wav"
+    ]
+    assert probed_buckets == ["gs://cymbal-eval-audio"]
+
+
+def test_remote_evaluation_audio_bucket_fallback(
+    traces_obj: typing.Any, monkeypatch: typing.Any
+) -> None:
+    fake_apps = MagicMock()
+    fake_apps.get_app.return_value = SimpleNamespace(
+        logging_settings=SimpleNamespace(
+            audio_recording_config=None,
+            evaluation_audio_recording_config=SimpleNamespace(
+                gcs_bucket="gs://remote-eval-bucket"
+            ),
+        )
+    )
+    monkeypatch.setattr(traces_mod, "Apps", MagicMock(return_value=fake_apps))
+    traces_obj.trace_config.audio.search_bucket = False
+    uri = traces_obj.resolve_audio_uri(
+        "eval-remote",
+        normalized=_conv_dict(cid="eval-remote", source="EVAL"),
+    )
+    assert uri == "gs://remote-eval-bucket/eval-remote.wav"
+    fake_apps.get_app.assert_called_once_with(APP)
+
+
+def test_partial_local_config_merges_remote_eval_bucket_and_caches_failure(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
+    live_only_dir = tmp_path / "live_only"
+    live_only_dir.mkdir()
+    (live_only_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "audioRecordingConfig": {
+                        "gcsBucket": "gs://cymbal-live-audio"
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.chdir(live_only_dir)
+    fake_apps = MagicMock()
+    fake_apps.get_app.return_value = SimpleNamespace(
+        logging_settings=SimpleNamespace(
+            audio_recording_config=SimpleNamespace(
+                gcs_bucket="gs://cymbal-live-audio"
+            ),
+            evaluation_audio_recording_config=SimpleNamespace(
+                gcs_bucket="gs://cymbal-remote-eval-audio"
+            ),
+        )
+    )
+    monkeypatch.setattr(traces_mod, "Apps", MagicMock(return_value=fake_apps))
+
+    t = Traces(app_name=APP, app_dir=str(live_only_dir))
+    t.trace_config.audio.search_bucket = False
+
+    # Live lookup uses local audioRecordingConfig without calling remote Apps.
+    assert t._get_audio_bucket() == "gs://cymbal-live-audio"
+    fake_apps.get_app.assert_not_called()
+
+    # EVAL conversation fetches remote evaluationAudioRecordingConfig even when
+    # local app.json only defines audioRecordingConfig.
+    assert t._get_audio_bucket(prefer_eval=True) == (
+        "gs://cymbal-remote-eval-audio"
+    )
+    uri = t.resolve_audio_uri(
+        "eval-c3",
+        normalized=_conv_dict(cid="eval-c3", source="EVAL"),
+    )
+    assert uri == "gs://cymbal-remote-eval-audio/eval-c3.wav"
+    fake_apps.get_app.assert_called_once_with(APP)
+
+    # Offline / 403 remote Apps failure caches (None, None) so repeated lookups
+    # never re-issue failing get_app RPCs.
+    failing_apps = MagicMock()
+    failing_apps.get_app.side_effect = PermissionError("403 Forbidden")
+    monkeypatch.setattr(
+        traces_mod, "Apps", MagicMock(return_value=failing_apps)
+    )
+    t_offline = Traces(app_name=APP, app_dir=str(live_only_dir))
+    assert t_offline._get_audio_bucket(prefer_eval=True) == (
+        "gs://cymbal-live-audio"
+    )
+    assert t_offline._get_audio_bucket(prefer_eval=True) == (
+        "gs://cymbal-live-audio"
+    )
+    failing_apps.get_app.assert_called_once_with(APP)
+
+
+def test_audio_bucket_fallback_survives_gcs_permission_error(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
+    dual_dir = tmp_path / "dual_err"
+    dual_dir.mkdir()
+    (dual_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "audioRecordingConfig": {
+                        "gcsBucket": "gs://restricted-prod-audio"
+                    },
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": "gs://cymbal-eval-audio"
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.chdir(dual_dir)
+    t = Traces(app_name=APP, app_dir=str(dual_dir))
+    t.trace_config.audio.search_bucket = True
+
+    fake_gcs = MagicMock()
+    fake_gcs.exists.side_effect = PermissionError("403 Forbidden")
+
+    def _find_first(bucket: str, suffix: str) -> str | None:
+        if bucket == "gs://restricted-prod-audio":
+            raise PermissionError("403 Forbidden")
+        return f"{bucket}/evaluations{suffix}"
+
+    def _find_dir(
+        bucket: str, conversation_id: str, prefix_hints: list[str]
+    ) -> str | None:
+        if bucket == "gs://restricted-prod-audio":
+            raise PermissionError("403 Forbidden")
+        return f"evaluations/{conversation_id}/"
+
+    fake_gcs.find_first.side_effect = _find_first
+    fake_gcs.find_dir_for_conversation.side_effect = _find_dir
+    fake_gcs.list_with_prefix.return_value = [
+        "gs://cymbal-eval-audio/evaluations/conv-9/full-session.wav"
+    ]
+    monkeypatch.setattr(
+        traces_mod, "GCSUtils", MagicMock(return_value=fake_gcs)
+    )
+
+    resolved = t.resolve_audio_uri(
+        "conv-9",
+        normalized=_conv_dict(cid="conv-9", source="LIVE"),
+    )
+    assert (
+        resolved == "gs://cymbal-eval-audio/evaluations/conv-9/full-session.wav"
+    )
+
+    listed = t.list_audio_files("conv-9", prefer_eval=False)
+    assert listed == [
+        "gs://cymbal-eval-audio/evaluations/conv-9/full-session.wav"
+    ]
+
+
+def test_direct_analyze_audio_and_transcribe_infer_eval_context(
+    tmp_path: typing.Any, monkeypatch: typing.Any
+) -> None:
+    dual_dir = tmp_path / "dual_direct"
+    dual_dir.mkdir()
+    (dual_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "loggingSettings": {
+                    "audioRecordingConfig": {
+                        "gcsBucket": "gs://cymbal-live-audio"
+                    },
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": "gs://cymbal-eval-audio"
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.chdir(dual_dir)
+    t = Traces(app_name=APP, app_dir=str(dual_dir))
+    t.history = MagicMock()
+    t.history.get_conversation.return_value = _conv_dict(
+        cid="eval-direct",
+        source="EVAL",
+        start="2026-09-18T06:12:00",
+        turns=[
+            {"messages": [{"role": "agent", "chunks": [{"text": "hello"}]}]},
+            {"messages": [{"role": "user", "chunks": [{"transcript": "hi"}]}]},
+        ],
+    )
+
+    probed: list[tuple[str, list[str]]] = []
+    fake_gcs = MagicMock()
+
+    def _find_dir(
+        bucket: str, conversation_id: str, prefix_hints: list[str]
+    ) -> str | None:
+        probed.append((bucket, list(prefix_hints)))
+        if bucket == "gs://cymbal-eval-audio":
+            return f"evaluations/{conversation_id}/"
+        return None
+
+    fake_gcs.find_dir_for_conversation.side_effect = _find_dir
+    fake_gcs.list_with_prefix.return_value = [
+        "gs://cymbal-eval-audio/evaluations/eval-direct/full-session.wav",
+        "gs://cymbal-eval-audio/evaluations/eval-direct/user-turn-1.wav",
+    ]
+    monkeypatch.setattr(
+        traces_mod, "GCSUtils", MagicMock(return_value=fake_gcs)
+    )
+    fake_gem = MagicMock()
+    fake_gem.generate_with_parts.return_value = "PASS - clean audio"
+    monkeypatch.setattr(
+        traces_mod, "GeminiGenerate", MagicMock(return_value=fake_gem)
+    )
+    monkeypatch.setattr(
+        traces_mod.genai.types.Part, "from_uri", lambda **kw: "audio_part"
+    )
+
+    out = t.analyze_audio("eval-direct", metrics=["no_long_pauses"])
+    assert out["no_long_pauses"]["result"] == "PASS"
+    assert len(probed) == 1
+    assert probed[0][0] == "gs://cymbal-eval-audio"
+    assert "p/l/a/2026-09-18" in probed[0][1]
+
+    probed.clear()
+    fake_transcriber = MagicMock()
+    fake_transcriber.evaluate_turn.return_value = {
+        "conversation_id": "eval-direct",
+        "turn_index": 1,
+        "ces_transcript": "hi",
+        "gemini_transcript": "hi",
+        "wer": 0.0,
+        "substitutions": 0,
+        "deletions": 0,
+        "insertions": 0,
+        "hits": 1,
+        "reference_words": 1,
+        "hypothesis_words": 1,
+        "contains_non_english": False,
+    }
+    monkeypatch.setattr(
+        traces_mod,
+        "AudioTranscriber",
+        MagicMock(return_value=fake_transcriber),
+    )
+    turns = t.transcribe_user_turns("eval-direct")
+    assert len(turns) == 1
+    assert turns[0]["reprocessed"] is True
+    fake_transcriber.evaluate_turn.assert_called_once()
+    assert len(probed) == 1
+    assert probed[0][0] == "gs://cymbal-eval-audio"
+    assert "p/l/a/2026-09-18" in probed[0][1]
