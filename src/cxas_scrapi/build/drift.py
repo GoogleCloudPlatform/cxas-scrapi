@@ -20,6 +20,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -52,12 +53,57 @@ VOLATILE_JSON_KEYS: frozenset[str] = frozenset(
     {"uuid", "uid", "etag", "createTime", "updateTime"}
 )
 
+# CES returns these reference lists sorted alphabetically on export, so their
+# order carries no meaning across a CES round trip.
+ORDER_INSENSITIVE_STRING_LIST_KEYS: frozenset[str] = frozenset(
+    {"tools", "childAgents", "guardrails", "toolsets"}
+)
+# Lists of objects identified by their `name` that CES re-orders on export.
+NAME_KEYED_LIST_KEYS: frozenset[str] = frozenset({"variableDeclarations"})
+# app.json keys that describe the CES control plane rather than bundle content:
+# `displayName` is chosen at push time (`cxas push --display-name`).
+APP_CONTROL_PLANE_KEYS: frozenset[str] = frozenset({"displayName"})
+# Values CES adds server-side when a bundle does not set them. A key is
+# ignored only when its normalized value equals the server default, so a real
+# override (e.g. a shorter retention window) still reads as drift.
+CES_SERVER_DEFAULT_APP_VALUES: dict[str, Any] = {
+    "loggingSettings": {
+        "conversationLoggingSettings": {"retentionWindow": "31536000s"}
+    },
+}
+# CES replaces OpenAPI `servers[].url` with this placeholder on export and
+# moves the concrete URL into environment.json (`tools.<name>.openApiTool.url`).
+CES_ENV_VAR_PLACEHOLDER = "$env_var"
+_OPENAPI_SERVER_URL_RE = re.compile(r"^(\s*-\s*url:\s*)\S.*$")
+
 DriftStatus = Literal["CLEAN", "DRIFT", "ORPHAN", "CONFLICT"]
 ResolutionMode = Literal["accept-live", "force-ours"]
 
 
-def normalize_json_obj(obj: Any, *, is_root: bool = True) -> Any:
-    """Strips volatile CES control-plane envelope fields recursively."""
+def _is_proto3_default(value: Any) -> bool:
+    """True for values CES (proto3 JSON) omits on export: false/null/[]/{}."""
+    if value is False or value is None:
+        return True
+    return isinstance(value, (list, dict)) and not value
+
+
+def _sort_name_keyed(items: list[Any]) -> list[Any]:
+    if all(
+        isinstance(i, dict) and isinstance(i.get("name"), str) for i in items
+    ):
+        return sorted(items, key=lambda i: i["name"])
+    return items
+
+
+def normalize_json_obj(
+    obj: Any, *, is_root: bool = True, _parent_key: str | None = None
+) -> Any:
+    """Canonicalizes a CES resource JSON so a CES round trip reads as CLEAN.
+
+    Strips volatile control-plane envelope fields, drops proto3 default values
+    that CES omits on export (`false`, `null`, `[]`, `{}`), sorts reference
+    lists CES returns alphabetically, and orders name-keyed declarations.
+    """
     if isinstance(obj, dict):
         has_display_name = "displayName" in obj
         cleaned: dict[str, Any] = {}
@@ -73,11 +119,59 @@ def normalize_json_obj(obj: Any, *, is_root: bool = True) -> Any:
                     and "/apps/" in v
                 ):
                     continue
-            cleaned[k] = normalize_json_obj(v, is_root=False)
+            norm_v = normalize_json_obj(v, is_root=False, _parent_key=k)
+            if _is_proto3_default(norm_v):
+                continue
+            cleaned[k] = norm_v
         return cleaned
     if isinstance(obj, list):
-        return [normalize_json_obj(item, is_root=False) for item in obj]
+        raw_items = (
+            _sort_name_keyed(obj)
+            if _parent_key in NAME_KEYED_LIST_KEYS
+            else obj
+        )
+        items = [normalize_json_obj(item, is_root=False) for item in raw_items]
+        if _parent_key in ORDER_INSENSITIVE_STRING_LIST_KEYS and all(
+            isinstance(i, str) for i in items
+        ):
+            return sorted(items)
+        return items
     return obj
+
+
+def _normalize_app_obj(raw_app: dict[str, Any]) -> dict[str, Any]:
+    norm_app = normalize_json_obj(raw_app, is_root=True)
+    for key in APP_CONTROL_PLANE_KEYS:
+        norm_app.pop(key, None)
+    for key, default_val in CES_SERVER_DEFAULT_APP_VALUES.items():
+        if key in norm_app and norm_app[key] == normalize_json_obj(
+            default_val, is_root=False
+        ):
+            norm_app.pop(key)
+    return norm_app
+
+
+def _load_environment_tool_urls(root: Path) -> dict[str, str]:
+    """Reads `tools.<name>.openApiTool.url` from environment.json."""
+    env_path = root / "environment.json"
+    if not env_path.is_file():
+        return {}
+    env = load_json_dict_strict(env_path, context="environment.json")
+    tools = env.get("tools")
+    urls: dict[str, str] = {}
+    if isinstance(tools, dict):
+        for t_name, t_cfg in tools.items():
+            oa = t_cfg.get("openApiTool") if isinstance(t_cfg, dict) else None
+            if isinstance(oa, dict) and isinstance(oa.get("url"), str):
+                urls[str(t_name)] = oa["url"]
+    return urls
+
+
+def _canonical_openapi_schema_lines(text: str) -> list[str]:
+    return [
+        _OPENAPI_SERVER_URL_RE.sub(rf"\g<1>{CES_ENV_VAR_PLACEHOLDER}", line)
+        for line in text.replace("\r\n", "\n").splitlines()
+    ]
 
 
 def _make_normalized_resource(
@@ -115,7 +209,7 @@ def extract_normalized_resources(
             if app_json_path.is_file()
             else {}
         )
-        norm_app = normalize_json_obj(raw_app, is_root=True)
+        norm_app = _normalize_app_obj(raw_app)
         if global_instr_path.is_file():
             norm_app["_globalInstructionLines"] = (
                 read_utf8_strict(
@@ -125,6 +219,8 @@ def extract_normalized_resources(
                 .splitlines()
             )
         resources["app"] = _make_normalized_resource("app", norm_app)
+
+    env_tool_urls = _load_environment_tool_urls(root)
 
     for category in ("agents", "tools", "guardrails", "toolsets"):
         cat_dir = root / category
@@ -159,14 +255,25 @@ def extract_normalized_resources(
                         )
 
                 if category in ("tools", "toolsets"):
+                    oa_cfg = norm_obj.get("openApiTool")
+                    env_url = env_tool_urls.get(
+                        str(norm_obj.get("displayName", dir_name)),
+                        env_tool_urls.get(dir_name),
+                    )
+                    if (
+                        isinstance(oa_cfg, dict)
+                        and "url" not in oa_cfg
+                        and env_url is not None
+                    ):
+                        oa_cfg["url"] = env_url
                     oa_file = entry / "open_api_tool" / "open_api_schema.yaml"
                     if oa_file.is_file():
                         norm_obj["_openApiSchemaLines"] = (
-                            read_utf8_strict(
-                                oa_file, context=f"{res_id} OpenAPI schema"
+                            _canonical_openapi_schema_lines(
+                                read_utf8_strict(
+                                    oa_file, context=f"{res_id} OpenAPI schema"
+                                )
                             )
-                            .replace("\r\n", "\n")
-                            .splitlines()
                         )
 
                 py_files = sorted(entry.rglob("*.py"))
