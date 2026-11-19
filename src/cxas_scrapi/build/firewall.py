@@ -34,6 +34,7 @@ from cxas_scrapi.build.blueprint_schemas import (
     build_pruned_identifier_regex,
     load_spec,
 )
+from cxas_scrapi.utils.linter import CES_PLATFORM_SYSTEM_TOOLS
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,6 +57,16 @@ MAX_TOTAL_VARIABLES = 100
 MAX_PYTHON_FILE_BYTES = 65_536
 
 FirewallProfile = Literal["strict", "standard"]
+
+# CES built-in system tools (e.g. `end_session`) are referenced by name with no
+# `tools/<name>/` directory; CES's own export represents them the same way.
+# Single source of truth shared with lint (`LintContext.platform_tools`, A005).
+CES_SYSTEM_TOOLS: frozenset[str] = CES_PLATFORM_SYSTEM_TOOLS
+
+
+def _is_known_tool(snap: _BundleSnapshot, tool_name: str) -> bool:
+    return tool_name in snap.tool_jsons or tool_name in CES_SYSTEM_TOOLS
+
 
 CALLBACK_JSON_KEYS: tuple[str, ...] = (
     "beforeAgentCallbacks",
@@ -757,7 +768,9 @@ def _check_fw05_fw07_fw09(
                     rule_id="FW09",
                     message=(
                         "app.json must set 'locked': true for GitOps "
-                        "control-plane governance."
+                        "control-plane governance (declared lock policy: "
+                        "`cxas push` imports unlocked and applies the lock "
+                        "via UpdateApp after import)."
                     ),
                     path="app.json",
                 )
@@ -1442,7 +1455,7 @@ def _check_fw10_bundle_integrity(
         else []
     ):
         t_short = str(t_ref).split("/")[-1]
-        if t_short not in snap.tool_jsons:
+        if not _is_known_tool(snap, t_short):
             violations.append(
                 FirewallViolation(
                     rule_id="FW10",
@@ -1510,7 +1523,7 @@ def _check_fw10_bundle_integrity(
             else []
         ):
             t_short = str(t_ref).split("/")[-1]
-            if t_short not in snap.tool_jsons:
+            if not _is_known_tool(snap, t_short):
                 violations.append(
                     FirewallViolation(
                         rule_id="FW10",
@@ -1577,7 +1590,7 @@ def _check_fw10_bundle_integrity(
         except (OSError, UnicodeDecodeError):
             continue
         for tag_kind, ref_name in INSTRUCTION_REF_TAG_RE.findall(txt_content):
-            if tag_kind == "TOOL" and ref_name not in snap.tool_jsons:
+            if tag_kind == "TOOL" and not _is_known_tool(snap, ref_name):
                 violations.append(
                     FirewallViolation(
                         rule_id="FW10",

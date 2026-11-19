@@ -35,6 +35,14 @@ from pathlib import Path
 
 import yaml
 
+# CES built-in system tools: referenced by name in an agent's ``tools`` list,
+# with no ``tools/<name>/`` directory in the export (CES exports them the same
+# way). Shared by lint (A005 / known-tool checks) and the build firewall (FW10)
+# so both gates agree.
+CES_PLATFORM_SYSTEM_TOOLS: frozenset[str] = frozenset(
+    {"end_session", "customize_response"}
+)
+
 # ── Severity ─────────────────────────────────────────────────────────────
 
 
@@ -312,7 +320,7 @@ class LintContext:
     all_tool_names: set = field(default_factory=set)
     all_tool_dirs: dict = field(default_factory=dict)
     platform_tools: set = field(
-        default_factory=lambda: {"end_session", "customize_response"}
+        default_factory=lambda: set(CES_PLATFORM_SYSTEM_TOOLS)
     )
     options: dict = field(default_factory=dict)
     bypass_tool_prefixes: set = field(default_factory=set)
