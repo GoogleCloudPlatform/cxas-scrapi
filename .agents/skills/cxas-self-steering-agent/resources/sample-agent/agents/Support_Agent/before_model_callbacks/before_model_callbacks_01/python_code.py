@@ -74,12 +74,16 @@ def _handle_dynamic_tool_hiding(
     return None
 
   instruction = config.system_instruction.parts[0].text
-  for func_decl in config.tools[0].function_declarations:
-    if re.search(rf"\b{re.escape(func_decl.name)}\b", instruction):
-      continue
-    if (
-        config.excluded_tools is None
-        or func_decl.name not in config.excluded_tools
-    ):
-      config.hide_tool(func_decl.name)
+  for tool_decl in config.tools:
+    for func_decl in tool_decl.function_declarations or []:
+      if func_decl.name not in (
+          "transfer_to_agent",
+          "transferToAgent",
+      ) and re.search(rf"\b{re.escape(func_decl.name)}\b", instruction):
+        continue
+      if (
+          config.excluded_tools is None
+          or func_decl.name not in config.excluded_tools
+      ):
+        config.hide_tool(func_decl.name)
   return None

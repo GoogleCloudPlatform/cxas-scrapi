@@ -210,11 +210,18 @@ def _handle_dynamic_tool_hiding(
   if not (config and config.tools and config.system_instruction and config.system_instruction.parts):
     return None
   instruction = config.system_instruction.parts[0].text
-  for func_decl in config.tools[0].function_declarations:
-    if re.search(rf"\b{re.escape(func_decl.name)}\b", instruction):
-      continue
-    if config.excluded_tools is None or func_decl.name not in config.excluded_tools:
-      config.hide_tool(func_decl.name)
+  for tool_decl in config.tools:
+    for func_decl in tool_decl.function_declarations or []:
+      if func_decl.name not in (
+          "transfer_to_agent",
+          "transferToAgent",
+      ) and re.search(rf"\b{re.escape(func_decl.name)}\b", instruction):
+        continue
+      if (
+          config.excluded_tools is None
+          or func_decl.name not in config.excluded_tools
+      ):
+        config.hide_tool(func_decl.name)
   return None
 ```
 
@@ -395,6 +402,14 @@ avoids the startup cost the platform adds per separate callback.
     per-file entries like the `current_date` one above.
 -   After `cxas push`, wait about a minute before testing. `cxas push` doesn't
     change an existing app's display name; rename it in the console.
+-   CES resolves guardrail `transferAgent` targets only when the target agent is
+    listed in the root agent's `childAgents`; leaving `childAgents` empty makes
+    every guardrail transfer loop on the root agent and answer with a fallback
+    line instead of escalating. When you attach a `transferAgent` guardrail,
+    list only its handler agent in `childAgents` and keep domain tool names out
+    of the handler's `description` (since CES appends child-agent descriptions
+    to `system_instruction`), while `_handle_dynamic_tool_hiding` always hides
+    `transfer_to_agent` (`transferToAgent`) on normal turns.
 
 ## Sample agent
 
