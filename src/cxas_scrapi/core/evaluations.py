@@ -21,6 +21,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import time
 import typing
 from enum import Enum
@@ -43,6 +44,46 @@ from cxas_scrapi.core.tools import Tools
 class ExportFormat(Enum):
     YAML = "yaml"
     JSON = "json"
+
+
+_APP_RESOURCE_RE = re.compile(r"^projects/[^/]+(/locations/[^/]+/apps/[^/]+)$")
+_EVAL_RESOURCE_RE = re.compile(
+    r"^projects/[^/]+(/locations/[^/]+/apps/[^/]+)/evaluations/([^/]+)$"
+)
+
+
+def _normalize_eval_resource_for_app(
+    evaluation_name: str,
+    app_name: str,
+) -> str:
+    """Aligns an evaluation resource's project segment with `app_name`.
+
+    CES `ListEvaluations` returns evaluation resource names with the numeric
+    GCP project number, whereas callers often pass `app_name` using the
+    project ID string. `RunEvaluation` checks that every entry in
+    `evaluations` literally starts with `f"{request.app}/"`, so we rewrite
+    the project prefix when `/locations/{loc}/apps/{app}` matches `app_name`
+    while leaving cross-app or malformed names untouched.
+
+    Args:
+        evaluation_name: Evaluation resource name to normalize.
+        app_name: Target CES app resource name.
+
+    Returns:
+        Normalized evaluation resource name with trailing slashes stripped for
+        `projects/...` resource paths.
+    """
+    clean_app = app_name.strip().rstrip("/")
+    clean_eval = evaluation_name.strip().rstrip("/")
+    app_match = _APP_RESOURCE_RE.match(clean_app)
+    eval_match = _EVAL_RESOURCE_RE.match(clean_eval)
+    if not app_match or not eval_match:
+        if clean_eval.startswith("projects/"):
+            return clean_eval
+        return evaluation_name
+    if eval_match.group(1) != app_match.group(1):
+        return clean_eval
+    return f"{clean_app}/evaluations/{eval_match.group(2)}"
 
 
 class Evaluations(Common):
@@ -196,9 +237,15 @@ class Evaluations(Common):
         use_tool_fakes: bool | None = None,
     ) -> dict[str, Any]:
         """Triggers an evaluation run via the REST endpoint."""
-        app_name = app_name or self.app_name
+        app_name = (app_name or self.app_name or "").strip().rstrip("/")
         if not app_name:
             raise ValueError("app_name is required.")
+        normalized_evals = list(
+            dict.fromkeys(
+                _normalize_eval_resource_for_app(e, app_name)
+                for e in evaluations
+            )
+        )
         session = self._get_rest_session()
         base_url = self._get_rest_base_url()
         url = f"{base_url}/v1beta/{app_name.lstrip('/')}:runEvaluation"
@@ -212,7 +259,7 @@ class Evaluations(Common):
         elif use_tool_fakes is False:
             config["toolCallBehaviour"] = "REAL"
         body: dict[str, Any] = {
-            "evaluations": list(evaluations),
+            "evaluations": normalized_evals,
             "config": config,
         }
         if run_count:
@@ -1314,7 +1361,7 @@ class Evaluations(Common):
             use_tool_fakes: If True, executes with mock/fake tool behaviour.
                 If False, executes with real tool behaviour. Defaults to None.
         """
-        app_name = app_name or self.app_name
+        app_name = (app_name or self.app_name or "").strip().rstrip("/")
         if not app_name:
             raise ValueError("app_name is required.")
 
@@ -1324,19 +1371,23 @@ class Evaluations(Common):
                 "'eval_type' ('goldens'/'scenarios'/'all')."
             )
 
-        resolved_names = set()
+        resolved_names: list[str] = []
         need_map = bool(eval_type)
         if evaluations and not need_map:
             eval_list = (
                 [evaluations] if isinstance(evaluations, str) else evaluations
             )
-            if not all(
-                isinstance(e, str)
-                and e.startswith("projects/")
-                and "/evaluations/" in e
-                for e in eval_list
-            ):
-                need_map = True
+            for e in eval_list:
+                if not isinstance(e, str):
+                    need_map = True
+                    break
+                e_clean = e.strip()
+                if not (
+                    e_clean.startswith("projects/")
+                    and "/evaluations/" in e_clean
+                ):
+                    need_map = True
+                    break
 
         evals_map = self._get_or_load_evals_map(app_name) if need_map else {}
 
@@ -1346,11 +1397,12 @@ class Evaluations(Common):
                 evaluations = [evaluations]
 
             for display_name in evaluations:
+                e_clean = display_name.strip()
                 if (
-                    display_name.startswith("projects/")
-                    and "/evaluations/" in display_name
+                    e_clean.startswith("projects/")
+                    and "/evaluations/" in e_clean
                 ):
-                    resolved_names.add(display_name)
+                    resolved_names.append(e_clean)
                     continue
 
                 # Check both goldens and scenarios for this name
@@ -1359,7 +1411,7 @@ class Evaluations(Common):
                 ) or evals_map.get("scenarios", {}).get(display_name)
 
                 if resource_name:
-                    resolved_names.add(resource_name)
+                    resolved_names.append(resource_name)
                 else:
                     raise ValueError(
                         f"Evaluation display name not found: '{display_name}'"
@@ -1369,12 +1421,12 @@ class Evaluations(Common):
         if eval_type:
             eval_type = eval_type.lower()
             if eval_type == "goldens":
-                resolved_names.update(evals_map.get("goldens", {}).values())
+                resolved_names.extend(evals_map.get("goldens", {}).values())
             elif eval_type == "scenarios":
-                resolved_names.update(evals_map.get("scenarios", {}).values())
+                resolved_names.extend(evals_map.get("scenarios", {}).values())
             elif eval_type == "all":
-                resolved_names.update(evals_map.get("goldens", {}).values())
-                resolved_names.update(evals_map.get("scenarios", {}).values())
+                resolved_names.extend(evals_map.get("goldens", {}).values())
+                resolved_names.extend(evals_map.get("scenarios", {}).values())
             else:
                 raise ValueError(
                     f"Invalid eval_type: '{eval_type}'. Must be 'goldens', "
@@ -1386,8 +1438,14 @@ class Evaluations(Common):
                 "No matching evaluation resource names found to run."
             )
 
+        normalized_names = list(
+            dict.fromkeys(
+                _normalize_eval_resource_for_app(name, app_name)
+                for name in resolved_names
+            )
+        )
         request = types.RunEvaluationRequest(
-            app=app_name, evaluations=list(resolved_names)
+            app=app_name, evaluations=normalized_names
         )
 
         if run_count:

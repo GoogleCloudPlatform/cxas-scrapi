@@ -942,3 +942,104 @@ def test_sync_evaluations_upserts_and_prunes_by_tag(
     assert summary["pushed"] == ["case_keep"]
     assert summary["pruned"] == ["case_stale"]
     assert evals_client.delete_evaluation.call_count == 2
+
+
+@patch("cxas_scrapi.core.evaluations.types")
+def test_run_evaluation_normalizes_project_number_to_app_project_id(
+    mock_types: typing.Any,
+) -> None:
+    app_id_path = "projects/cymbal-cx-dev/locations/us/apps/app-123"
+    with patch("cxas_scrapi.core.evaluations.EvaluationServiceClient"):
+        evals_client = Evaluations(app_name=app_id_path)
+
+    numeric_map = {
+        "goldens": {
+            "Golden One": (
+                "projects/987654321012/locations/us/apps/app-123/evaluations/g1"
+            ),
+        },
+        "scenarios": {
+            "Scenario One": (
+                "projects/987654321012/locations/us/apps/app-123/evaluations/s1"
+            ),
+        },
+    }
+
+    with patch.object(
+        evals_client, "_get_or_load_evals_map", return_value=numeric_map
+    ) as mock_load_map:
+        evals_client.run_evaluation(
+            app_name=f"{app_id_path}/",
+            evaluations=[f"{app_id_path}/evaluations/g1"],
+            eval_type="all",
+        )
+        mock_load_map.assert_called_once_with(app_id_path)
+
+    cross_app = (
+        "projects/987654321012/locations/us/apps/other-app/evaluations/x1"
+    )
+    cross_loc = "projects/987654321012/locations/eu/apps/app-123/evaluations/x2"
+    with patch.object(evals_client, "_get_or_load_evals_map") as mock_skip_map:
+        evals_client.run_evaluation(
+            evaluations=[
+                (
+                    "  projects/987654321012/locations/us/apps/app-123/"
+                    "evaluations/g9/  "
+                ),
+                f"{cross_app}/",
+                cross_app,
+                cross_loc,
+            ]
+        )
+        mock_skip_map.assert_not_called()
+
+    assert evals_client.client.run_evaluation.call_count == 2
+    calls = mock_types.RunEvaluationRequest.call_args_list
+    assert len(calls) == 2
+    assert calls[0].kwargs["app"] == app_id_path
+    assert calls[0].kwargs["evaluations"] == [
+        f"{app_id_path}/evaluations/g1",
+        f"{app_id_path}/evaluations/s1",
+    ]
+    assert calls[1].kwargs["evaluations"] == [
+        f"{app_id_path}/evaluations/g9",
+        cross_app,
+        cross_loc,
+    ]
+
+
+def test_run_evaluation_rest_normalizes_and_deduplicates_evaluations() -> None:
+    app_id_path = "projects/cymbal-cx-dev/locations/us/apps/app-123"
+    cross_app = (
+        "projects/987654321012/locations/us/apps/other-app/evaluations/x1"
+    )
+    with patch("cxas_scrapi.core.evaluations.EvaluationServiceClient"):
+        evals_client = Evaluations(app_name=app_id_path)
+
+    mock_session = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"name": "operations/op-1"}
+    mock_session.post.return_value = mock_resp
+    with patch.object(
+        evals_client, "_get_rest_session", return_value=mock_session
+    ):
+        evals_client.run_evaluation_rest(
+            app_name=f"{app_id_path}/",
+            evaluations=[
+                (
+                    "  projects/987654321012/locations/us/apps/app-123/"
+                    "evaluations/s1/  "
+                ),
+                f"{app_id_path}/evaluations/s1",
+                f"{cross_app}/",
+                cross_app,
+            ],
+        )
+
+    posted_url = mock_session.post.call_args[0][0]
+    assert posted_url.endswith(f"/v1beta/{app_id_path}:runEvaluation")
+    posted_body = mock_session.post.call_args[1]["json"]
+    assert posted_body["evaluations"] == [
+        f"{app_id_path}/evaluations/s1",
+        cross_app,
+    ]
