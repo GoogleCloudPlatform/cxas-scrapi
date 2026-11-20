@@ -25,8 +25,9 @@ what it returned or which tools the model would see.
 
 Example:
   python3 run_locally.py cxas_app/my-agent callback \
-    'open_playbook={"playbook_name": "live_agent", "rationale": "test"}' \
-    'load_task={"task_name": "live_agent_escalation", "rationale": "test"}' \
+    'select_domain={"domain_name": "live_agent", "rationale": "test"}' \
+    'load_workflow={"workflow_name": "live_agent_escalation",
+      "rationale": "test"}' \
     'execute_live_agent_handover={"reason": "customer_requested_agent"}' \
     callback
 """

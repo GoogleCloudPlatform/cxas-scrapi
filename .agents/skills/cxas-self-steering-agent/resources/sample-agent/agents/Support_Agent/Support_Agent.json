@@ -1,14 +1,14 @@
 {
   "name": "Support_Agent",
   "displayName": "Support_Agent",
-  "description": "Generic starter support agent for chat or voice. Uses playbooks and tasks in a Jinja instruction, dynamic tool hiding, and deterministic actions.",
+  "description": "Generic starter support agent for chat or voice. Uses domains and workflows in a Jinja instruction, dynamic tool hiding, and deterministic actions.",
   "instruction": "agents/Support_Agent/instruction.txt",
   "tools": [
     "end_session",
     "execute_live_agent_handover",
     "graceful_end_session",
-    "load_task",
-    "open_playbook",
+    "load_workflow",
+    "select_domain",
     "set_next_agent_actions"
   ],
   "beforeModelCallbacks": [

@@ -21,6 +21,7 @@ import base64
 import importlib.util
 import json
 import pathlib
+import re
 import shutil
 import stat
 import sys
@@ -28,6 +29,7 @@ import types
 from typing import Any, Optional
 
 import pytest
+import yaml
 
 from cxas_scrapi.utils import callback_libs as cl
 from cxas_scrapi.utils.linter import (
@@ -45,16 +47,29 @@ _SCRIPTS_DIR = _SKILL_DIR / "scripts"
 _SAMPLE_DIR = _SKILL_DIR / "resources" / "sample-agent"
 
 _CORE_TOOLS = (
-    "open_playbook",
-    "load_task",
+    "select_domain",
+    "load_workflow",
     "graceful_end_session",
     "execute_live_agent_handover",
     "set_next_agent_actions",
     "end_session",
 )
 _CORE_VARIABLES = (
-    "current_playbook",
-    "current_task",
+    "current_domain",
+    "current_workflow",
+    "next_agent_actions",
+    "played_greeting",
+    "pending_handoff_reason",
+)
+_SINGLE_LEVEL_TOOLS = (
+    "load_workflow",
+    "graceful_end_session",
+    "execute_live_agent_handover",
+    "set_next_agent_actions",
+    "end_session",
+)
+_SINGLE_LEVEL_VARIABLES = (
+    "current_workflow",
     "next_agent_actions",
     "played_greeting",
     "pending_handoff_reason",
@@ -207,6 +222,74 @@ def _write_instruction(
     )
 
 
+def _convert_to_legacy_playbook_task(app_dir: pathlib.Path) -> str:
+    """Converts a copied 2-level sample app into a legacy playbook/task app."""
+    shutil.rmtree(app_dir / "tools" / "select_domain")
+    shutil.rmtree(app_dir / "tools" / "load_workflow")
+    op_dir = app_dir / "tools" / "open_playbook" / "python_function"
+    op_dir.mkdir(parents=True, exist_ok=True)
+    (op_dir / "python_code.py").write_text(
+        "from typing import Any\n"
+        'VALID_PLAYBOOKS = ("live_agent",)\n\n\n'
+        "def open_playbook(playbook_name: str, rationale: str) -> dict[str, Any]:\n"
+        '  """Opens a playbook."""\n'
+        '  context.state["current_playbook"] = playbook_name\n'
+        '  context.state["current_task"] = ""\n'
+        '  return {"status": "ok", "current_playbook": playbook_name}\n',
+        encoding="utf-8",
+    )
+    lt_dir = app_dir / "tools" / "load_task" / "python_function"
+    lt_dir.mkdir(parents=True, exist_ok=True)
+    (lt_dir / "python_code.py").write_text(
+        "from typing import Any\n"
+        'PLAYBOOK_TASKS = {"live_agent": ("live_agent_escalation",)}\n\n\n'
+        "def load_task(task_name: str, rationale: str) -> dict[str, Any]:\n"
+        '  """Loads a task."""\n'
+        '  context.state["current_task"] = task_name\n'
+        '  return {"status": "ok", "current_task": task_name}\n',
+        encoding="utf-8",
+    )
+    sync_tool_descriptions = _load_script("sync_tool_descriptions")
+    sync_tool_descriptions.sync(app_dir, write=True)
+
+    app_path = app_dir / "app.json"
+    app = json.loads(app_path.read_text(encoding="utf-8"))
+    for v in app["variableDeclarations"]:
+        if v["name"] == "current_domain":
+            v["name"] = "current_playbook"
+        elif v["name"] == "current_workflow":
+            v["name"] = "current_task"
+    app_path.write_text(json.dumps(app, indent=2) + "\n", encoding="utf-8")
+
+    agent_path = app_dir / "agents" / "Support_Agent" / "Support_Agent.json"
+    agent = json.loads(agent_path.read_text(encoding="utf-8"))
+    agent["tools"] = [
+        "open_playbook"
+        if t == "select_domain"
+        else ("load_task" if t == "load_workflow" else t)
+        for t in agent["tools"]
+    ]
+    agent_path.write_text(json.dumps(agent, indent=2) + "\n", encoding="utf-8")
+
+    instr_text = (
+        _read_instruction(app_dir)
+        .replace("select_domain", "open_playbook")
+        .replace("load_workflow", "load_task")
+        .replace("current_domain", "current_playbook")
+        .replace("current_workflow", "current_task")
+        .replace("<domain_list>", "<playbook_list>")
+        .replace("</domain_list>", "</playbook_list>")
+        .replace("<workflow_list>", "<task_list>")
+        .replace("</workflow_list>", "</task_list>")
+        .replace('<workflow name="', '<task name="')
+        .replace("</workflow>", "</task>")
+        .replace("<workflow_rules>", "<task_rules>")
+        .replace("</workflow_rules>", "</task_rules>")
+    )
+    _write_instruction(app_dir, instr_text)
+    return instr_text
+
+
 # ── Clean Starter & Linter Parity ────────────────────────────────────────
 
 
@@ -215,6 +298,8 @@ def test_clean_starter_passes_all_checks_and_cxas_lint() -> None:
     check_tool_visibility = _load_script("check_tool_visibility")
     sync_tool_descriptions = _load_script("sync_tool_descriptions")
 
+    app = check_tool_visibility._load_app(_SAMPLE_DIR)
+    assert check_tool_visibility._detect_topology(app).mode == "domain_workflow"
     assert check_tool_visibility.check(_SAMPLE_DIR) == []
     assert sync_tool_descriptions.sync(_SAMPLE_DIR, write=False) == []
 
@@ -225,6 +310,28 @@ def test_clean_starter_passes_all_checks_and_cxas_lint() -> None:
         env_cfg["app"]["loggingSettings"]["bigqueryExportSettings"]["project"]
         == "$env_var"
     )
+
+    lint_cfg = yaml.safe_load(
+        (_SAMPLE_DIR / "cxaslint.yaml").read_text(encoding="utf-8")
+    )
+    assert set(lint_cfg["rules"]) == {
+        "I001",
+        "T001",
+        "T011",
+        "I012",
+        "A007",
+        "A009",
+        "T014",
+    }
+    assert lint_cfg["options"]["V105"]["ignore"] == [
+        "current_workflow",
+        "pending_handoff_reason",
+        "next_agent_actions",
+    ]
+
+    instr = _read_instruction(_SAMPLE_DIR)
+    assert "<context>" not in instr
+    assert "<status>\nToday's date is {{current_date}}." in instr
 
     report = _run_cxas_lint(_SAMPLE_DIR)
     assert report.errors == [], [str(r) for r in report.errors]
@@ -238,7 +345,7 @@ def test_clean_starter_passes_all_checks_and_cxas_lint() -> None:
 def test_runner_walkthrough_and_end_session_latch(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Walks greeting -> playbook -> task -> handover -> latched teardown."""
+    """Walks greeting -> domain -> workflow -> handover -> latched teardown."""
     run_locally = _load_script("run_locally")
     app_dir = _copy_sample(tmp_path)
     runner = run_locally.Runner(app_dir)
@@ -253,44 +360,55 @@ def test_runner_walkthrough_and_end_session_latch(
     resp2, req2 = runner.run_callback()
     assert resp2 is None
     excluded_start = set(req2.config.excluded_tools or [])
-    assert {"load_task", "end_session", "set_next_agent_actions"} <= (
+    assert {"load_workflow", "end_session", "set_next_agent_actions"} <= (
         excluded_start
     )
     assert not (
         {
-            "open_playbook",
+            "select_domain",
             "graceful_end_session",
             "execute_live_agent_handover",
         }
         & excluded_start
     )
 
-    # Open the live_agent playbook and verify load_task becomes visible.
-    res_pb = runner.call_tool(
-        "open_playbook",
+    # Select live_agent domain and verify load_workflow becomes visible.
+    res_dom = runner.call_tool(
+        "select_domain",
         {
-            "playbook_name": "live_agent",
+            "domain_name": "live_agent",
             "rationale": "Customer asked for a representative.",
         },
     )
-    assert res_pb["status"] == "ok"
-    assert runner.state["current_playbook"] == "live_agent"
-    assert runner.state["current_task"] == ""
+    assert res_dom == {"status": "ok", "current_domain": "live_agent"}
+    assert runner.state["current_domain"] == "live_agent"
+    assert runner.state["current_workflow"] == ""
 
-    resp_pb, req_pb = runner.run_callback()
-    assert resp_pb is None
-    assert "load_task" not in set(req_pb.config.excluded_tools or [])
+    resp_dom, req_dom = runner.run_callback()
+    assert resp_dom is None
+    assert "load_workflow" not in set(req_dom.config.excluded_tools or [])
 
-    # Load live_agent_escalation task and execute live agent handover.
-    res_task = runner.call_tool(
-        "load_task",
+    # Verify load_workflow structured error cases and success path.
+    bad_wf = runner.call_tool(
+        "load_workflow",
+        {"workflow_name": "nonexistent", "rationale": "Test error payload."},
+    )
+    assert bad_wf["status"] == "error"
+    assert bad_wf["error"] == "invalid_workflow"
+
+    res_wf = runner.call_tool(
+        "load_workflow",
         {
-            "task_name": "live_agent_escalation",
+            "workflow_name": "live_agent_escalation",
             "rationale": "Escalate the customer to live support.",
         },
     )
-    assert res_task["status"] == "ok"
-    assert runner.state["current_task"] == "live_agent_escalation"
+    assert res_wf == {
+        "status": "ok",
+        "current_domain": "live_agent",
+        "current_workflow": "live_agent_escalation",
+    }
+    assert runner.state["current_workflow"] == "live_agent_escalation"
 
     res_ho = runner.call_tool(
         "execute_live_agent_handover",
@@ -343,6 +461,65 @@ def test_runner_walkthrough_and_end_session_latch(
             "reason": "customer_requested_agent",
             "escalated": True,
         }
+    }
+
+
+def test_load_workflow_no_selected_domain_and_invalid_domain(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Router tools return structured error codes on invalid inputs."""
+    run_locally = _load_script("run_locally")
+    app_dir = _copy_sample(tmp_path)
+    runner = run_locally.Runner(app_dir)
+
+    bad_dom = runner.call_tool(
+        "select_domain",
+        {"domain_name": "unknown", "rationale": "Invalid domain test."},
+    )
+    assert bad_dom == {
+        "status": "error",
+        "error": "invalid_domain",
+        "valid_domains": ["live_agent"],
+    }
+
+    no_dom = runner.call_tool(
+        "load_workflow",
+        {
+            "workflow_name": "live_agent_escalation",
+            "rationale": "Missing domain test.",
+        },
+    )
+    assert no_dom == {"status": "error", "error": "no_selected_domain"}
+
+    # Check workflow_in_different_domain returns required_domain.
+    lw_path = (
+        app_dir
+        / "tools"
+        / "load_workflow"
+        / "python_function"
+        / "python_code.py"
+    )
+    lw_path.write_text(
+        lw_path.read_text(encoding="utf-8").replace(
+            '    "live_agent": ("live_agent_escalation",),',
+            '    "live_agent": ("live_agent_escalation",),\n'
+            '    "billing": ("check_balance",),',
+        ),
+        encoding="utf-8",
+    )
+    runner_multi = run_locally.Runner(app_dir)
+    runner_multi.call_tool(
+        "select_domain",
+        {"domain_name": "live_agent", "rationale": "Select live_agent first."},
+    )
+    wrong_dom = runner_multi.call_tool(
+        "load_workflow",
+        {"workflow_name": "check_balance", "rationale": "Cross-domain test."},
+    )
+    assert wrong_dom == {
+        "status": "error",
+        "error": "workflow_in_different_domain",
+        "required_domain": "billing",
     }
 
 
@@ -470,7 +647,7 @@ def test_callback_pops_non_terminal_customized_response_cleanly() -> None:
     second_response, request = runner.run_callback()
     assert second_response is None
     hidden = set(request.config.excluded_tools or [])
-    assert "open_playbook" not in hidden
+    assert "select_domain" not in hidden
 
 
 # ── Guardrail childAgents Support (#605) ─────────────────────────────────
@@ -488,9 +665,9 @@ def test_guardrail_child_agents_hides_transfer_tools_across_declarations() -> (
         "<anytime_actions>\n"
         "Call {@TOOL: graceful_end_session} when done.\n"
         "</anytime_actions>\n"
-        "<playbook_list>\n"
-        "Call {@TOOL: open_playbook} to open a playbook.\n"
-        "</playbook_list>"
+        "<domain_list>\n"
+        "Call {@TOOL: select_domain} to select a domain.\n"
+        "</domain_list>"
     )
     injected_child_agent_block = (
         "\n\nYou have a list of other agents to transfer to:\n\n"
@@ -515,9 +692,9 @@ def test_guardrail_child_agents_hides_transfer_tools_across_declarations() -> (
             tools=[
                 cl.ToolDeclaration(
                     functionDeclarations=[
-                        cl.FunctionDeclaration(name="open_playbook"),
+                        cl.FunctionDeclaration(name="select_domain"),
                         cl.FunctionDeclaration(name="graceful_end_session"),
-                        cl.FunctionDeclaration(name="load_task"),
+                        cl.FunctionDeclaration(name="load_workflow"),
                         cl.FunctionDeclaration(name="end_session"),
                     ]
                 ),
@@ -541,9 +718,9 @@ def test_guardrail_child_agents_hides_transfer_tools_across_declarations() -> (
     assert "transfer_to_agent" in excluded
     assert "transferToAgent" in excluded
     assert "unmentioned_helper" in excluded
-    assert "load_task" in excluded
+    assert "load_workflow" in excluded
     assert "end_session" in excluded
-    assert "open_playbook" not in excluded
+    assert "select_domain" not in excluded
     assert "graceful_end_session" not in excluded
 
     assert request.config.system_instruction is not None
@@ -551,7 +728,7 @@ def test_guardrail_child_agents_hides_transfer_tools_across_declarations() -> (
     assert request.config.system_instruction.parts[0].text == full_instruction
 
 
-# ── scaffold_from_sample ─────────────────────────────────────────────────
+# ── scaffold_from_sample (2-level and --single-level) ────────────────────
 
 
 @pytest.mark.parametrize("project_id", ["$env_var", "custom-gcp-project"])
@@ -648,6 +825,308 @@ def test_scaffold_from_sample_creates_clean_agent(
     assert (target / "agents" / "Billing_Agent" / "instruction.txt").exists()
 
 
+def test_scaffold_single_level_end_to_end(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--single-level scaffolds 5-tool/4-var app passing lint, checker, run."""
+    scaffold_from_sample = _load_script("scaffold_from_sample")
+    check_tool_visibility = _load_script("check_tool_visibility")
+    sync_tool_descriptions = _load_script("sync_tool_descriptions")
+    run_locally = _load_script("run_locally")
+
+    target = tmp_path / "direct-agent"
+    app_id = "11111111-2222-3333-4444-555555555555"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scaffold_from_sample.py",
+            "--target-dir",
+            str(target),
+            "--app-id",
+            app_id,
+            "--project-id",
+            "$env_var",
+            "--agent-name",
+            "Direct_Agent",
+            "--single-level",
+        ],
+    )
+    scaffold_from_sample.main()
+
+    app_cfg = json.loads((target / "app.json").read_text(encoding="utf-8"))
+    assert app_cfg["rootAgent"] == "Direct_Agent"
+    declared_vars = [v["name"] for v in app_cfg["variableDeclarations"]]
+    assert declared_vars == list(_SINGLE_LEVEL_VARIABLES)
+    assert "current_domain" not in declared_vars
+
+    agent_cfg = json.loads(
+        (target / "agents" / "Direct_Agent" / "Direct_Agent.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert sorted(agent_cfg["tools"]) == sorted(_SINGLE_LEVEL_TOOLS)
+    assert "select_domain" not in agent_cfg["tools"]
+    assert not (target / "tools" / "select_domain").exists()
+
+    # Single-level cxaslint.yaml omits current_workflow from V105.ignore.
+    lint_cfg = yaml.safe_load(
+        (target / "cxaslint.yaml").read_text(encoding="utf-8")
+    )
+    assert lint_cfg["options"]["V105"]["ignore"] == [
+        "pending_handoff_reason",
+        "next_agent_actions",
+    ]
+
+    # Instruction uses <status> for current_date and never <context> (I015).
+    instr_text = _read_instruction(target, agent="Direct_Agent")
+    assert "<context>" not in instr_text
+    assert "<status>\nToday's date is {{current_date}}." in instr_text
+
+    report = _run_cxas_lint(target)
+    assert report.errors == [], [str(r) for r in report.errors]
+    assert report.warnings == [], [str(r) for r in report.warnings]
+    assert report.results == [], [str(r) for r in report.results]
+
+    loaded = check_tool_visibility._load_app(target)
+    assert (
+        check_tool_visibility._detect_topology(loaded).mode == "single_workflow"
+    )
+    assert check_tool_visibility.check(target) == []
+    assert sync_tool_descriptions.sync(target, write=False) == []
+
+    # Walk single-level Runner flow end-to-end.
+    runner = run_locally.Runner(target)
+    resp1, _ = runner.run_callback()
+    assert resp1 is not None
+    assert runner.state["played_greeting"] is True
+
+    resp2, req2 = runner.run_callback()
+    assert resp2 is None
+    excluded = set(req2.config.excluded_tools or [])
+    assert "load_workflow" not in excluded
+    assert "graceful_end_session" not in excluded
+    assert "execute_live_agent_handover" not in excluded
+    assert {"end_session", "set_next_agent_actions"} <= excluded
+
+    res_wf = runner.call_tool(
+        "load_workflow",
+        {
+            "workflow_name": "live_agent_escalation",
+            "rationale": "Customer requested a live specialist.",
+        },
+    )
+    assert res_wf == {
+        "status": "ok",
+        "current_workflow": "live_agent_escalation",
+    }
+    assert runner.state["current_workflow"] == "live_agent_escalation"
+
+    bad_wf = runner.call_tool(
+        "load_workflow",
+        {"workflow_name": "unknown", "rationale": "Test unknown workflow."},
+    )
+    assert bad_wf == {
+        "status": "error",
+        "error": "invalid_workflow",
+        "valid_workflows": ["live_agent_escalation"],
+    }
+
+    runner.call_tool(
+        "execute_live_agent_handover",
+        {"reason": "customer_requested_agent"},
+    )
+    resp3, _ = runner.run_callback()
+    assert resp3 is not None
+    assert resp3.content is not None
+    assert any(
+        p.has_function_call("end_session") for p in (resp3.content.parts or [])
+    )
+
+    resp4, _ = runner.run_callback()
+    assert resp4 is not None
+    assert resp4.content is not None
+    assert not any(
+        p.inline_data is not None for p in (resp4.content.parts or [])
+    )
+    assert any(
+        p.has_function_call("end_session") for p in (resp4.content.parts or [])
+    )
+
+    # Verify hiding <workflow_list> in 1-level mode is caught.
+    _write_instruction(
+        target,
+        instr_text.replace(
+            "<workflow_list>",
+            "{{% if not current_workflow %}}\n<workflow_list>",
+        ).replace(
+            "</workflow_list>",
+            "</workflow_list>\n{{% endif %}}",
+        ),
+        agent="Direct_Agent",
+    )
+    hidden_problems = check_tool_visibility.check(target)
+    assert any(
+        "<workflow_list>" in p or "load_workflow" in p for p in hidden_problems
+    ), hidden_problems
+
+    # Verify _static_tool_problems catches extra tool in static text in 1-level.
+    extra_dir = target / "tools" / "check_status" / "python_function"
+    extra_dir.mkdir(parents=True)
+    (extra_dir / "python_code.py").write_text(
+        "from typing import Any\n\n"
+        "def check_status() -> dict[str, Any]:\n"
+        '  """Checks status."""\n'
+        '  return {"status": "ok"}\n',
+        encoding="utf-8",
+    )
+    sync_tool_descriptions.sync(target, write=True)
+    agent_json_path = target / "agents" / "Direct_Agent" / "Direct_Agent.json"
+    agent_data = json.loads(agent_json_path.read_text(encoding="utf-8"))
+    agent_data["tools"].append("check_status")
+    agent_json_path.write_text(
+        json.dumps(agent_data, indent=2) + "\n", encoding="utf-8"
+    )
+    _write_instruction(
+        target,
+        instr_text + "\nCall {@TOOL: check_status} statically.\n",
+        agent="Direct_Agent",
+    )
+    static_1l = check_tool_visibility.check(target)
+    assert any(
+        "tool 'check_status' is visible before any workflow is loaded" in p
+        for p in static_1l
+    ), static_1l
+
+    # Verify single_workflow _router_state_problems catches non-router state.
+    _write_instruction(target, instr_text, agent="Direct_Agent")
+    lw_path = (
+        target
+        / "tools"
+        / "load_workflow"
+        / "python_function"
+        / "python_code.py"
+    )
+    lw_path.write_text(
+        lw_path.read_text(encoding="utf-8").replace(
+            'context.state["current_workflow"] = name',
+            'context.state["current_workflow"] = name\n'
+            '  context.state["other_var"] = rationale',
+        ),
+        encoding="utf-8",
+    )
+    state_problems = check_tool_visibility.check(target)
+    assert any(
+        "router tool 'load_workflow' writes state 'other_var'" in p
+        and "only current_workflow" in p
+        for p in state_problems
+    ), state_problems
+    assert any(
+        "router tool 'load_workflow' reads `rationale`" in p
+        for p in state_problems
+    ), state_problems
+
+
+# ── Legacy open_playbook / load_task Compatibility ───────────────────────
+
+
+def test_legacy_playbook_task_topology_backward_compatibility(
+    tmp_path: pathlib.Path,
+) -> None:
+    """check_tool_visibility detects and validates legacy playbook/task apps."""
+    check_tool_visibility = _load_script("check_tool_visibility")
+
+    app_dir = _copy_sample(tmp_path, "legacy_app")
+    orig_instr = _convert_to_legacy_playbook_task(app_dir)
+
+    loaded = check_tool_visibility._load_app(app_dir)
+    assert (
+        check_tool_visibility._detect_topology(loaded).mode == "playbook_task"
+    )
+    assert check_tool_visibility.check(app_dir) == []
+
+    # Catch hidden <playbook_list> at start.
+    _write_instruction(
+        app_dir,
+        orig_instr.replace(
+            "<playbook_list>",
+            "{{% if current_playbook %}}\n<playbook_list>",
+        ).replace(
+            "</playbook_list>",
+            "</playbook_list>\n{{% endif %}}",
+        ),
+    )
+    pb_problems = check_tool_visibility.check(app_dir)
+    assert any(
+        "<playbook_list> isn't rendered in 'start'" in p for p in pb_problems
+    ), pb_problems
+
+    # Catch hidden <task_list> when task is loaded.
+    _write_instruction(
+        app_dir,
+        orig_instr.replace(
+            "{{% if current_playbook %}}\n<task_list>",
+            "{{% if current_playbook and not current_task %}}\n<task_list>",
+        ),
+    )
+    task_problems = check_tool_visibility.check(app_dir)
+    assert any(
+        "<task_list> isn't rendered in 'live_agent / live_agent_escalation'"
+        in p
+        for p in task_problems
+    ), task_problems
+
+    # Catch legacy _static_tool_problems and _router_state_problems.
+    _write_instruction(
+        app_dir,
+        orig_instr + "\nCall {@TOOL: load_task} at any time.\n",
+    )
+    op_path = (
+        app_dir
+        / "tools"
+        / "open_playbook"
+        / "python_function"
+        / "python_code.py"
+    )
+    op_path.write_text(
+        op_path.read_text(encoding="utf-8").replace(
+            'context.state["current_task"] = ""',
+            'context.state["current_task"] = ""\n'
+            '  context.state["account_id"] = rationale',
+        ),
+        encoding="utf-8",
+    )
+    lt_path = (
+        app_dir / "tools" / "load_task" / "python_function" / "python_code.py"
+    )
+    lt_path.write_text(
+        lt_path.read_text(encoding="utf-8").replace(
+            'context.state["current_task"] = task_name',
+            'context.state.update({"current_task": task_name})',
+        ),
+        encoding="utf-8",
+    )
+    legacy_problems = check_tool_visibility.check(app_dir)
+    assert any(
+        "tool 'load_task' is visible before any playbook is open" in p
+        for p in legacy_problems
+    ), legacy_problems
+    assert any(
+        "router tool 'open_playbook' writes state 'account_id'" in p
+        and "current_playbook and current_task" in p
+        for p in legacy_problems
+    ), legacy_problems
+    assert any(
+        "router tool 'open_playbook' reads `rationale`" in p
+        for p in legacy_problems
+    ), legacy_problems
+    assert any(
+        "router tool 'load_task' calls state.update()" in p
+        for p in legacy_problems
+    ), legacy_problems
+
+
 # ── Instruction & Template Checks (check_tool_visibility) ────────────────
 
 
@@ -669,18 +1148,18 @@ def test_template_syntax_and_antipatterns_flagged(
     _write_instruction(
         app_dir,
         orig
-        + "\nActive playbook: {current_playbook}\n"
+        + "\nActive domain: {current_domain}\n"
         + "{% if played_greeting %}hi{% endif %}\n"
-        + "{{% if current_playbook not in ['live_agent'] %}}x{{% endif %}}\n"
+        + "{{% if current_domain not in ['live_agent'] %}}x{{% endif %}}\n"
         + "{{ items[0] }}\n"
-        + "<session_snapshot>{{current_playbook}}</session_snapshot>\n"
+        + "<session_snapshot>{{current_domain}}</session_snapshot>\n"
         + "{{# hello end_session #}}\n"
         + "{# plain comment #}\n"
         + "Unknown: {{ mystery_undeclared_var }}\n",
     )
 
     problems = check_tool_visibility.check(app_dir)
-    assert any("single-brace '{current_playbook}'" in p for p in problems), (
+    assert any("single-brace '{current_domain}'" in p for p in problems), (
         problems
     )
     assert any("single-brace block" in p for p in problems), problems
@@ -706,13 +1185,13 @@ def test_non_bare_output_expressions_flagged(tmp_path: pathlib.Path) -> None:
         app_dir,
         orig
         + "\nStatus: {{ 'yes' if played_greeting else 'no' }}\n"
-        + "Fallback: {{ current_playbook | default('none') }}\n",
+        + "Fallback: {{ current_domain | default('none') }}\n",
     )
     problems = check_tool_visibility.check(app_dir)
     assert any("'yes' if played_greeting else 'no'" in p for p in problems), (
         problems
     )
-    assert any("current_playbook | default('none')" in p for p in problems), (
+    assert any("current_domain | default('none')" in p for p in problems), (
         problems
     )
 
@@ -769,50 +1248,50 @@ def test_prose_state_check_and_negative_control(
     assert not any("'it'" in p for p in problems), problems
 
 
-def test_hidden_playbook_and_task_lists_flagged(
+def test_hidden_domain_and_workflow_lists_flagged(
     tmp_path: pathlib.Path,
 ) -> None:
-    """Catches hiding <playbook_list> at start or <task_list> inside task."""
+    """Catches hiding <domain_list> at start or <workflow_list> in workflow."""
     check_tool_visibility = _load_script("check_tool_visibility")
 
-    # Hidden <playbook_list> at start state.
-    app_pb = _copy_sample(tmp_path, "hidden_pb")
-    orig_pb = _read_instruction(app_pb)
+    # Hidden <domain_list> at start state.
+    app_dom = _copy_sample(tmp_path, "hidden_dom")
+    orig_dom = _read_instruction(app_dom)
     _write_instruction(
-        app_pb,
-        orig_pb.replace(
-            "<playbook_list>",
-            "{{% if current_playbook %}}\n<playbook_list>",
+        app_dom,
+        orig_dom.replace(
+            "<domain_list>",
+            "{{% if current_domain %}}\n<domain_list>",
         ).replace(
-            "</playbook_list>",
-            "</playbook_list>\n{{% endif %}}",
+            "</domain_list>",
+            "</domain_list>\n{{% endif %}}",
         ),
     )
-    pb_problems = check_tool_visibility.check(app_pb)
+    dom_problems = check_tool_visibility.check(app_dom)
     assert any(
-        "<playbook_list> isn't rendered in 'start'" in p for p in pb_problems
-    ), pb_problems
+        "<domain_list> isn't rendered in 'start'" in p for p in dom_problems
+    ), dom_problems
     assert any(
-        "playbook 'live_agent' isn't in the playbook list the model sees at"
+        "domain 'live_agent' isn't in the domain list the model sees at"
         " the start" in p
-        for p in pb_problems
-    ), pb_problems
+        for p in dom_problems
+    ), dom_problems
 
-    # Hidden <task_list> when a task is loaded (#598).
-    app_task = _copy_sample(tmp_path, "hidden_task")
-    orig_task = _read_instruction(app_task)
-    updated_task = orig_task.replace(
-        "{{% if current_playbook %}}\n<task_list>",
-        "{{% if current_playbook and not current_task %}}\n<task_list>",
+    # Hidden <workflow_list> when a workflow is loaded (#598).
+    app_wf = _copy_sample(tmp_path, "hidden_wf")
+    orig_wf = _read_instruction(app_wf)
+    updated_wf = orig_wf.replace(
+        "{{% if current_domain %}}\n<workflow_list>",
+        "{{% if current_domain and not current_workflow %}}\n<workflow_list>",
     )
-    assert updated_task != orig_task
-    _write_instruction(app_task, updated_task)
-    task_problems = check_tool_visibility.check(app_task)
+    assert updated_wf != orig_wf
+    _write_instruction(app_wf, updated_wf)
+    wf_problems = check_tool_visibility.check(app_wf)
     assert any(
-        "<task_list> isn't rendered in 'live_agent / live_agent_escalation'"
+        "<workflow_list> isn't rendered in 'live_agent / live_agent_escalation'"
         in p
-        for p in task_problems
-    ), task_problems
+        for p in wf_problems
+    ), wf_problems
 
 
 def test_router_mismatch_missing_tool_ref_and_jinja_syntax_error(
@@ -821,7 +1300,7 @@ def test_router_mismatch_missing_tool_ref_and_jinja_syntax_error(
     """Flags router list mismatches, unknown @TOOL refs, and Jinja syntax."""
     check_tool_visibility = _load_script("check_tool_visibility")
 
-    # 1. Missing {@TOOL: ...} ref and missing handoff reason in instruction.
+    # 1. Missing {@TOOL: ...} ref.
     app_ref = _copy_sample(tmp_path, "missing_ref")
     orig = _read_instruction(app_ref)
     _write_instruction(
@@ -834,24 +1313,24 @@ def test_router_mismatch_missing_tool_ref_and_jinja_syntax_error(
         for p in ref_problems
     ), ref_problems
 
-    # 2. Router mismatch: extra playbook in VALID_PLAYBOOKS.
+    # 2. Router mismatch: extra domain in VALID_DOMAINS.
     app_router = _copy_sample(tmp_path, "router_mismatch")
-    op_path = (
+    sd_path = (
         app_router
         / "tools"
-        / "open_playbook"
+        / "select_domain"
         / "python_function"
         / "python_code.py"
     )
-    op_path.write_text(
-        op_path.read_text(encoding="utf-8").replace(
-            'VALID_PLAYBOOKS = ("live_agent",)',
-            'VALID_PLAYBOOKS = ("live_agent", "billing")',
+    sd_path.write_text(
+        sd_path.read_text(encoding="utf-8").replace(
+            'VALID_DOMAINS = ("live_agent",)',
+            'VALID_DOMAINS = ("live_agent", "billing")',
         ),
         encoding="utf-8",
     )
     mismatch_problems = check_tool_visibility.check(app_router)
-    assert any("VALID_PLAYBOOKS" in p for p in mismatch_problems), (
+    assert any("VALID_DOMAINS" in p for p in mismatch_problems), (
         mismatch_problems
     )
 
@@ -859,7 +1338,7 @@ def test_router_mismatch_missing_tool_ref_and_jinja_syntax_error(
     app_syntax = _copy_sample(tmp_path, "jinja_syntax")
     _write_instruction(
         app_syntax,
-        orig + "\n{{% if current_playbook %}}\nUnclosed\n",
+        orig + "\n{{% if current_domain %}}\nUnclosed\n",
     )
     syntax_problems = check_tool_visibility.check(app_syntax)
     assert any("Jinja syntax error on line" in p for p in syntax_problems), (
@@ -1070,7 +1549,7 @@ def test_tool_name_static_router_state_and_leftover_problems(
             "<role>\nUse graceful_end_session if needed.\n",
         ).replace(
             "<constraints>\n",
-            "<constraints>\nCheck {@TOOL: open_playbook} rules.\n",
+            "<constraints>\nCheck {@TOOL: select_domain} rules.\n",
         )
         + "\nRepeat the result exactly as returned.\n",
     )
@@ -1083,7 +1562,7 @@ def test_tool_name_static_router_state_and_leftover_problems(
         "'graceful_end_session' is named in <role>" in p for p in name_problems
     ), name_problems
     assert any(
-        "'open_playbook' is named in <constraints>" in p for p in name_problems
+        "'select_domain' is named in <constraints>" in p for p in name_problems
     ), name_problems
     assert any("repeat tool output" in p for p in name_problems), name_problems
 
@@ -1091,57 +1570,57 @@ def test_tool_name_static_router_state_and_leftover_problems(
     app_static = _copy_sample(tmp_path, "static_start")
     _write_instruction(
         app_static,
-        orig + "\nCall {@TOOL: load_task} at any time.\n",
+        orig + "\nCall {@TOOL: load_workflow} at any time.\n",
     )
     static_problems = check_tool_visibility.check(app_static)
     assert any(
-        "tool 'load_task' is visible before any playbook is open" in p
+        "tool 'load_workflow' is visible before any domain is selected" in p
         for p in static_problems
     ), static_problems
 
-    # 3. _router_state_problems: open_playbook/load_task writing domain state
-    # or reading rationale.
+    # 3. _router_state_problems: select_domain/load_workflow writing domain
+    # state or reading rationale.
     app_router = _copy_sample(tmp_path, "router_state")
-    op_path = (
+    sd_path = (
         app_router
         / "tools"
-        / "open_playbook"
+        / "select_domain"
         / "python_function"
         / "python_code.py"
     )
-    op_path.write_text(
-        op_path.read_text(encoding="utf-8").replace(
-            'context.state["current_task"] = ""',
-            'context.state["current_task"] = ""\n'
+    sd_path.write_text(
+        sd_path.read_text(encoding="utf-8").replace(
+            'context.state["current_workflow"] = ""',
+            'context.state["current_workflow"] = ""\n'
             '  context.state["account_id"] = rationale',
         ),
         encoding="utf-8",
     )
-    lt_path = (
+    lw_path = (
         app_router
         / "tools"
-        / "load_task"
+        / "load_workflow"
         / "python_function"
         / "python_code.py"
     )
-    lt_path.write_text(
-        lt_path.read_text(encoding="utf-8").replace(
-            'context.state["current_task"] = name',
-            'context.state.update({"current_task": name, "notes": "x"})',
+    lw_path.write_text(
+        lw_path.read_text(encoding="utf-8").replace(
+            'context.state["current_workflow"] = name',
+            'context.state.update({"current_workflow": name, "notes": "x"})',
         ),
         encoding="utf-8",
     )
     router_problems = check_tool_visibility.check(app_router)
     assert any(
-        "router tool 'open_playbook' writes state 'account_id'" in p
+        "router tool 'select_domain' writes state 'account_id'" in p
         for p in router_problems
     ), router_problems
     assert any(
-        "router tool 'open_playbook' reads `rationale`" in p
+        "router tool 'select_domain' reads `rationale`" in p
         for p in router_problems
     ), router_problems
     assert any(
-        "router tool 'load_task' calls state.update()" in p
+        "router tool 'load_workflow' calls state.update()" in p
         for p in router_problems
     ), router_problems
 
@@ -1365,8 +1844,10 @@ def test_sync_tool_descriptions_reports_and_repairs(
     sync_tool_descriptions = _load_script("sync_tool_descriptions")
     app_dir = _copy_sample(tmp_path)
 
-    open_spec_path = app_dir / "tools" / "open_playbook" / "open_playbook.json"
-    open_spec_path.unlink()
+    select_spec_path = (
+        app_dir / "tools" / "select_domain" / "select_domain.json"
+    )
+    select_spec_path.unlink()
 
     graceful_spec_path = (
         app_dir / "tools" / "graceful_end_session" / "graceful_end_session.json"
@@ -1379,26 +1860,26 @@ def test_sync_tool_descriptions_reports_and_repairs(
 
     assert sync_tool_descriptions.sync(app_dir, write=False) == [
         "graceful_end_session",
-        "open_playbook",
+        "select_domain",
     ]
     assert sync_tool_descriptions.sync(app_dir, check=True) == [
         "graceful_end_session",
-        "open_playbook",
+        "select_domain",
     ]
-    assert not open_spec_path.exists()
+    assert not select_spec_path.exists()
 
     updated = sync_tool_descriptions.sync(app_dir, write=True)
-    assert updated == ["graceful_end_session", "open_playbook"]
-    assert open_spec_path.exists()
+    assert updated == ["graceful_end_session", "select_domain"]
+    assert select_spec_path.exists()
 
-    created_spec = json.loads(open_spec_path.read_text(encoding="utf-8"))
-    assert created_spec["name"] == "open_playbook"
+    created_spec = json.loads(select_spec_path.read_text(encoding="utf-8"))
+    assert created_spec["name"] == "select_domain"
     assert created_spec["executionType"] == "SYNCHRONOUS"
     assert (
         created_spec["pythonFunction"]["pythonCode"]
-        == "tools/open_playbook/python_function/python_code.py"
+        == "tools/select_domain/python_function/python_code.py"
     )
-    assert "Opens the playbook" in created_spec["pythonFunction"]["description"]
+    assert "Selects the domain" in created_spec["pythonFunction"]["description"]
     assert sync_tool_descriptions.sync(app_dir, write=False) == []
 
 
@@ -1453,7 +1934,7 @@ def test_run_locally_object_defaults_literal_exprs_end_session_and_annotations(
         app_dir,
         _read_instruction(app_dir)
         + "\nLiteral ternary: {{ 'x' if played_greeting else 'y' }}\n"
-        + "Literal filter: {{ current_playbook | default('none') }}\n",
+        + "Literal filter: {{ current_domain | default('none') }}\n",
     )
 
     runner = run_locally.Runner(app_dir)
@@ -1473,7 +1954,7 @@ def test_run_locally_object_defaults_literal_exprs_end_session_and_annotations(
     assert req_model.config.system_instruction.parts is not None
     rendered_text = req_model.config.system_instruction.parts[0].text or ""
     assert "{{ 'x' if played_greeting else 'y' }}" in rendered_text
-    assert "{{ current_playbook | default('none') }}" in rendered_text
+    assert "{{ current_domain | default('none') }}" in rendered_text
 
     runner.state["next_agent_actions"] = {
         "end_session": {
@@ -1508,3 +1989,50 @@ def test_run_locally_object_defaults_literal_exprs_end_session_and_annotations(
     pending_desc = "\n".join(run_locally._describe(resp_pending))
     assert "end_session" in pending_desc
     assert "verification_failed" in pending_desc
+
+
+# ── Documentation Links & OSS Hygiene ────────────────────────────────────
+
+
+def test_docs_and_terminology_benchmark_links_and_sanitization() -> None:
+    """Verifies relative links and OSS brand/internal hygiene across docs."""
+    skill_md = (_SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    guide_md = (_SKILL_DIR / "references" / "guide.md").read_text(
+        encoding="utf-8"
+    )
+    bench_md = (
+        _SKILL_DIR / "references" / "terminology_benchmark.md"
+    ).read_text(encoding="utf-8")
+
+    assert "[references/guide.md](references/guide.md)" in skill_md
+    assert (
+        "[references/terminology_benchmark.md](references/terminology_benchmark.md)"
+        in skill_md
+    )
+    assert (
+        "[references/terminology_benchmark.md](terminology_benchmark.md)"
+        in guide_md
+    )
+
+    for rel in (
+        "references/guide.md",
+        "references/terminology_benchmark.md",
+    ):
+        assert (_SKILL_DIR / rel).is_file()
+
+    internal_ref = re.compile(
+        r"(?:\bgo/|\bcl/\d+|\bb/\d{5,}|/locations/us/apps/[0-9a-f-]{20,})",
+        re.I,
+    )
+    for path in (
+        _SKILL_DIR / "SKILL.md",
+        _SKILL_DIR / "references" / "guide.md",
+        _SKILL_DIR / "references" / "terminology_benchmark.md",
+    ):
+        matches = internal_ref.findall(path.read_text(encoding="utf-8"))
+        assert not matches, f"Internal refs in {path.name}: {matches}"
+
+    assert "Benchmark App A" in bench_md
+    assert "Benchmark App B" in bench_md
+    assert "Benchmark App C" in bench_md
+    assert "<context>\nToday's date" not in guide_md

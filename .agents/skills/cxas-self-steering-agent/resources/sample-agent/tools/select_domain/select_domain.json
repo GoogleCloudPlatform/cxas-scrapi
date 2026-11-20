@@ -1,0 +1,10 @@
+{
+  "name": "select_domain",
+  "pythonFunction": {
+    "name": "select_domain",
+    "pythonCode": "tools/select_domain/python_function/python_code.py",
+    "description": "Selects the domain that covers the customer's request.\n\nArgs:\n  domain_name (str): Exact name of the domain to select, from the domain\n    list.\n  rationale (str): Why this domain is being selected. Kept in the conversation\n    history so later turns know what prompted it. One short sentence (max 15\n    words) stating the customer's need or the tool result that led here, e.g.\n    \"Customer asked to speak with a representative.\" Do not restate the\n    domain name or include personal data.\n\nReturns:\n  dict[str, Any]: Status and the selected domain, or valid_domains on an\n    unknown domain name."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "select_domain"
+}

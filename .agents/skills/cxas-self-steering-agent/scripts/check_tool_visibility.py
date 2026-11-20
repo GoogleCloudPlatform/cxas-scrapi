@@ -13,21 +13,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-r"""Lists the tools the model can see for each playbook and task of a CXAS app.
+r"""Lists tools the model sees for each domain/playbook and workflow/task.
 
 Renders agents/<root>/instruction.txt the way CES does (Jinja rendered, {{# #}}
 comments kept, non-bare {{ ... }} output expressions left literal) and applies
-the same word-boundary match as the dynamic tool-hiding handler. It also checks
-for template, instruction, and tool anti-patterns that `cxas lint` misses, and
-automatically synthesizes branch states from `{{% if ... %}} / {{% elif ... %}}`
-conditions so multi-step `<current_step>` and `<pending_handoff>` branches are
-verified without manual `--state` flags. Needs jinja2 (installed with
-cxas-scrapi).
+the same word-boundary match as the dynamic tool-hiding handler. Automatically
+detects and validates all three self-steering topologies:
+  1. 2-level `select_domain` + `load_workflow` (`<domain_list>`,
+     `<workflow_list>`)
+  2. 1-level `load_workflow` (`--single-level`, `<workflow_list>` always shown)
+  3. Legacy 2-level `open_playbook` + `load_task` (`<playbook_list>`,
+     `<task_list>`)
+
+It also checks for template, instruction, and tool anti-patterns that `cxas
+lint` misses, and automatically synthesizes branch states from
+`{{% if ... %}} / {{% elif ... %}}` conditions so multi-step `<current_step>`
+and `<pending_handoff>` branches are verified without manual `--state` flags.
+Needs jinja2 (installed with cxas-scrapi).
 
 Example:
   python3 check_tool_visibility.py cxas_app/my-agent
   python3 check_tool_visibility.py cxas_app/my-agent --print \
-    --state '{"current_playbook": "live_agent", "current_task": "live_agent"}'
+    --state '{"current_domain": "live_agent", "current_workflow": "live_agent"}'
 
 Exits with 1 when it finds a problem.
 """
@@ -86,9 +93,12 @@ TOOL_REF_PATTERN = re.compile(r"\{@TOOL:\s*([A-Za-z_]\w*)\s*\}")
 BUILTIN_VARIABLES = frozenset({"current_date", "_session"})
 # Tools the model must never see: built-in end_session and the queue helper.
 HIDDEN_TOOLS = ("end_session", "set_next_agent_actions")
-ROUTING_VARS = ("current_playbook", "current_task")
-# State the router tools may write.
-ROUTER_STATE_KEYS = frozenset({"current_playbook", "current_task"})
+ROUTING_VARS = (
+    "current_domain",
+    "current_playbook",
+    "current_workflow",
+    "current_task",
+)
 JINJA_WORDS = frozenset(
     {
         "in",
@@ -131,6 +141,8 @@ VERBATIM_RESULT = re.compile(
 QUOTED = re.compile(r"['\"]([^'\"]+)['\"]")
 # Static blocks where an always-available tool must not be named.
 NO_TOOL_BLOCKS = ("role", "context", "constraints")
+SELECT_DOMAIN_CODE = "tools/select_domain/python_function/python_code.py"
+LOAD_WORKFLOW_CODE = "tools/load_workflow/python_function/python_code.py"
 OPEN_PLAYBOOK_CODE = "tools/open_playbook/python_function/python_code.py"
 LOAD_TASK_CODE = "tools/load_task/python_function/python_code.py"
 MAX_LABEL_WIDTH = 48
@@ -149,6 +161,26 @@ class _App:
 
 
 @dataclasses.dataclass(frozen=True)
+class _Topology:
+    """Describes the routing topology of the self-steering agent."""
+
+    mode: str  # "domain_workflow", "single_workflow", or "playbook_task"
+    outer_tool: str | None
+    inner_tool: str
+    outer_var: str | None
+    inner_var: str
+    outer_tag: str | None
+    inner_tag: str
+    outer_noun: str | None
+    inner_noun: str
+    outer_code: str | None
+    inner_code: str
+    outer_const: str | None
+    inner_const: str
+    router_state_keys: frozenset[str]
+
+
+@dataclasses.dataclass(frozen=True)
 class _Render:
     """The instruction rendered for one state, or the error rendering it."""
 
@@ -156,6 +188,58 @@ class _Render:
     state: dict[str, Any]
     text: str | None = None
     error: str | None = None
+
+
+DOMAIN_WORKFLOW_TOPOLOGY = _Topology(
+    mode="domain_workflow",
+    outer_tool="select_domain",
+    inner_tool="load_workflow",
+    outer_var="current_domain",
+    inner_var="current_workflow",
+    outer_tag="<domain_list>",
+    inner_tag="<workflow_list>",
+    outer_noun="domain",
+    inner_noun="workflow",
+    outer_code=SELECT_DOMAIN_CODE,
+    inner_code=LOAD_WORKFLOW_CODE,
+    outer_const="VALID_DOMAINS",
+    inner_const="DOMAIN_WORKFLOWS",
+    router_state_keys=frozenset({"current_domain", "current_workflow"}),
+)
+
+SINGLE_WORKFLOW_TOPOLOGY = _Topology(
+    mode="single_workflow",
+    outer_tool=None,
+    inner_tool="load_workflow",
+    outer_var=None,
+    inner_var="current_workflow",
+    outer_tag=None,
+    inner_tag="<workflow_list>",
+    outer_noun=None,
+    inner_noun="workflow",
+    outer_code=None,
+    inner_code=LOAD_WORKFLOW_CODE,
+    outer_const=None,
+    inner_const="VALID_WORKFLOWS",
+    router_state_keys=frozenset({"current_workflow"}),
+)
+
+PLAYBOOK_TASK_TOPOLOGY = _Topology(
+    mode="playbook_task",
+    outer_tool="open_playbook",
+    inner_tool="load_task",
+    outer_var="current_playbook",
+    inner_var="current_task",
+    outer_tag="<playbook_list>",
+    inner_tag="<task_list>",
+    outer_noun="playbook",
+    inner_noun="task",
+    outer_code=OPEN_PLAYBOOK_CODE,
+    inner_code=LOAD_TASK_CODE,
+    outer_const="VALID_PLAYBOOKS",
+    inner_const="PLAYBOOK_TASKS",
+    router_state_keys=frozenset({"current_playbook", "current_task"}),
+)
 
 
 def _literal(path: pathlib.Path, name: str) -> Any:
@@ -259,7 +343,7 @@ def _format_override_value(val: Any) -> str:
 
 
 def _state_label(overrides: dict[str, Any]) -> str:
-    """Returns a label like "order_support / cancel_order (order_id=1001)"."""
+    """Returns a label like "live_agent / live_agent_escalation (...)"."""
     label = (
         " / ".join(str(overrides[k]) for k in ROUTING_VARS if overrides.get(k))
         or "start"
@@ -270,6 +354,62 @@ def _state_label(overrides: dict[str, Any]) -> str:
         if k not in ROUTING_VARS
     )
     return f"{label} ({rest})" if rest else label
+
+
+def _detect_topology(app: _App) -> _Topology:
+    """Detects 2-level domain/workflow, 1-level workflow, or playbook/task."""
+    declared = _declared_variables(app)
+    tools_set = set(app.tools)
+    has_workflow_markers = (
+        "select_domain" in tools_set
+        or "load_workflow" in tools_set
+        or "current_domain" in declared
+        or "current_workflow" in declared
+        or "<domain_list>" in app.without_comments
+        or "<workflow_list>" in app.without_comments
+        or (app.path / SELECT_DOMAIN_CODE).exists()
+        or (app.path / LOAD_WORKFLOW_CODE).exists()
+    )
+    if has_workflow_markers:
+        is_two_level = (
+            "select_domain" in tools_set
+            or (app.path / SELECT_DOMAIN_CODE).exists()
+            or "current_domain" in declared
+            or "<domain_list>" in app.without_comments
+            or _mentions(app.without_comments, "current_domain")
+            or _literal(app.path / LOAD_WORKFLOW_CODE, "DOMAIN_WORKFLOWS")
+            is not None
+        )
+        return (
+            DOMAIN_WORKFLOW_TOPOLOGY
+            if is_two_level
+            else SINGLE_WORKFLOW_TOPOLOGY
+        )
+    has_playbook_markers = (
+        "open_playbook" in tools_set
+        or "load_task" in tools_set
+        or "current_playbook" in declared
+        or "current_task" in declared
+        or "<playbook_list>" in app.without_comments
+        or "<task_list>" in app.without_comments
+        or (app.path / OPEN_PLAYBOOK_CODE).exists()
+        or (app.path / LOAD_TASK_CODE).exists()
+    )
+    if has_playbook_markers:
+        return PLAYBOOK_TASK_TOPOLOGY
+    return DOMAIN_WORKFLOW_TOPOLOGY
+
+
+def _load_routing_map(app: _App, topo: _Topology) -> dict[str, tuple[str, ...]]:
+    """Loads outer->inner routing map (or {"": workflows} in 1-level)."""
+    raw = _literal(app.path / topo.inner_code, topo.inner_const)
+    if topo.mode == "single_workflow":
+        if isinstance(raw, (list, tuple)):
+            return {"": tuple(str(x) for x in raw)}
+        return {}
+    if isinstance(raw, dict):
+        return {str(k): tuple(str(x) for x in v) for k, v in raw.items()}
+    return {}
 
 
 def _json_object(text: str) -> dict[str, Any]:
@@ -293,8 +433,9 @@ def _parse_args() -> argparse.Namespace:
         default=[],
         type=_json_object,
         help=(
-            "Extra state to render, as a JSON object. Include current_playbook"
-            " and current_task. Repeatable."
+            "Extra state to render, as a JSON object. Include current_domain"
+            " and current_workflow (or current_playbook and current_task)."
+            " Repeatable."
         ),
     )
     parser.add_argument(
@@ -327,11 +468,11 @@ def _load_app(app_dir: pathlib.Path) -> _App:
     )
 
 
-def _all_tasks(playbook_tasks: dict[str, tuple[str, ...]]) -> set[str]:
-    tasks = set()
-    for names in playbook_tasks.values():
-        tasks.update(names)
-    return tasks
+def _all_inners(mapping: dict[str, tuple[str, ...]]) -> set[str]:
+    inners: set[str] = set()
+    for names in mapping.values():
+        inners.update(names)
+    return inners
 
 
 def _comment_problems(app: _App) -> list[str]:
@@ -409,7 +550,7 @@ def _instruction_problems(app: _App) -> list[str]:
     if "<session_snapshot" in app.without_comments:
         problems.append(
             "<session_snapshot> state dump in instruction.txt; list only"
-            " confirmed task facts inside the task and branch with"
+            " confirmed facts inside the workflow/task and branch with"
             " `{{% if ... %}}`"
         )
     for match in PROSE_STATE_CHECK.finditer(prose):
@@ -674,51 +815,91 @@ def _code_problems(app: _App) -> list[str]:
 
 
 def _router_problems(
-    app: _App, playbook_tasks: dict[str, tuple[str, ...]]
+    app: _App,
+    topo: _Topology,
+    mapping: dict[str, tuple[str, ...]],
 ) -> list[str]:
     """Checks the router tools' lists against each other and the instruction."""
     problems = []
-    valid_playbooks = _literal(app.path / OPEN_PLAYBOOK_CODE, "VALID_PLAYBOOKS")
-    if valid_playbooks is None:
-        problems.append(f"no VALID_PLAYBOOKS found in {OPEN_PLAYBOOK_CODE}")
-    if "load_task" not in app.tools:
+    if topo.mode == "single_workflow":
+        if topo.inner_tool not in app.tools:
+            problems.append(
+                f"{topo.inner_tool} isn't in the root agent's tools; every"
+                f" single-level agent needs {topo.inner_tool}"
+            )
+        if not mapping:
+            problems.append(f"no {topo.inner_const} found in {topo.inner_code}")
+        inners = _all_inners(mapping)
+        instr_inners = _compared_names(app.without_comments, topo.inner_var)
+        if instr_inners != inners:
+            problems.append(
+                f"{topo.inner_noun}s in instruction {sorted(instr_inners)} !="
+                f" {topo.inner_const} {sorted(inners)}"
+            )
+        for name in sorted(inners & set(app.tools)):
+            problems.append(
+                f"{name!r} is both a {topo.inner_noun} and a tool, so the tool"
+                " shows whenever that name is listed"
+            )
+        return problems
+
+    assert topo.outer_code is not None
+    assert topo.outer_const is not None
+    assert topo.outer_tool is not None
+    assert topo.outer_var is not None
+    assert topo.outer_noun is not None
+    valid_outers = _literal(app.path / topo.outer_code, topo.outer_const)
+    if valid_outers is None:
+        problems.append(f"no {topo.outer_const} found in {topo.outer_code}")
+    if topo.outer_tool not in app.tools:
         problems.append(
-            "load_task isn't in the root agent's tools; every agent needs"
-            " open_playbook and load_task"
+            f"{topo.outer_tool} isn't in the root agent's tools; every agent"
+            f" needs {topo.outer_tool} and {topo.inner_tool}"
         )
-    if not playbook_tasks:
-        problems.append(f"no PLAYBOOK_TASKS found in {LOAD_TASK_CODE}")
-    playbooks = set(playbook_tasks)
-    tasks = _all_tasks(playbook_tasks)
-    instr_playbooks = _compared_names(app.without_comments, "current_playbook")
-    instr_tasks = _compared_names(app.without_comments, "current_task")
-    if valid_playbooks is not None and set(valid_playbooks) != playbooks:
+    if topo.inner_tool not in app.tools:
         problems.append(
-            f"VALID_PLAYBOOKS {sorted(valid_playbooks)} != PLAYBOOK_TASKS keys"
-            f" {sorted(playbooks)}"
+            f"{topo.inner_tool} isn't in the root agent's tools; every agent"
+            f" needs {topo.outer_tool} and {topo.inner_tool}"
         )
-    if instr_playbooks != playbooks:
+    if not mapping:
+        problems.append(f"no {topo.inner_const} found in {topo.inner_code}")
+    outers = set(mapping)
+    inners = _all_inners(mapping)
+    instr_outers = _compared_names(app.without_comments, topo.outer_var)
+    instr_inners = _compared_names(app.without_comments, topo.inner_var)
+    if valid_outers is not None and set(valid_outers) != outers:
         problems.append(
-            f"playbooks in instruction {sorted(instr_playbooks)} !="
-            f" PLAYBOOK_TASKS keys {sorted(playbooks)}"
+            f"{topo.outer_const} {sorted(valid_outers)} != {topo.inner_const}"
+            f" keys {sorted(outers)}"
         )
-    if instr_tasks != tasks:
+    if instr_outers != outers:
         problems.append(
-            f"tasks in instruction {sorted(instr_tasks)} != PLAYBOOK_TASKS"
-            f" tasks {sorted(tasks)}"
+            f"{topo.outer_noun}s in instruction {sorted(instr_outers)} !="
+            f" {topo.inner_const} keys {sorted(outers)}"
         )
-    for name in sorted((playbooks | tasks) & set(app.tools)):
+    if instr_inners != inners:
         problems.append(
-            f"{name!r} is both a playbook or task and a tool, so the tool shows"
-            " whenever that name is listed"
+            f"{topo.inner_noun}s in instruction {sorted(instr_inners)} !="
+            f" {topo.inner_const} {topo.inner_noun}s {sorted(inners)}"
+        )
+    for name in sorted((outers | inners) & set(app.tools)):
+        problems.append(
+            f"{name!r} is both a {topo.outer_noun} or {topo.inner_noun} and a"
+            " tool, so the tool shows whenever that name is listed"
         )
     return problems
 
 
-def _router_state_problems(app: _App) -> list[str]:
+def _router_state_problems(app: _App, topo: _Topology) -> list[str]:
     """Finds router tools that write domain state or read `rationale`."""
     problems = []
-    for code_rel in (OPEN_PLAYBOOK_CODE, LOAD_TASK_CODE):
+    router_codes = [c for c in (topo.outer_code, topo.inner_code) if c]
+    allowed_desc = (
+        f"{topo.outer_var} and {topo.inner_var}"
+        if topo.outer_var
+        else topo.inner_var
+    )
+    for code_rel in router_codes:
         path = app.path / code_rel
         if not path.exists():
             continue
@@ -742,7 +923,7 @@ def _router_state_problems(app: _App) -> list[str]:
                     problems.append(
                         f"router tool {tool_name!r} calls"
                         f" state.{node.func.attr}(); routers set only"
-                        " current_playbook and current_task"
+                        f" {allowed_desc}"
                     )
                     continue
             else:
@@ -759,12 +940,12 @@ def _router_state_problems(app: _App) -> list[str]:
             if (
                 isinstance(key, ast.Constant)
                 and isinstance(key.value, str)
-                and key.value not in ROUTER_STATE_KEYS
+                and key.value not in topo.router_state_keys
             ):
                 problems.append(
                     f"router tool {tool_name!r} writes state {key.value!r};"
-                    " routers set only current_playbook and current_task, and"
-                    " the tool that changes a record clears what depended on it"
+                    f" routers set only {allowed_desc}, and the tool that"
+                    " changes a record clears what depended on it"
                 )
     return problems
 
@@ -821,18 +1002,24 @@ def _compile(app: _App) -> tuple[jinja2.Template, list[str]]:
 
 
 def _default_states(
-    playbook_tasks: dict[str, tuple[str, ...]],
+    topo: _Topology,
+    mapping: dict[str, tuple[str, ...]],
 ) -> list[tuple[str, dict[str, Any]]]:
-    """Returns the start state, then each playbook followed by its tasks."""
+    """Returns the start state, then each domain/playbook and workflow/task."""
     states: list[tuple[str, dict[str, Any]]] = [("start", {})]
-    for playbook, tasks in playbook_tasks.items():
-        states.append((playbook, {"current_playbook": playbook}))
+    if topo.mode == "single_workflow":
+        for wf in mapping.get("", ()):
+            states.append((wf, {topo.inner_var: wf}))
+        return states
+    assert topo.outer_var is not None
+    for outer, inners in mapping.items():
+        states.append((outer, {topo.outer_var: outer}))
         states += [
             (
-                f"{playbook} / {task}",
-                {"current_playbook": playbook, "current_task": task},
+                f"{outer} / {inner}",
+                {topo.outer_var: outer, topo.inner_var: inner},
             )
-            for task in tasks
+            for inner in inners
         ]
     return states
 
@@ -1053,15 +1240,15 @@ def _satisfy_condition(
 
 
 def _synthesize_branch_states(
-    app: _App, playbook_tasks: dict[str, tuple[str, ...]]
+    app: _App,
+    topo: _Topology,
+    mapping: dict[str, tuple[str, ...]],
 ) -> list[tuple[str, dict[str, Any]]]:
     """Synthesizes states for `if/elif/else` branches in instruction.txt."""
     var_schemas = _var_schemas(app.config)
     base_defaults = _defaults(app.config)
-    task_to_playbook = {
-        task: playbook
-        for playbook, tasks in playbook_tasks.items()
-        for task in tasks
+    inner_to_outer = {
+        inner: outer for outer, inners in mapping.items() for inner in inners
     }
     synthesized: list[tuple[str, dict[str, Any]]] = []
     seen_states: set[str] = set()
@@ -1079,36 +1266,39 @@ def _synthesize_branch_states(
     ):
         _add_state({"pending_handoff_reason": "verification_failed"})
 
-    # Split instruction into task sections by `current_task == '...'`.
-    task_re = re.compile(
-        r"\{\{%-?\s*(if|elif)\s+current_task\s*==\s*['\"]([^'\"]+)['\"]"
-        r"\s*-?%\}\}"
+    # Split instruction into workflow/task sections by `<inner_var> == '...'`.
+    inner_re = re.compile(
+        rf"\{{\{{%-?\s*(if|elif)\s+{re.escape(topo.inner_var)}"
+        r"\s*==\s*['\"]([^'\"]+)['\"]\s*-?%\}\}"
     )
     sections: list[tuple[str | None, str, str]] = []
     pos_idx = 0
     prev_kw = "if"
-    prev_task: str | None = None
-    for match in task_re.finditer(app.without_comments):
+    prev_inner: str | None = None
+    for match in inner_re.finditer(app.without_comments):
         sections.append(
-            (prev_task, prev_kw, app.without_comments[pos_idx : match.start()])
+            (prev_inner, prev_kw, app.without_comments[pos_idx : match.start()])
         )
-        prev_kw, prev_task = match.group(1), match.group(2)
+        prev_kw, prev_inner = match.group(1), match.group(2)
         pos_idx = match.end()
-    sections.append((prev_task, prev_kw, app.without_comments[pos_idx:]))
+    sections.append((prev_inner, prev_kw, app.without_comments[pos_idx:]))
 
     block_re = re.compile(r"\{\{%-?\s*(if|elif|else|endif)\b(.*?)-?%\}\}", re.S)
     outer_neg: dict[str, Any] = {}
-    for task_name, open_kw, body in sections:
+    for inner_name, open_kw, body in sections:
         base_ctx: dict[str, Any] = {}
-        if task_name and task_name in task_to_playbook:
-            base_ctx = {
-                "current_playbook": task_to_playbook[task_name],
-                "current_task": task_name,
-            }
+        if inner_name and inner_name in inner_to_outer:
+            if topo.mode == "single_workflow" or topo.outer_var is None:
+                base_ctx = {topo.inner_var: inner_name}
+            else:
+                base_ctx = {
+                    topo.outer_var: inner_to_outer[inner_name],
+                    topo.inner_var: inner_name,
+                }
             if open_kw == "elif" and outer_neg:
                 base_ctx = _merge_states(outer_neg, base_ctx)
                 _add_state(base_ctx)
-        elif task_name:
+        elif inner_name:
             continue
 
         stack: list[dict[str, Any]] = []
@@ -1118,35 +1308,43 @@ def _synthesize_branch_states(
                 pos = _satisfy_condition(cond, True, var_schemas)
                 neg = _satisfy_condition(cond, False, var_schemas)
                 parent_neg = copy.deepcopy(stack[-1]) if stack else {}
-                pb_ctx = (
-                    {"current_playbook": pb}
-                    for pb in _compared_names(cond, "current_playbook")
-                    if not base_ctx and pb in playbook_tasks
+                outer_ctxs = (
+                    [
+                        {topo.outer_var: out}
+                        for out in _compared_names(cond, topo.outer_var)
+                        if out in mapping
+                    ]
+                    if not base_ctx and topo.outer_var
+                    else []
                 )
                 if pos:
                     _add_state(_merge_states(base_ctx, parent_neg, pos))
                     if base_ctx:
                         _add_state(_merge_states(base_ctx, pos))
                     else:
-                        for pbc in pb_ctx:
-                            _add_state(_merge_states(pbc, parent_neg, pos))
+                        for octx in outer_ctxs:
+                            _add_state(_merge_states(octx, parent_neg, pos))
                 stack.append(_merge_states(parent_neg, neg))
             elif kw == "elif":
                 neg_so_far = copy.deepcopy(stack[-1]) if stack else {}
                 pos = _satisfy_condition(cond, True, var_schemas)
                 neg = _satisfy_condition(cond, False, var_schemas)
-                pb_ctx = (
-                    {"current_playbook": pb}
-                    for pb in _compared_names(cond, "current_playbook")
-                    if not base_ctx and pb in playbook_tasks
+                outer_ctxs = (
+                    [
+                        {topo.outer_var: out}
+                        for out in _compared_names(cond, topo.outer_var)
+                        if out in mapping
+                    ]
+                    if not base_ctx and topo.outer_var
+                    else []
                 )
                 if pos or neg_so_far:
                     _add_state(_merge_states(base_ctx, neg_so_far, pos))
                     if base_ctx and pos:
                         _add_state(_merge_states(base_ctx, pos))
                     elif pos:
-                        for pbc in pb_ctx:
-                            _add_state(_merge_states(pbc, neg_so_far, pos))
+                        for octx in outer_ctxs:
+                            _add_state(_merge_states(octx, neg_so_far, pos))
                 if stack:
                     stack[-1] = _merge_states(stack[-1], neg)
                 else:
@@ -1158,20 +1356,23 @@ def _synthesize_branch_states(
             elif kw == "endif" and stack:
                 stack.pop()
 
-        if task_name is None and stack:
+        if inner_name is None and stack:
             outer_neg = {
                 k: v for k, v in stack[-1].items() if v != base_defaults.get(k)
             }
 
-    # If instruction has conditions but no task split matched, also test
-    # conditions against every playbook/task pair.
-    if len(sections) == 1 and playbook_tasks:
-        for playbook, tasks in playbook_tasks.items():
-            for task in tasks:
-                base_ctx = {
-                    "current_playbook": playbook,
-                    "current_task": task,
-                }
+    # If instruction has conditions but no inner split matched, also test
+    # conditions against every routing entry.
+    if len(sections) == 1 and mapping:
+        for outer, inners in mapping.items():
+            for inner in inners:
+                if topo.mode == "single_workflow" or topo.outer_var is None:
+                    base_ctx = {topo.inner_var: inner}
+                else:
+                    base_ctx = {
+                        topo.outer_var: outer,
+                        topo.inner_var: inner,
+                    }
                 for match in block_re.finditer(app.without_comments):
                     kw, cond = match.group(1), match.group(2).strip()
                     if kw in ("if", "elif"):
@@ -1202,9 +1403,10 @@ def _render(
 def _rendered_problems(
     results: list[_Render],
     tools: list[str],
-    playbook_tasks: dict[str, tuple[str, ...]],
+    topo: _Topology,
+    mapping: dict[str, tuple[str, ...]],
 ) -> list[str]:
-    """Checks render errors, playbook/task lists, and hidden tools."""
+    """Checks render errors, routing lists, and hidden tools."""
     problems = []
     hidden_tool_states: dict[str, list[str]] = {t: [] for t in HIDDEN_TOOLS}
     for r in results:
@@ -1215,54 +1417,94 @@ def _rendered_problems(
         for tool in HIDDEN_TOOLS:
             if tool in visible:
                 hidden_tool_states[tool].append(r.label)
-        if "<playbook_list>" not in r.text:
-            problems.append(
-                f"<playbook_list> isn't rendered in {r.label!r}; keep"
-                " <playbook_list> visible in every state"
-            )
-        if "open_playbook" not in visible:
-            problems.append(
-                f"open_playbook isn't visible in {r.label!r}; keep"
-                " <playbook_list> visible in every state so the agent can"
-                " switch playbooks"
-            )
-        for playbook in playbook_tasks:
-            if not _mentions(r.text, playbook):
-                if r.label == "start":
-                    problems.append(
-                        f"playbook {playbook!r} isn't in the playbook list the"
-                        " model sees at the start"
-                    )
-                else:
-                    problems.append(
-                        f"playbook {playbook!r} isn't in the playbook list the"
-                        f" model sees in {r.label!r}; keep <playbook_list>"
-                        " visible in every state"
-                    )
-        active_playbook = r.state.get("current_playbook") or ""
-        if active_playbook in playbook_tasks:
-            if "<task_list>" not in r.text:
+
+        if topo.mode == "single_workflow":
+            if topo.inner_tag not in r.text:
                 problems.append(
-                    f"<task_list> isn't rendered in {r.label!r}; keep"
-                    " <task_list> visible whenever a playbook is open"
+                    f"{topo.inner_tag} isn't rendered in {r.label!r}; keep"
+                    f" {topo.inner_tag} visible in every state"
                 )
-            if "load_task" in tools and "load_task" not in visible:
+            if topo.inner_tool in tools and topo.inner_tool not in visible:
                 problems.append(
-                    f"load_task isn't visible in {r.label!r}; keep <task_list>"
-                    " visible whenever a playbook is open"
+                    f"{topo.inner_tool} isn't visible in {r.label!r}; keep"
+                    f" {topo.inner_tag} visible in every state so the agent"
+                    f" can switch {topo.inner_noun}s"
                 )
-            for task in playbook_tasks[active_playbook]:
-                if not _mentions(r.text, task):
-                    if r.label == active_playbook:
+            for wf in mapping.get("", ()):
+                if not _mentions(r.text, wf):
+                    if r.label == "start":
                         problems.append(
-                            f"task {task!r} isn't in the task list the model"
-                            f" sees when {r.label!r} is open"
+                            f"{topo.inner_noun} {wf!r} isn't in the"
+                            f" {topo.inner_noun} list the model sees at the"
+                            " start"
                         )
                     else:
                         problems.append(
-                            f"task {task!r} isn't in the task list the model"
-                            f" sees in {r.label!r}; keep <task_list> visible"
-                            " while a task is loaded"
+                            f"{topo.inner_noun} {wf!r} isn't in the"
+                            f" {topo.inner_noun} list the model sees in"
+                            f" {r.label!r}; keep {topo.inner_tag} visible in"
+                            " every state"
+                        )
+            continue
+
+        assert topo.outer_tag is not None
+        assert topo.outer_tool is not None
+        assert topo.outer_noun is not None
+        assert topo.outer_var is not None
+        open_verb = "selected" if topo.mode == "domain_workflow" else "open"
+        if topo.outer_tag not in r.text:
+            problems.append(
+                f"{topo.outer_tag} isn't rendered in {r.label!r}; keep"
+                f" {topo.outer_tag} visible in every state"
+            )
+        if topo.outer_tool not in visible:
+            problems.append(
+                f"{topo.outer_tool} isn't visible in {r.label!r}; keep"
+                f" {topo.outer_tag} visible in every state so the agent can"
+                f" switch {topo.outer_noun}s"
+            )
+        for outer in mapping:
+            if not _mentions(r.text, outer):
+                if r.label == "start":
+                    problems.append(
+                        f"{topo.outer_noun} {outer!r} isn't in the"
+                        f" {topo.outer_noun} list the model sees at the start"
+                    )
+                else:
+                    problems.append(
+                        f"{topo.outer_noun} {outer!r} isn't in the"
+                        f" {topo.outer_noun} list the model sees in"
+                        f" {r.label!r}; keep {topo.outer_tag} visible in every"
+                        " state"
+                    )
+        active_outer = r.state.get(topo.outer_var) or ""
+        if active_outer in mapping:
+            if topo.inner_tag not in r.text:
+                problems.append(
+                    f"{topo.inner_tag} isn't rendered in {r.label!r}; keep"
+                    f" {topo.inner_tag} visible whenever a {topo.outer_noun}"
+                    f" is {open_verb}"
+                )
+            if topo.inner_tool in tools and topo.inner_tool not in visible:
+                problems.append(
+                    f"{topo.inner_tool} isn't visible in {r.label!r}; keep"
+                    f" {topo.inner_tag} visible whenever a {topo.outer_noun}"
+                    f" is {open_verb}"
+                )
+            for inner in mapping[active_outer]:
+                if not _mentions(r.text, inner):
+                    if r.label == active_outer:
+                        problems.append(
+                            f"{topo.inner_noun} {inner!r} isn't in the"
+                            f" {topo.inner_noun} list the model sees when"
+                            f" {r.label!r} is {open_verb}"
+                        )
+                    else:
+                        problems.append(
+                            f"{topo.inner_noun} {inner!r} isn't in the"
+                            f" {topo.inner_noun} list the model sees in"
+                            f" {r.label!r}; keep {topo.inner_tag} visible"
+                            f" while a {topo.inner_noun} is loaded"
                         )
     for tool, labels in hidden_tool_states.items():
         if labels:
@@ -1273,18 +1515,27 @@ def _rendered_problems(
     return problems
 
 
-def _static_tool_problems(results: list[_Render], app: _App) -> list[str]:
-    """Checks that only open_playbook and anytime actions show at the start."""
+def _static_tool_problems(
+    results: list[_Render], app: _App, topo: _Topology
+) -> list[str]:
+    """Checks that only start routers and anytime actions show at start."""
     start = next((r for r in results if r.label == "start" and r.text), None)
     if start is None or start.text is None:
         return []
-    allowed = {"open_playbook"} | set(
+    start_router = topo.outer_tool or topo.inner_tool
+    allowed = {start_router} | set(
         _visible(_block(app.without_comments, "anytime_actions"), app.tools)
     )
+    if topo.mode == "single_workflow":
+        gate_desc = "before any workflow is loaded"
+    elif topo.mode == "domain_workflow":
+        gate_desc = "before any domain is selected"
+    else:
+        gate_desc = "before any playbook is open"
     return [
-        f"tool {tool!r} is visible before any playbook is open, but"
-        " <anytime_actions> doesn't name it; only open_playbook and the"
-        " anytime actions may be named in static text"
+        f"tool {tool!r} is visible {gate_desc}, but <anytime_actions>"
+        f" doesn't name it; only {start_router} and the anytime actions may"
+        " be named in static text"
         for tool in _visible(start.text, app.tools)
         if tool not in allowed
     ]
@@ -1354,15 +1605,17 @@ def _print_rendered(results: list[_Render], labels: set[str]) -> None:
 
 
 def _static_problems(
-    app: _App, playbook_tasks: dict[str, tuple[str, ...]]
+    app: _App,
+    topo: _Topology,
+    mapping: dict[str, tuple[str, ...]],
 ) -> list[str]:
     return (
         _comment_problems(app)
         + _instruction_problems(app)
         + _tool_name_problems(app)
         + _code_problems(app)
-        + _router_problems(app, playbook_tasks)
-        + _router_state_problems(app)
+        + _router_problems(app, topo, mapping)
+        + _router_state_problems(app, topo)
         + _nested_property_problems(app)
     )
 
@@ -1373,8 +1626,9 @@ def check(
 ) -> list[str]:
     """Runs static, template, branch-synthesis, and code checks on `app_dir`."""
     app = _load_app(pathlib.Path(app_dir))
-    playbook_tasks = _literal(app.path / LOAD_TASK_CODE, "PLAYBOOK_TASKS") or {}
-    problems = _static_problems(app, playbook_tasks)
+    topo = _detect_topology(app)
+    mapping = _load_routing_map(app, topo)
+    problems = _static_problems(app, topo, mapping)
     try:
         template, undeclared = _compile(app)
     except jinja2.TemplateSyntaxError as e:
@@ -1388,13 +1642,13 @@ def check(
         )
 
     extra = [(_state_label(s), s) for s in extra_states or []]
-    synth = _synthesize_branch_states(app, playbook_tasks)
-    states = _default_states(playbook_tasks) + synth + extra
+    synth = _synthesize_branch_states(app, topo, mapping)
+    states = _default_states(topo, mapping) + synth + extra
     results = _render(template, _defaults(app.config), states)
     problems += (
         undeclared
-        + _rendered_problems(results, app.tools, playbook_tasks)
-        + _static_tool_problems(results, app)
+        + _rendered_problems(results, app.tools, topo, mapping)
+        + _static_tool_problems(results, app, topo)
         + _leftover_problems(app)
     )
     return list(dict.fromkeys(problems))
@@ -1413,8 +1667,9 @@ def _report(problems: list[str]) -> None:
 def main() -> None:
     args = _parse_args()
     app = _load_app(args.app_dir)
-    playbook_tasks = _literal(app.path / LOAD_TASK_CODE, "PLAYBOOK_TASKS") or {}
-    problems = _static_problems(app, playbook_tasks)
+    topo = _detect_topology(app)
+    mapping = _load_routing_map(app, topo)
+    problems = _static_problems(app, topo, mapping)
     try:
         template, undeclared = _compile(app)
     except jinja2.TemplateSyntaxError as e:
@@ -1422,8 +1677,8 @@ def main() -> None:
         sys.exit(1)
 
     extra = [(_state_label(s), s) for s in args.state]
-    default_states = _default_states(playbook_tasks)
-    synth_states = _synthesize_branch_states(app, playbook_tasks)
+    default_states = _default_states(topo, mapping)
+    synth_states = _synthesize_branch_states(app, topo, mapping)
     base_defaults = _defaults(app.config)
     display_results = _render(template, base_defaults, default_states + extra)
     all_results = _render(
@@ -1431,8 +1686,8 @@ def main() -> None:
     )
     problems += (
         undeclared
-        + _rendered_problems(all_results, app.tools, playbook_tasks)
-        + _static_tool_problems(all_results, app)
+        + _rendered_problems(all_results, app.tools, topo, mapping)
+        + _static_tool_problems(all_results, app, topo)
         + _leftover_problems(app)
     )
 

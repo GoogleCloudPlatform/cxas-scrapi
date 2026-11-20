@@ -34,16 +34,16 @@
   },
   "variableDeclarations": [
     {
-      "name": "current_playbook",
-      "description": "Playbook the agent currently has open.",
+      "name": "current_domain",
+      "description": "Domain the agent currently has selected.",
       "schema": {
         "type": "STRING",
         "default": ""
       }
     },
     {
-      "name": "current_task",
-      "description": "Task the agent currently has loaded inside the open playbook.",
+      "name": "current_workflow",
+      "description": "Workflow the agent currently has loaded inside the selected domain.",
       "schema": {
         "type": "STRING",
         "default": ""
