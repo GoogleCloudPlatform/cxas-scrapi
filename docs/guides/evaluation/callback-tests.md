@@ -257,12 +257,12 @@ def test_returns_override_response_for_blocked_user():
 
 ## Linter integration
 
-The callback linter rules (C001-C010) catch many issues before you even write tests:
+The callback linter rules (`C001`-`C007`, `C010`, and `C101`-`C109`; `C008`/`C009` are retired) catch many issues before you even write tests:
 
 - **C001**: Wrong function name for the callback type
 - **C002**: Wrong number of arguments
 - **C006**: Bare `except:` without logging
-- **C008**: Missing typing imports that cause `NameError` at runtime
 - **C010**: Invalid Python syntax
+- **C101-C109**: Multi-callback chain hazards (unconditional short-circuit, shared state reference aliasing, undeclared subscript reads, `None` key deletion, tool callback return divergence, unreturned `llm_response` mutations, unsupported `llm_request` mutations, non-string dict keys under V2 `orjson`, and callback chain load errors)
 
 Running `cxas lint` before `cxas test-callbacks` is a good habit — fix the lint errors first, then verify behavior with tests.

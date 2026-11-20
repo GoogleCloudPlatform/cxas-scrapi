@@ -16,6 +16,7 @@
 """Import all rule modules to trigger @rule decorator registration."""
 
 from cxas_scrapi.utils.lint_rules import (  # noqa: F401
+    callback_chain,
     callbacks,
     config,
     evals,
