@@ -321,6 +321,9 @@ class LintContext:
     agent_to_parents: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set)
     )
+    config: "LintConfig | None" = None
+    cache: dict[str, typing.Any] = field(default_factory=dict)
+    active_rule_ids: frozenset[str] | None = None
 
     @property
     def all_known_tools(self) -> set:
@@ -464,6 +467,15 @@ class LintConfig:
 
         return config
 
+    def has_severity_override(
+        self, rule_obj: Rule, file_path: str = ""
+    ) -> bool:
+        """Return True if severity is explicitly overridden by config."""
+        for pattern, overrides in self.per_file.items():
+            if fnmatch.fnmatch(file_path, pattern) and rule_obj.id in overrides:
+                return True
+        return rule_obj.id in self.rules
+
     def get_severity(self, rule_obj: Rule, file_path: str = "") -> Severity:
         """Get the effective severity for a rule.
 
@@ -588,9 +600,6 @@ class Discovery:
         """Return ``[(agent_name, cb_type, cb_name, code_path), ...]``."""
         if not self.app_root:
             return []
-        agents_dir = self.app_root / "agents"
-        if not agents_dir.exists():
-            return []
         result = []
         seen_paths: set[Path] = set()
         cb_types = [
@@ -601,35 +610,129 @@ class Discovery:
             "before_tool_callbacks",
             "after_tool_callbacks",
         ]
-        for agent_dir in sorted(agents_dir.iterdir()):
-            if not agent_dir.is_dir():
-                continue
-            if (
-                self.limit_agents is not None
-                and agent_dir.name not in self.limit_agents
-            ):
-                continue
-            for cb_type in cb_types:
-                cb_dir = agent_dir / cb_type
-                if not cb_dir.exists():
+        agents_dir = self.app_root / "agents"
+        if agents_dir.exists():
+            for agent_dir in sorted(agents_dir.iterdir()):
+                if not agent_dir.is_dir():
                     continue
-                for cb in sorted(cb_dir.iterdir()):
-                    code = cb / "python_code.py"
-                    if code.exists() and code not in seen_paths:
-                        seen_paths.add(code)
-                        result.append((agent_dir.name, cb_type, cb.name, code))
-            for d in sorted(agent_dir.iterdir()):
-                if not d.is_dir():
+                if (
+                    self.limit_agents is not None
+                    and agent_dir.name not in self.limit_agents
+                ):
                     continue
                 for cb_type in cb_types:
-                    if d.name.startswith(f"{cb_type}_"):
-                        code = d / "python_code.py"
+                    cb_dir = agent_dir / cb_type
+                    if not cb_dir.exists():
+                        continue
+                    for cb in sorted(cb_dir.iterdir()):
+                        code = cb / "python_code.py"
                         if code.exists() and code not in seen_paths:
                             seen_paths.add(code)
                             result.append(
-                                (agent_dir.name, cb_type, d.name, code)
+                                (agent_dir.name, cb_type, cb.name, code)
                             )
-                        break
+                for d in sorted(agent_dir.iterdir()):
+                    if not d.is_dir():
+                        continue
+                    for cb_type in cb_types:
+                        if d.name.startswith(f"{cb_type}_"):
+                            code = d / "python_code.py"
+                            if code.exists() and code not in seen_paths:
+                                seen_paths.add(code)
+                                result.append(
+                                    (agent_dir.name, cb_type, d.name, code)
+                                )
+                            break
+        cb_json_key_map = {
+            "beforeModelCallbacks": "before_model_callbacks",
+            "before_model_callbacks": "before_model_callbacks",
+            "afterModelCallbacks": "after_model_callbacks",
+            "after_model_callbacks": "after_model_callbacks",
+            "beforeAgentCallbacks": "before_agent_callbacks",
+            "before_agent_callbacks": "before_agent_callbacks",
+            "afterAgentCallbacks": "after_agent_callbacks",
+            "after_agent_callbacks": "after_agent_callbacks",
+            "beforeToolCallbacks": "before_tool_callbacks",
+            "before_tool_callbacks": "before_tool_callbacks",
+            "afterToolCallbacks": "after_tool_callbacks",
+            "after_tool_callbacks": "after_tool_callbacks",
+        }
+        seen_resolved: set[Path] = {p.resolve() for p in seen_paths}
+        app_root_resolved = self.app_root.resolve()
+        if agents_dir.exists():
+            for agent_dir in sorted(agents_dir.iterdir()):
+                if not agent_dir.is_dir():
+                    continue
+                if (
+                    self.limit_agents is not None
+                    and agent_dir.name not in self.limit_agents
+                ):
+                    continue
+                ag_json = agent_dir / f"{agent_dir.name}.json"
+                if not ag_json.is_file():
+                    continue
+                try:
+                    ag_data = json.loads(ag_json.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(ag_data, dict):
+                    continue
+                for json_key, cb_type in cb_json_key_map.items():
+                    entries = ag_data.get(json_key)
+                    if not isinstance(entries, list):
+                        continue
+                    for idx, entry in enumerate(entries, 1):
+                        if not isinstance(entry, dict):
+                            continue
+                        rel_p = entry.get("pythonCode") or entry.get(
+                            "python_code"
+                        )
+                        if not isinstance(rel_p, str) or not rel_p:
+                            continue
+                        if Path(rel_p).is_absolute():
+                            continue
+                        for cand in (self.app_root / rel_p, agent_dir / rel_p):
+                            try:
+                                if cand.is_file():
+                                    res_cand = cand.resolve()
+                                    if not res_cand.is_relative_to(
+                                        app_root_resolved
+                                    ):
+                                        continue
+                                    if res_cand not in seen_resolved:
+                                        seen_resolved.add(res_cand)
+                                        inferred_n = (
+                                            cand.stem
+                                            if cand.stem
+                                            not in ("python_code", "code")
+                                            else (
+                                                cand.parent.name
+                                                or f"{cb_type}_{idx:02d}"
+                                            )
+                                        )
+                                        cb_n = entry.get("name") or inferred_n
+                                        result.append(
+                                            (
+                                                agent_dir.name,
+                                                cb_type,
+                                                str(cb_n),
+                                                cand,
+                                            )
+                                        )
+                                    break
+                            except OSError:
+                                continue
+        for cb_type in cb_types:
+            global_cb_dir = self.app_root / f"global_{cb_type}"
+            if not global_cb_dir.exists():
+                continue
+            for cb in sorted(global_cb_dir.iterdir()):
+                code = cb / "python_code.py"
+                if code.exists() and code not in seen_paths:
+                    seen_paths.add(code)
+                    result.append(
+                        ("__global__", f"global_{cb_type}", cb.name, code)
+                    )
         return result
 
     def discover_evals(self) -> dict[str, Path]:
@@ -916,6 +1019,7 @@ def build_context(
         app_root=app_root,
         env_file=env_file,
         agent_to_parents=agent_to_parents,
+        config=config,
     )
 
 
@@ -938,6 +1042,10 @@ def run_rules(
             return False
         return not (categories and rule_obj.category not in categories)
 
+    context.active_rule_ids = frozenset(
+        r.id for r in registry.all_rules() if should_run(r)
+    )
+
     def _get_severity(rule_obj: typing.Any, file_rel: typing.Any) -> typing.Any:
         sev = config.get_severity(rule_obj, file_rel)
         return sev if sev != Severity.OFF else None
@@ -957,7 +1065,17 @@ def run_rules(
                 if sev is None:
                     continue
                 for result in rule_obj.check(file_path, content, context):
-                    result.severity = sev
+                    res_file = result.file or rel
+                    if res_file != rel:
+                        if config.is_ignored(res_file):
+                            continue
+                        res_sev = _get_severity(rule_obj, res_file)
+                        if res_sev is None:
+                            continue
+                        if config.has_severity_override(rule_obj, res_file):
+                            result.severity = res_sev
+                    elif config.has_severity_override(rule_obj, rel):
+                        result.severity = sev
                     report.add(result)
 
     def _get_rules(category: str) -> list[Rule]:
@@ -979,11 +1097,19 @@ def run_rules(
     _lint_files(_get_rules("instructions"), instruction_files)
 
     # Callbacks
+    callback_rules = _get_rules("callbacks")
     cb_files = {
-        f"{agent}_{cb_type}_{cb_name}": code_path
-        for agent, cb_type, cb_name, code_path in discovery.discover_callbacks()
+        str(code_path): code_path
+        for _, _, _, code_path in discovery.discover_callbacks()
     }
-    _lint_files(_get_rules("callbacks"), cb_files)
+    _lint_files(callback_rules, cb_files)
+    agent_cfg_cb_rules = [
+        r
+        for r in callback_rules
+        if getattr(r, "target", "") == "agent_config_or_callback"
+    ]
+    if agent_cfg_cb_rules:
+        _lint_files(agent_cfg_cb_rules, discovery.discover_agent_configs())
 
     # Tools
     _lint_files(_get_rules("tools"), discovery.discover_tools())
