@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Declarative brand/channel identity compiler (``cxas build``).
+"""Declarative multi-brand app builder (``cxas build``).
 
 The ``build`` package turns one shared ``core/`` app plus a set of
 Pydantic-validated YAML manifests (brand identity, channel policy,
-environment templates, locale content blocks) into one compiled CES app
-per ``brand x channel``. The compiler is fully deterministic — no LLM, no
+environment templates, locale content blocks) into one built CES app
+per ``brand x channel``. The builder is fully deterministic — no LLM, no
 timestamps, no runtime Python is generated.
 """
 
@@ -29,18 +29,18 @@ from cxas_scrapi.build.backport import (
     backport_live_to_source,
     format_backport_pr_body,
 )
+from cxas_scrapi.build.builder import (
+    BuildError,
+    BuildReport,
+    build_all,
+    build_app,
+)
 from cxas_scrapi.build.bundle_io import (
     BuildGateError,
     DriftGateError,
     DriftReport,
     NormalizedResource,
     ResourceDrift,
-)
-from cxas_scrapi.build.compiler import (
-    BuildError,
-    BuildReport,
-    build_all,
-    build_app,
 )
 from cxas_scrapi.build.drift import (
     check_drift,

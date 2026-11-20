@@ -38,6 +38,24 @@ from cxas_scrapi.build import (
     extract_normalized_resources,
     load_manifests,
 )
+from cxas_scrapi.build import (
+    builder as builder_mod,
+)
+from cxas_scrapi.build import (
+    compiler as compiler_shim,
+)
+from cxas_scrapi.build.builder import (
+    BuildError as BuilderError,
+)
+from cxas_scrapi.build.builder import (
+    BuildReport as BuilderReport,
+)
+from cxas_scrapi.build.builder import (
+    build_all as builder_build_all,
+)
+from cxas_scrapi.build.builder import (
+    build_app as builder_build_app,
+)
 from cxas_scrapi.cli import main as cli_main
 from cxas_scrapi.core.python_bundler import bundle_shared_python
 from cxas_scrapi.utils.linter import collect_lint_report
@@ -2074,3 +2092,39 @@ def test_g4_cli_drift_accumulates_repeated_accept_live_and_force_ours() -> None:
 
     assert list(captured["kwargs"]["accept_live"]) == ["a", "b"]
     assert list(captured["kwargs"]["force_ours"]) == ["x", "y"]
+
+
+def test_builder_module_reexport_shim_and_build_cli_help(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert compiler_shim.BuildError is BuilderError
+    assert compiler_shim.BuildReport is BuilderReport
+    assert compiler_shim.build_app is builder_build_app
+    assert compiler_shim.build_all is builder_build_all
+    assert (
+        compiler_shim._apply_brand_overrides
+        is builder_mod._apply_brand_overrides
+    )
+
+    core, man = _make_multi_brand_source(tmp_path / "repo")
+    rep = builder_build_app(
+        core,
+        man,
+        "cymbal_direct",
+        "DIGITAL_APP",
+        "prod",
+        tmp_path / "out",
+    )
+    assert (rep.out_dir / "app.json").is_file()
+
+    with (
+        mock.patch.object(sys, "argv", ["cxas", "build", "--help"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        cli_main.main()
+    assert exc_info.value.code == 0
+
+    help_out = capsys.readouterr().out
+    assert "Build core app with manifests" in help_out
+    assert "built bundles" in help_out
+    assert "compile" not in help_out.casefold()

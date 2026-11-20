@@ -32,20 +32,20 @@ from urllib.parse import urlsplit
 
 import yaml
 
-from cxas_scrapi.build.bundle_io import (
-    BuildGateError,
-    DriftGateError,
-    NormalizedResource,
-    load_json_dict_strict,
-    read_utf8_strict,
-)
-from cxas_scrapi.build.compiler import (
+from cxas_scrapi.build.builder import (
     BuildError,
     _apply_append_rules_lines,
     _apply_line_replacements_strict,
     _build_identity_block,
     build_all,
     build_app,
+)
+from cxas_scrapi.build.bundle_io import (
+    BuildGateError,
+    DriftGateError,
+    NormalizedResource,
+    load_json_dict_strict,
+    read_utf8_strict,
 )
 from cxas_scrapi.build.drift import (
     _OPENAPI_SERVER_URL_RE,
@@ -1766,7 +1766,7 @@ def _apply_core_target_backport(
     disabled_tools = set(ch_caps.disabled_tools)
 
     # Include displayNames of pruned core agents/tools so {@startAgentEnabled_*}
-    # matching displayName is evaluated identically to compiler.py.
+    # matching displayName is evaluated identically to builder.py.
     if (core_dir / "agents").is_dir():
         for ag_p in (core_dir / "agents").iterdir():
             aj_p = ag_p / f"{ag_p.name}.json"
@@ -2221,7 +2221,7 @@ def _apply_core_target_backport(
                             _mark_modified(core_env_p)
 
                 oa_cfg = core_tj.get("openApiTool")
-                # Mirror compiler.py: keep an explicit tool-JSON url in sync
+                # Mirror builder.py: keep an explicit tool-JSON url in sync
                 # even when core/environment.json also declares one.
                 if isinstance(oa_cfg, dict) and (
                     "url" in oa_cfg or not env_has_url

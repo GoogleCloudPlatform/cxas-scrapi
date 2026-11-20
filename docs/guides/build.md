@@ -2,7 +2,7 @@
 
 `cxas build --core-dir ... --manifests-dir ...` is the single build path: one shared, templated `core/` CES app plus
 Pydantic-validated YAML manifests (brand identity, channel policy, optional per-brand `overrides.yaml`, environment,
-locale content blocks) compile into one CES app per `brand x channel`. Compiled apps are checked by `cxas lint`
+locale content blocks) build into one CES app per `brand x channel`. Built apps are checked by `cxas lint`
 (including the polymorphic rules P001-P005), locked to a canonical SHA-256 lockfile, promoted with `cxas push` behind
 an optional lint gate, 3-way drift gate, and governed lock, and reconciled from Console tweaks via `cxas backport`.
 
@@ -49,7 +49,7 @@ cxas build \
 cxas package --app-dir dist/brand_alpha/web --zip web.zip
 ```
 
-Every compiled app also gets `deployments/<channel>.yaml` (`brandId`, `channel`, `environment`, ...). It is build
+Every built app also gets `deployments/<channel>.yaml` (`brandId`, `channel`, `environment`, ...). It is build
 metadata (never part of the pushed archive) and gives `cxas lint` its brand context.
 
 #### `brands/brand_alpha/identity.yaml`
@@ -59,7 +59,7 @@ display_name: Cymbal Alpha
 assistant_title: Virtual Agent
 lexicon:
   ai_disclosure: "Hello! You are chatting with Cymbal Alpha's AI assistant."
-forbidden_tokens: [CymbalBetaPass]   # P001: never in brand_alpha's compiled app
+forbidden_tokens: [CymbalBetaPass]   # P001: never in brand_alpha's built app
 tts_voices:
   en:
     voice: en-US-Standard-A
@@ -87,7 +87,7 @@ templates:
   gcp_project: cymbal-prod-{brand_slug}-{env}
 overrides:
   some_key: prod_val
-locked: true            # governed lock: compiled app.json declares locked: true
+locked: true            # governed lock: built app.json declares locked: true
 models:                 # pins only the slots CES applies
   agent: gemini-3.5-flash             # app.json + every agent modelSettings.model
   guardrail: gemini-3.5-flash-lite    # llmPolicy / llmPromptSecurity.customPolicy judge model
@@ -113,7 +113,7 @@ cxas lint --app-dir dist/brand_alpha/web --manifests-dir manifests/
 
 | ID | Severity | Check |
 | :-- | :-- | :-- |
-| `P001` | error | No sister brand `display_name` and no own `forbidden_tokens` anywhere in the compiled app. |
+| `P001` | error | No sister brand `display_name` and no own `forbidden_tokens` anywhere in the built app. |
 | `P002` | warning | An agent references at most `max_tools` tools (default 20, `cxaslint.yaml` `options.P002.max_tools`). |
 | `P003` | error | No unresolved `@@...@@` placeholders or `{@start/end...}` build tags. |
 | `P004` | error | Agents/tools disabled for the brand's channel are absent and unreferenced (dirs, `tools`, `childAgents`, `{@AGENT/TOOL: x}`). |
@@ -178,7 +178,7 @@ cxas push \
 
 An individual brand team (for example, `cymbal_direct` for `"Cymbal Direct"`) can customize `global_instruction`,
 individual agents, and tools in `manifests/brands/cymbal_direct/overrides.yaml` without touching shared `core/` and
-with **zero blast radius** on sibling brands (`cymbal_retail` for `"Cymbal Retail"` compiles byte-for-byte unchanged):
+with **zero blast radius** on sibling brands (`cymbal_retail` for `"Cymbal Retail"` builds byte-for-byte unchanged):
 
 ```yaml
 brand_id: cymbal_direct
@@ -228,17 +228,17 @@ When a prompt engineer or brand owner refines instructions, descriptions, models
 CES Console UI and exports the live app, `cxas backport` lifts those changes back into Git safely:
 
 1. **Pre- & Post-Backport `cxas lint` Gate (`P001`–`P005` + structural rules)**: Validates the live export and the
-   recompiled bundle through `cxas lint` (unless `--no-lint` is passed), catching sister-brand leaks (`P001`),
+   rebuilt bundle through `cxas lint` (unless `--no-lint` is passed), catching sister-brand leaks (`P001`),
    unresolved `@@...@@` / `{@start...}` tokens (`P003`), disabled agent/tool leaks (`P004`), or unpinned/deprecated
    models (`P005`).
-2. **3-Way Lockfile Conflict Protection**: Compares `base` (`<app>.lock.json`), `ours` (compiled `core/` +
+2. **3-Way Lockfile Conflict Protection**: Compares `base` (`<app>.lock.json`), `ours` (built `core/` +
    `manifests/`), and `live` so concurrent Git edits emit `.diff` conflict markers instead of being silently
    overwritten (unless explicitly overridden via `--force-live`).
 3. **Reverse-Templating & Scoped Targeting**: Lifts brand literals back to `@@brand.display_name@@` /
    `@@brand.urls.*@@` / `@@brand.lexicon.*@@` tokens and writes either to
    `manifests/brands/<brand>/overrides.yaml` (`--target brand`, scoped to `--scope channel` by default or
    `--scope brand` across all channels of that brand) or directly to shared `core/` (`--target core`).
-4. **Round-Trip SHA-256 Proof**: Recompiles from updated `core/` + `manifests/`, verifies canonical SHA-256 resource
+4. **Round-Trip SHA-256 Proof**: Rebuilds from updated `core/` + `manifests/`, verifies canonical SHA-256 resource
    equality with `live` (`ROUND_TRIP_PROOF PASS`), and proves sibling brand/channel bundles (`cymbal_retail/*`,
    other channels of `cymbal_direct`) remain untouched (`UNCHANGED_SIBLINGS`).
 
@@ -283,7 +283,7 @@ cxas backport \
 
 Real CES Console exports carry no `deployments/*.yaml`, so pass `--brand`, `--channel`, and `--env` whenever `--dist`
 points at a multi-brand `dist/` root. When they are omitted, `cxas backport` infers the app only if every declared
-candidate is compiled under `dist/`, exactly one of them has the live export's resource set, and it shares at least one
+candidate is built under `dist/`, exactly one of them has the live export's resource set, and it shares at least one
 identical normalized SHA-256 resource; otherwise it fails closed and lists the ambiguous or unproven candidates.
 Resources that Git advanced since the last lockfile while the Console left them untouched (`CLEAN` with
 `live == base`, `ours != base`) keep their Git state; `--accept-live` hotfixes are still backported. Only the
@@ -312,4 +312,4 @@ The interim Python bridge includes four helpers under `cxas_scrapi.runtime`. **N
 | `escape_search_filter_literal` / `build_scoped_datastore_filter` | Escapes `\` and `"` to build secure, multi-tenant search filters | Use declarative search components | Declarative search integration |
 | `get_verbatim_content_block` / `resolve_content_block_or_handoff` | Resolves localized static copy gracefully, failing-closed to handoff | Use `cxas build` content macros | Content blocks native integration |
 | `adapt_presentation` | Inspects `channel_class` to adapt rich payloads vs. plain audio text | Use declarative channel routing | Declarative channels integration |
-| `check_disabled_agent` | Resolves `disabled_agents` context and emits a short-circuit return | Compile-time manifest exclusions (`cxas build`) | Agent routing policies |
+| `check_disabled_agent` | Resolves `disabled_agents` context and emits a short-circuit return | Build-time manifest exclusions (`cxas build`) | Agent routing policies |

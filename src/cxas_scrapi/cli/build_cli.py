@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from cxas_scrapi.build.builder import BuildError, build_all, build_app
 from cxas_scrapi.build.bundle_io import BuildGateError, DriftGateError
-from cxas_scrapi.build.compiler import BuildError, build_all, build_app
 from cxas_scrapi.build.drift import check_drift, write_lockfile
 from cxas_scrapi.build.manifests import ManifestError
 from cxas_scrapi.core.packaging import package_app_archive
@@ -100,7 +100,7 @@ def app_build(args: argparse.Namespace) -> None:
 
 
 def app_lock(args: argparse.Namespace) -> None:
-    """Writes a normalized SHA-256 `<app>.lock.json` for a compiled bundle."""
+    """Writes a normalized SHA-256 `<app>.lock.json` for a built bundle."""
     try:
         out_lock = write_lockfile(
             Path(args.bundle), lockfile_path=getattr(args, "lockfile", None)
@@ -243,7 +243,11 @@ def app_package(args: argparse.Namespace) -> None:
 def register(subparsers: argparse._SubParsersAction) -> None:
     # Build
     parser_build = subparsers.add_parser(
-        "build", help="Compile core app with manifests."
+        "build",
+        help="Build core app with manifests into brand x channel bundles.",
+        description=(
+            "Build core app with manifests into brand x channel bundles."
+        ),
     )
     parser_build.add_argument(
         "--core-dir", required=True, help="Core app directory."
@@ -277,7 +281,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser_build.add_argument(
         "--write-locks",
         action="store_true",
-        help="Write <app>.lock.json lockfiles next to compiled bundles.",
+        help="Write <app>.lock.json lockfiles next to built bundles.",
     )
     parser_build.set_defaults(func=app_build)
 
@@ -286,7 +290,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "lock", help="Write a normalized SHA-256 <app>.lock.json lockfile."
     )
     parser_lock.add_argument(
-        "--bundle", required=True, help="Compiled app bundle directory."
+        "--bundle", required=True, help="Built app bundle directory."
     )
     parser_lock.add_argument(
         "--lockfile", default=None, help="Explicit output lockfile path."
@@ -302,7 +306,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--app", required=True, help="Logical app identifier."
     )
     parser_drift.add_argument(
-        "--dist", required=True, help="Compiled bundle (or dist root)."
+        "--dist", required=True, help="Built bundle (or dist root)."
     )
     parser_drift.add_argument(
         "--live", required=True, help="Exported live CES app directory."
@@ -325,7 +329,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         action="extend",
         nargs="+",
         default=[],
-        help="Resource IDs to force from the compiled bundle.",
+        help="Resource IDs to force from the built bundle.",
     )
     parser_drift.add_argument(
         "--git-mirror",
@@ -376,7 +380,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser_backport.add_argument(
         "--dist",
         default=None,
-        help="Optional compiled bundle or dist root to recompile and re-lock.",
+        help="Optional built bundle or dist root to rebuild and re-lock.",
     )
     parser_backport.add_argument(
         "--lockfile",
