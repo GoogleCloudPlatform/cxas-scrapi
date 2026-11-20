@@ -1,0 +1,10 @@
+{
+  "name": "verify_order_zip",
+  "pythonFunction": {
+    "name": "verify_order_zip",
+    "pythonCode": "tools/verify_order_zip/python_function/python_code.py",
+    "description": "Verifies the 5-digit shipping ZIP code for the currently loaded order.\n\nArgs:\n  postal_code (str): The 5-digit shipping ZIP code the customer provided, as a\n    string.\n\nReturns:\n  dict[str, Any]: Verification status ('verified', 'invalid_zip',\n    'zip_mismatch', 'verification_failed', or 'no_active_order'), verified\n    flag, the order's details once verified, and remaining attempts on a\n    mismatch."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "verify_order_zip"
+}

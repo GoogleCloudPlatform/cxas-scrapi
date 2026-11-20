@@ -8,18 +8,28 @@ SAMPLE_ORDERS = {
         "status": "Processing",
         "item": "wireless headphones",
         "estimated_delivery": "Friday",
+        "zip": "94043",
     },
     "1002": {
         "status": "Shipped",
-        "item": "a coffee grinder",
+        "item": "coffee grinder",
         "estimated_delivery": "tomorrow by 8 PM",
+        "zip": "98101",
     },
     "1003": {
         "status": "Delivered",
-        "item": "a desk lamp",
+        "item": "desk lamp",
         "delivered_on": "last Tuesday",
+        "zip": "10001",
+    },
+    "1004": {
+        "status": "Delivered",
+        "item": "running shoes",
+        "delivered_on": "yesterday",
+        "zip": "60601",
     },
 }
+
 
 
 def lookup_order(order_number: str) -> dict[str, Any]:
@@ -30,22 +40,31 @@ def lookup_order(order_number: str) -> dict[str, Any]:
       "1001".
 
   Returns:
-    dict[str, Any]: The order's status, item, and delivery details, or
-      found=False if no order has that number.
+    dict[str, Any]: found=True and the order number, or found=False if no
+      order has that number. The order's details stay in session state until
+      the customer verifies its shipping ZIP code.
   """
   number = re.sub(r"\D", "", order_number or "")
-  order = SAMPLE_ORDERS.get(number)
-  if order is None:
-    context.state["order_id"] = ""
-    context.state["order_status"] = ""
+  found = SAMPLE_ORDERS.get(number)
+  if found is None:
+    context.state["order"] = {
+        "order_id": "",
+        "status": "",
+        "item": "",
+        "delivery": "",
+        "on_file_zip": "",
+    }
     return {"found": False, "order_number": order_number}
 
-  order = dict(order)
-  # Keep a cancellation or return made earlier in this conversation.
-  if context.state.get("order_id") == number and context.state.get(
-      "order_status"
-  ) in ("Canceled", "Return Started"):
-    order["status"] = context.state["order_status"]
-  context.state["order_id"] = number
-  context.state["order_status"] = order["status"]
-  return {"found": True, "order_number": number, **order}
+  context.state["order"] = {
+      "order_id": number,
+      "status": found["status"],
+      "item": found["item"],
+      "delivery": (
+          f"estimated delivery {found['estimated_delivery']}"
+          if "estimated_delivery" in found
+          else f"delivered {found['delivered_on']}"
+      ),
+      "on_file_zip": found["zip"],
+  }
+  return {"found": True, "order_number": number}

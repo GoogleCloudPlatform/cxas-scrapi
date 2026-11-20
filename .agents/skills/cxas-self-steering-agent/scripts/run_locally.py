@@ -49,6 +49,12 @@ from cxas_scrapi.utils import callback_libs
 COMMENT = re.compile(r"\{\{#.*?#\}\}", re.S)
 SINGLE_COMMENT = re.compile(r"(?<!\{)\{#.*?#\}(?!\})", re.S)
 DOUBLE_BLOCK = re.compile(r"\{\{%(-?)(.*?)(-?)%\}\}", re.S)
+OUTPUT_TAG = re.compile(r"(?<!\{)\{\{(?![%#])(.*?)\}\}(?!\})", re.S)
+VALID_OUTPUT_EXPR = re.compile(
+    r"^\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*$"
+    r"|^\s*(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\|\s*)?default\s*\([^)]*\)\s*$",
+    re.S,
+)
 
 
 class ToolResponse:
@@ -178,6 +184,14 @@ class Runner:
         source = SINGLE_COMMENT.sub(
             lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
         )
+        source = OUTPUT_TAG.sub(
+            lambda m: (
+                m.group(0)
+                if VALID_OUTPUT_EXPR.match(m.group(1))
+                else "{% raw %}" + m.group(0) + "{% endraw %}"
+            ),
+            source,
+        )
         rendered = jinja2.Environment().from_string(source).render(**self.state)
         cl = callback_libs
         request = cl.LlmRequest(
@@ -205,12 +219,24 @@ class Runner:
         return response, request
 
 
+def _empty(schema: dict[str, Any]) -> Any:
+    """Returns a variable's declared default, or an empty value of its type."""
+    if "default" in schema:
+        return schema["default"]
+    kind = schema.get("type")
+    if kind == "OBJECT":
+        return {
+            k: _empty(v) for k, v in (schema.get("properties") or {}).items()
+        }
+    if kind == "ARRAY":
+        return []
+    return {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}.get(kind)
+
+
 def _defaults(app: dict[str, Any]) -> dict[str, Any]:
-    empty = {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}
     out = {}
     for var in app.get("variableDeclarations", []):
-        schema = var.get("schema", {})
-        out[var["name"]] = schema.get("default", empty.get(schema.get("type")))
+        out[var["name"]] = _empty(var.get("schema", {}))
     tz = app.get("timeZoneSettings", {}).get("timeZone", "UTC")
     out.setdefault("current_date", f"{datetime.date.today().isoformat()}[{tz}]")
     return out

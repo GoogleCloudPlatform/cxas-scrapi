@@ -4,7 +4,6 @@ from typing import Any
 VALID_PLAYBOOKS = (
     "order_support",
     "returns",
-    "live_agent",
 )
 
 
@@ -21,25 +20,20 @@ def open_playbook(playbook_name: str, rationale: str) -> dict[str, Any]:
       playbook name or include personal data.
 
   Returns:
-    dict[str, Any]: Success status and the opened playbook.
+    dict[str, Any]: Status and the opened playbook, or valid_playbooks on an
+      unknown playbook name.
   """
   name = playbook_name.strip()
   if name not in VALID_PLAYBOOKS:
     return {
-        "error": "INVALID_PLAYBOOK",
-        "message": (
-            f"Invalid playbook name '{name}'. Valid playbook names are:"
-            f" {list(VALID_PLAYBOOKS)}."
-        ),
+        "status": "error",
+        "error": "invalid_playbook",
+        "valid_playbooks": list(VALID_PLAYBOOKS),
     }
 
   context.state["current_playbook"] = name
   context.state["current_task"] = ""
   return {
-      "success": True,
+      "status": "ok",
       "current_playbook": name,
-      "message": (
-          f"Opened playbook '{name}'. Now call load_task to load the task you"
-          " need."
-      ),
   }

@@ -1,0 +1,10 @@
+{
+  "name": "check_return_pickup_availability",
+  "pythonFunction": {
+    "name": "check_return_pickup_availability",
+    "pythonCode": "tools/check_return_pickup_availability/python_function/python_code.py",
+    "description": "Looks up available courier pickup days and time windows for the verified delivered order.\n\nReturns:\n  dict[str, Any]: Available pickup days and windows, or an error code if no\n    verified delivered order is active."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "check_return_pickup_availability"
+}
