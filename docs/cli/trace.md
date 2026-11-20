@@ -15,6 +15,7 @@ All `cxas trace` subcommands share a few flags:
 | `--env-file` | no | Explicit path to an `environment.json` file (mirrors the existing `cxas push --env-file` flag). |
 | `--environment` | no | Named environment, resolved to `<app-dir>/environment.<name>.json`. |
 | `--config` | no | Path to a trace config YAML. Defaults to `./.cxas/trace.yaml`, then `~/.cxas/trace.yaml`, then built-in defaults. |
+| `--gemini-location` | no | Google Cloud location for Gemini calls. Defaults to `GOOGLE_CLOUD_LOCATION`, `trace.yaml` `gemini.location`, or `global`. |
 
 ## Subcommands
 
@@ -163,6 +164,7 @@ cloud_logging:
 
 gemini:
   model: gemini-2.5-flash
+  location: global  # optional; overridden by GOOGLE_CLOUD_LOCATION and --gemini-location
   # Built-in audio analyses are loaded from
   # `cxas_scrapi/utils/tracing/audio_analysis_questions.json`
   # (5 built-ins: agent_voice_consistency, no_long_pauses,

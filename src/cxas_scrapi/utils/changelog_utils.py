@@ -18,7 +18,7 @@ import json
 import typing
 from typing import Any
 
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, resolve_gemini_location
 
 
 class ChangelogUtils:
@@ -255,9 +255,17 @@ class ChangelogUtils:
         vertex_client_or_project: Any,
         changelogs: list[dict[str, Any]],
         project_id: str | None = None,
+        gemini_location: str | None = None,
     ) -> str:
-        """Summarizes each non-evaluation changelog into a simple, specific
-        one-liner."""
+        """Summarizes non-evaluation changelogs into concise one-line bullets.
+
+        Args:
+            vertex_client_or_project: Gemini client or project identifier.
+            changelogs: Raw changelog dictionaries to summarize.
+            project_id: Google Cloud project ID when creating a default client.
+            gemini_location: Google Cloud location for Gemini summarization
+                (defaults to `GOOGLE_CLOUD_LOCATION` or `'us-central1'`).
+        """
         resource_types_to_exclude = [
             "Version",
             "AppVersion",
@@ -344,7 +352,9 @@ class ChangelogUtils:
             else:
                 cl = GeminiGenerate(
                     project_id=project_id,
-                    location="us-central1",
+                    location=resolve_gemini_location(
+                        gemini_location, default="us-central1"
+                    ),
                     model_name="gemini-2.5-flash",
                 )
                 response_text = cl.generate(prompt=prompt)

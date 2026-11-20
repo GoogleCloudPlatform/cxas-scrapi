@@ -1607,3 +1607,45 @@ def test_run_shadow_conversation_default_models() -> None:
         assert conv.genai_model == "gemini-3.5-flash-lite"
         mock_eval_exp.assert_called_once()
         assert mock_eval_exp.call_args[0][2] == "gemini-3.5-flash-lite"
+
+
+@pytest.mark.parametrize(
+    ("init_kwargs", "expected_loc"),
+    [
+        ({}, "europe-west4"),
+        ({"vertex_location": "europe-west1"}, "europe-west1"),
+        (
+            {
+                "vertex_location": "europe-west1",
+                "gemini_location": "us-central1",
+            },
+            "us-central1",
+        ),
+    ],
+)
+@patch("cxas_scrapi.evals.shadow_evals.Tools")
+@patch("cxas_scrapi.evals.shadow_evals.Traces")
+@patch("cxas_scrapi.evals.shadow_evals.Sessions")
+@patch("cxas_scrapi.evals.shadow_evals.GeminiGenerate")
+def test_shadow_evals_gemini_location_and_vertex_location_compat(
+    mock_gemini: Any,
+    mock_sessions: Any,
+    mock_traces: Any,
+    mock_tools: Any,
+    init_kwargs: dict[str, str],
+    expected_loc: str,
+    monkeypatch: Any,
+) -> None:
+    app_name = "projects/p/locations/eu/apps/a"
+    creds = MagicMock()
+    mock_traces.return_value.get_normalized.return_value = {}
+    tc = ShadowTestCase(conversation_id="conv-1", expectations=["e1"])
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+
+    ev = ShadowEvals(app_name=app_name, creds=creds, **init_kwargs)
+    ev._open_past_conversation(tc)
+    assert ev.gemini_location == expected_loc
+    assert ev.vertex_location == expected_loc
+    assert mock_sessions.call_args.kwargs["gemini_location"] == expected_loc
+    assert mock_traces.call_args.kwargs["gemini_location"] == expected_loc
+    assert mock_gemini.call_args.kwargs["location"] == expected_loc

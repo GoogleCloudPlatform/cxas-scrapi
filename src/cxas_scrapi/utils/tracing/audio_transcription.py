@@ -29,7 +29,7 @@ from typing import Any
 
 from google import genai
 
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, resolve_gemini_location
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,7 @@ class AudioTranscriber:
         project_id: str,
         credentials: Any = None,
         model_name: str = DEFAULT_TRANSCRIPTION_MODEL,
-        location: str = "global",
+        location: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initializes the AudioTranscriber.
@@ -241,13 +241,14 @@ class AudioTranscriber:
             project_id: Google Cloud project ID.
             credentials: Optional credentials object.
             model_name: Gemini model name (default: gemini-2.5-flash).
-            location: Vertex AI location.
+            location: Google Cloud location for Gemini transcription. Defaults
+                to `GOOGLE_CLOUD_LOCATION` or `'global'`.
             **kwargs: Additional keyword arguments.
         """
         self.project_id = project_id
         self.credentials = credentials
         self.model_name = model_name
-        self.location = location
+        self.location = resolve_gemini_location(location)
         self.gemini = GeminiGenerate(
             project_id=self.project_id,
             credentials=self.credentials,

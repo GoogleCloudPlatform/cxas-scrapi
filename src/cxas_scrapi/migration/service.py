@@ -75,7 +75,7 @@ from cxas_scrapi.migration.flow_visualizer import (
 from cxas_scrapi.migration.optimization_reporter import OptimizationReporter
 from cxas_scrapi.migration.structural_consolidator import StructuralConsolidator
 from cxas_scrapi.migration.utterance_collector import UtteranceCollector
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, resolve_gemini_location
 from cxas_scrapi.utils.secret_manager_utils import SecretManagerUtils
 
 logger = logging.getLogger(__name__)
@@ -179,7 +179,7 @@ class MigrationService:
         self,
         project_id: str,
         location: str = "global",
-        gemini_location: str = "global",
+        gemini_location: str | None = None,
         credentials: typing.Any = None,
         default_model: str = "gemini-3-flash-preview",
         ps_apps_client: Any = None,
@@ -191,6 +191,7 @@ class MigrationService:
     ) -> None:
         self.project_id = project_id
         self.location = location
+        self.gemini_location = resolve_gemini_location(gemini_location)
         self.credentials = credentials
         self.default_model = default_model
 
@@ -212,7 +213,7 @@ class MigrationService:
         # Initialize internal clients
         self.gemini_client = GeminiGenerate(
             project_id=project_id,
-            location=gemini_location,
+            location=self.gemini_location,
             credentials=credentials,
             model_name="gemini-3.1-pro-preview",
             max_concurrent_requests=15,

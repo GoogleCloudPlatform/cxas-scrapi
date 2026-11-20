@@ -40,7 +40,7 @@ from cxas_scrapi.utils.eval_utils import (
     ExpectationStatus,
     evaluate_expectations,
 )
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, resolve_gemini_location
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
@@ -178,7 +178,8 @@ class TurnEvals:
         app_name: str,
         creds: typing.Any = None,
         rate_limiter: RateLimiter | None = None,
-        vertex_location: str = "global",
+        vertex_location: str | None = None,
+        gemini_location: str | None = None,
     ) -> None:
         """Initializes the TurnEvals class.
 
@@ -186,16 +187,21 @@ class TurnEvals:
             app_name: CXAS App Name
             creds: Optional Google Cloud credentials
             rate_limiter: Optional RateLimiter for API calls
-            vertex_location: Vertex AI location for evaluation LLM calls.
-              Defaults to 'global'.
+            vertex_location: Backwards-compatible alias for `gemini_location`.
+            gemini_location: Google Cloud location for evaluation Gemini and
+              TTS models. Defaults to GOOGLE_CLOUD_LOCATION or 'global'.
         """
         self.app_name = app_name
         self.creds = creds
-        self.vertex_location = vertex_location
+        self.gemini_location = resolve_gemini_location(
+            gemini_location, vertex_location
+        )
+        self.vertex_location = self.gemini_location
         self.sessions_client = Sessions(
             app_name=self.app_name,
             creds=self.creds,
             rate_limiter=rate_limiter,
+            gemini_location=self.gemini_location,
         )
         self.var_client = Variables(app_name=self.app_name, creds=self.creds)
 
@@ -204,7 +210,7 @@ class TurnEvals:
 
         self.genai_client = GeminiGenerate(
             project_id=project_id,
-            location=self.vertex_location,
+            location=self.gemini_location,
             credentials=self.creds,
         )
 

@@ -1423,3 +1423,37 @@ def test_bidi_session_handler_on_error_aborts_remaining_inputs() -> None:
 
     assert sent_indices == [0]
     handler.ws_app.close.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("arg_loc", "env_loc", "expected"),
+    [
+        ("europe-west4", None, "europe-west4"),
+        (None, "asia-northeast1", "asia-northeast1"),
+    ],
+)
+@patch("cxas_scrapi.core.sessions.BidiSessionHandler")
+@patch("cxas_scrapi.core.sessions.Sessions._check_audio_requirements")
+@patch("cxas_scrapi.core.sessions.SessionServiceClient")
+def test_sessions_forwards_gemini_location_to_audio_transformer(
+    mock_client_cls: typing.Any,
+    mock_check_reqs: typing.Any,
+    mock_handler_cls: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+    arg_loc: str | None,
+    env_loc: str | None,
+    expected: str,
+) -> None:
+    if env_loc:
+        monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", env_loc)
+    sessions = Sessions(
+        app_name="projects/p/locations/l/apps/a", gemini_location=arg_loc
+    )
+    assert sessions.gemini_location == expected
+    with patch("cxas_scrapi.core.sessions.AudioTransformer") as mock_at_cls:
+        mock_at_cls.return_value.text_to_speech_bytes.return_value = {
+            "audio_bytes": b"pcm",
+            "text": "hi",
+        }
+        sessions.run(session_id="s1", text="hi", modality=Modality.AUDIO)
+    mock_at_cls.assert_called_once_with(gemini_location=expected)

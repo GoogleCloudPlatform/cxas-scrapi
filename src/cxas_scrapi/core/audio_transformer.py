@@ -46,6 +46,8 @@ except ImportError:
     genai = None  # type: ignore[assignment]
     genai_types = None  # type: ignore[assignment]
 
+from cxas_scrapi.utils.gemini import resolve_gemini_location
+
 ClientOptions = client_options.ClientOptions
 
 # Standard audio formats for CXAS voice streaming (16kHz, 1ch, 16-bit PCM)
@@ -683,6 +685,7 @@ def synthesize_tts_competing_speech(
     project_id: str | None = None,
     language_code: str = DEFAULT_TTS_LANGUAGE_CODE,
     model_name: str = DEFAULT_TTS_MODEL_NAME,
+    gemini_location: str | None = None,
 ) -> Any:
     """Synthesizes human competing speech phrases using Google Cloud TTS.
 
@@ -694,6 +697,7 @@ def synthesize_tts_competing_speech(
         project_id: Optional GCP quota project ID.
         language_code: BCP-47 language code (default 'en-US').
         model_name: TTS model name (default 'gemini-3.8-flash-lite-tts').
+        gemini_location: Optional Google Cloud location for Gemini TTS fallback.
 
     Returns:
         AudioSegment containing the sequenced speech phrases.
@@ -719,7 +723,7 @@ def synthesize_tts_competing_speech(
     client = texttospeech.TextToSpeechClient(
         credentials=credentials, client_options=client_options
     )
-    transformer = AudioTransformer()
+    transformer = AudioTransformer(gemini_location=gemini_location)
 
     combined = AudioSegment.silent(duration=0, frame_rate=sample_rate)
     for i, phrase in enumerate(phrases):
@@ -802,8 +806,23 @@ class AudioTransformer:
     _unsupported_cloud_tts_models: set[str] = set()
     _genai_local = threading.local()
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, gemini_location: str | None = None) -> None:
+        """Initializes the AudioTransformer.
+
+        Args:
+            gemini_location: Default Google Cloud location for Gemini TTS
+                synthesis. Defaults to `GOOGLE_CLOUD_LOCATION` or `'global'`.
+        """
+        self._gemini_location = gemini_location
+
+    @property
+    def gemini_location(self) -> str:
+        """Default Google Cloud location for Gemini TTS synthesis."""
+        return resolve_gemini_location(self._gemini_location)
+
+    @gemini_location.setter
+    def gemini_location(self, value: str | None) -> None:
+        self._gemini_location = value
 
     @classmethod
     def _mark_unsupported_cloud_tts_model(cls, model_name: str) -> None:
@@ -817,8 +836,14 @@ class AudioTransformer:
                 )
 
     @classmethod
-    def _get_genai_client(cls, project_id: str, credentials: Any) -> typing.Any:
-        cache_key = (project_id, id(credentials))
+    def _get_genai_client(
+        cls,
+        project_id: str,
+        credentials: Any,
+        location: str | None = None,
+    ) -> typing.Any:
+        resolved_location = resolve_gemini_location(location)
+        cache_key = (project_id, resolved_location, id(credentials))
         cached = getattr(cls._genai_local, "clients", None)
         if cached is None:
             cached = {}
@@ -827,7 +852,7 @@ class AudioTransformer:
             cached[cache_key] = genai.Client(
                 vertexai=True,
                 project=project_id,
-                location="global",
+                location=resolved_location,
                 credentials=credentials,
             )
         return cached[cache_key]
@@ -841,8 +866,15 @@ class AudioTransformer:
         voice_name: str,
         model_name: str,
         target_sample_rate: int = AUDIO_SAMPLE_RATE_HZ,
+        gemini_location: str | None = None,
     ) -> bytes:
-        genai_client = self._get_genai_client(project_id, credentials)
+        genai_client = self._get_genai_client(
+            project_id,
+            credentials,
+            location=resolve_gemini_location(
+                gemini_location, self._gemini_location
+            ),
+        )
         config = genai_types.GenerateContentConfig(
             response_modalities=["AUDIO"],
             speech_config=genai_types.SpeechConfig(
@@ -936,10 +968,12 @@ class AudioTransformer:
         burst_noise_files: list[str] | None = None,
         burst_noise_snr: float = 5.0,
         voice_config: dict[str, Any] | None = None,
+        gemini_location: str | None = None,
     ) -> dict:
         """Converts text to speech and returns a dictionary with text and
         audio bytes without saving to disk. Background and burst noise can
-        optionally be applied.
+        optionally be applied. `gemini_location` overrides `voice_config`,
+        instance `gemini_location`, `GOOGLE_CLOUD_LOCATION`, and `'global'`.
         """
         voice_config = voice_config or {}
         prompt = voice_config.get("prompt")
@@ -950,6 +984,12 @@ class AudioTransformer:
         )
         voice_name = voice_config.get("voice_name") or DEFAULT_TTS_VOICE_NAME
         model_name = voice_config.get("model_name", DEFAULT_TTS_MODEL_NAME)
+        effective_gemini_location = resolve_gemini_location(
+            gemini_location,
+            voice_config.get("gemini_location"),
+            voice_config.get("vertex_location"),
+            self._gemini_location,
+        )
 
         can_route_vertex = (
             not has_prompt
@@ -972,6 +1012,7 @@ class AudioTransformer:
                         language_code=language_code,
                         voice_name=voice_name,
                         model_name=model_name,
+                        gemini_location=effective_gemini_location,
                     )
                 except Exception as vertex_err:
                     logging.debug(
@@ -1028,6 +1069,7 @@ class AudioTransformer:
                                 language_code=language_code,
                                 voice_name=voice_name,
                                 model_name=model_name,
+                                gemini_location=effective_gemini_location,
                             )
                         except Exception as vertex_err:
                             logging.debug(

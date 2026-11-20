@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from cxas_scrapi.cli.main import combined_evals_report_cmd
+from cxas_scrapi.cli.main import main as cli_main
 
 
 def test_combined_evals_report_cmd(tmp_path: typing.Any) -> None:
@@ -103,7 +104,7 @@ def test_combined_evals_report_cmd(tmp_path: typing.Any) -> None:
             single_bidi_stream=False,
             skip_playback_wait=False,
             report_format="html",
-            vertex_location="global",
+            vertex_location=None,
             naturalness=None,
         )
 
@@ -172,7 +173,7 @@ def test_combined_evals_report_cmd_with_modality_and_runs(
             single_bidi_stream=False,
             skip_playback_wait=False,
             report_format="html",
-            vertex_location="global",
+            vertex_location=None,
             naturalness=None,
         )
 
@@ -246,7 +247,7 @@ def test_combined_evals_report_cmd_timestamped(
             single_bidi_stream=False,
             skip_playback_wait=False,
             report_format="html",
-            vertex_location="global",
+            vertex_location=None,
             naturalness=None,
         )
 
@@ -603,3 +604,96 @@ def test_combined_evals_report_cmd_new_upstream_flags(
             call_kwargs["recordings_bucket"] == "gs://my-ces-recordings/prefix"
         )
         assert call_kwargs["return_gate_status"] is True
+
+
+@pytest.mark.parametrize(
+    ("gemini_loc", "vertex_loc", "expected_run_loc", "expected_report_arg"),
+    [
+        (None, None, "europe-west4", None),
+        ("us-east4", None, "us-east4", "us-east4"),
+        (None, "europe-west1", "europe-west1", "europe-west1"),
+        ("   ", "europe-west1", "europe-west1", "europe-west1"),
+        ("us-east4", "europe-west1", "us-east4", "us-east4"),
+    ],
+)
+def test_combined_evals_report_cmd_resolves_gemini_location_and_backwards_compat(
+    tmp_path: typing.Any,
+    monkeypatch: typing.Any,
+    gemini_loc: str | None,
+    vertex_loc: str | None,
+    expected_run_loc: str,
+    expected_report_arg: str | None,
+) -> None:
+    evals_dir = tmp_path / "evals"
+    evals_dir.mkdir()
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+
+    args = argparse.Namespace(
+        output_dir=str(evals_dir),
+        output=str(tmp_path / "report.html"),
+        gcs_path=None,
+        golden_run=None,
+        app_name="projects/p/locations/us/apps/a",
+        run=True,
+        app_dir=None,
+        tool_test_file=None,
+        goldens_dir=None,
+        simulation_dir=None,
+        include="sims",
+        input_dir=None,
+        modality="text",
+        runs=1,
+        use_tool_fakes=False,
+        sim_user_model=None,
+        eval_model=None,
+        gemini_location=gemini_loc,
+        vertex_location=vertex_loc,
+    )
+
+    with (
+        patch(
+            "cxas_scrapi.utils.reporting.run_all_evals",
+            return_value={
+                "callback": [],
+                "tool": [],
+                "golden": [],
+                "simulation": [],
+            },
+        ) as mock_run_all,
+        patch(
+            "cxas_scrapi.utils.reporting.generate_combined_html_report",
+            return_value=str(tmp_path / "report.html"),
+        ),
+    ):
+        combined_evals_report_cmd(args)
+        assert (
+            mock_run_all.call_args.kwargs["vertex_location"] == expected_run_loc
+        )
+
+    cli_flags: list[str] = []
+    if gemini_loc is not None:
+        cli_flags.extend(["--gemini-location", gemini_loc])
+    if vertex_loc is not None:
+        cli_flags.extend(["--vertex-location", vertex_loc])
+
+    with (
+        patch(
+            "sys.argv",
+            [
+                "cxas",
+                "evals",
+                "report",
+                "--output-dir",
+                str(evals_dir),
+                *cli_flags,
+            ],
+        ),
+        patch(
+            "cxas_scrapi.utils.reporting.generate_combined_report_from_dir"
+        ) as mock_gen_report,
+    ):
+        cli_main()
+        assert (
+            mock_gen_report.call_args.kwargs["vertex_location"]
+            == expected_report_arg
+        )

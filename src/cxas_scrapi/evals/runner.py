@@ -40,6 +40,7 @@ from cxas_scrapi.utils.eval_utils import (
     EvalUtils,
     add_timestamp_suffix,
 )
+from cxas_scrapi.utils.gemini import resolve_gemini_location
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 
 
@@ -126,7 +127,7 @@ def run_all_evals(
     single_bidi_stream: bool = False,
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
-    vertex_location: str = "global",
+    vertex_location: str | None = None,
     naturalness: bool | dict[str, typing.Any] | None = None,
     audio_analysis: bool = False,
     infra_retries: int = 2,
@@ -135,15 +136,20 @@ def run_all_evals(
     golden_run_method: str = "STABLE",
     platform_sims: bool = False,
     sim_user_voices: list[str] | None = None,
+    gemini_location: str | None = None,
 ) -> typing.Any:
     """Runs all evaluations and returns aggregated results.
 
     This high-level orchestration function decouples execution logic from pure
-    HTML report generation.
+    HTML report generation. `gemini_location` (with `vertex_location` as a
+    backwards-compatible alias) defaults to `GOOGLE_CLOUD_LOCATION` or
+    `'global'`.
     """
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
         _load_sim_test_cases,
     )
+
+    vertex_location = resolve_gemini_location(gemini_location, vertex_location)
 
     if audio_analysis:
         if modality == "audio":
