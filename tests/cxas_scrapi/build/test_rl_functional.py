@@ -484,17 +484,46 @@ def test_rl_pending_4_documented_build_md_backport_commands_succeed(
 
     ws = tmp_path / "ws"
     core, man = _make_cymbal_source(ws)
+    shutil.rmtree(man / "brands")
+    for num in (1, 2, 3):
+        b_id = f"brand_{num}"
+        disp = f"Brand {num}"
+        slug = f"brand-{num}"
+        _write(
+            man / f"brands/{b_id}/identity.yaml",
+            f"brand_id: {b_id}\n"
+            f"display_name: {disp}\n"
+            "lexicon:\n"
+            f"  auth_method: {disp} Auth\n"
+            "urls:\n"
+            f"  portal: https://portal.{slug}.example.com\n"
+            "tts_voices:\n"
+            "  en-US:\n"
+            "    voice: en-US-Chirp3-HD-Aoede\n"
+            "    speaking_rate: 1.0\n",
+        )
+        _write(
+            man / f"brands/{b_id}/channel_policy.yaml",
+            f"brand_id: {b_id}\n"
+            "api_routing:\n"
+            f"  cards_api: https://cards.{slug}.example.com\n"
+            "channels:\n"
+            "  DIGITAL_APP:\n"
+            "    supported_modalities: ['TEXT']\n"
+            "  VOICE_TELEPHONY:\n"
+            "    supported_modalities: ['AUDIO']\n",
+        )
     _init_git(ws)
     dist = ws / "dist"
     build_all(core, man, dist, "prod", write_locks=True)
     live = _ces_export(
-        dist / "cymbal_direct/digital_app",
-        ws / "exports/cymbal_direct_digital_live",
+        dist / "brand_1/digital_app",
+        ws / "exports/brand_1_digital_live",
     )
     (live / "agents/cards_agent/instruction.txt").write_text(
-        "Assist Cymbal Direct cardholders on "
-        "https://portal.cymbal-direct.example.\n"
-        "Confirm identity with Cymbal Pass before calling "
+        "Assist Brand 1 cardholders on "
+        "https://portal.brand-1.example.com.\n"
+        "Confirm identity with Brand 1 Auth before calling "
         "{@TOOL: update_card_limit}.\n",
         encoding="utf-8",
     )

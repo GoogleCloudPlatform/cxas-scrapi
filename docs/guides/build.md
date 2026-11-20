@@ -13,13 +13,16 @@ an optional lint gate, 3-way drift gate, and governed lock, and reconciled from 
 ```text
 manifests/
   brands/
-    brand_alpha/
-      identity.yaml
-      channel_policy.yaml
-    brand_beta/
+    brand_1/
       identity.yaml
       channel_policy.yaml
       overrides.yaml        # optional per-brand agent/tool/instruction overrides
+    brand_2/
+      identity.yaml
+      channel_policy.yaml
+    brand_3/
+      identity.yaml
+      channel_policy.yaml
   envs/
     prod.yaml
   locales/
@@ -40,35 +43,35 @@ cxas build --core-dir core/ --manifests-dir manifests/ --env prod --out dist/ --
 cxas build \
   --core-dir core/ \
   --manifests-dir manifests/ \
-  --brand brand_alpha \
+  --brand brand_1 \
   --channel WEB \
   --env prod \
-  --out dist/brand_alpha/web
+  --out dist/brand_1/web
 
 # Package an app bundle into a deterministic ZIP archive
-cxas package --app-dir dist/brand_alpha/web --zip web.zip
+cxas package --app-dir dist/brand_1/web --zip web.zip
 ```
 
 Every built app also gets `deployments/<channel>.yaml` (`brandId`, `channel`, `environment`, ...). It is build
 metadata (never part of the pushed archive) and gives `cxas lint` its brand context.
 
-#### `brands/brand_alpha/identity.yaml`
+#### `brands/brand_1/identity.yaml`
 ```yaml
-brand_id: brand_alpha
-display_name: Cymbal Alpha
+brand_id: brand_1
+display_name: Brand 1
 assistant_title: Virtual Agent
 lexicon:
-  ai_disclosure: "Hello! You are chatting with Cymbal Alpha's AI assistant."
-forbidden_tokens: [CymbalBetaPass]   # P001: never in brand_alpha's built app
+  ai_disclosure: "Hello! You are chatting with Brand 1's AI assistant."
+forbidden_tokens: [Brand2Pass]   # P001: never in brand_1's built app
 tts_voices:
   en:
     voice: en-US-Standard-A
     speaking_rate: 1.0
 ```
 
-#### `brands/brand_alpha/channel_policy.yaml`
+#### `brands/brand_1/channel_policy.yaml`
 ```yaml
-brand_id: brand_alpha
+brand_id: brand_1
 supported_countries: ["US", "CA"]
 channels:
   WEB:
@@ -84,7 +87,7 @@ channels:
 ```yaml
 environment: prod
 templates:
-  gcp_project: cymbal-prod-{brand_slug}-{env}
+  gcp_project: gcp-prod-{brand_slug}-{env}
 overrides:
   some_key: prod_val
 locked: true            # governed lock: built app.json declares locked: true
@@ -97,10 +100,10 @@ models:                 # pins only the slots CES applies
 #### `locales/content_blocks.yaml`
 ```yaml
 blocks:
-  brand_alpha:
+  brand_1:
     US:
       en:
-        greeting: "Hello from Cymbal Alpha!"
+        greeting: "Hello from Brand 1!"
 ```
 
 ---
@@ -108,7 +111,7 @@ blocks:
 ## 2. Polymorphic Lint Rules (`cxas lint`)
 
 ```bash
-cxas lint --app-dir dist/brand_alpha/web --manifests-dir manifests/
+cxas lint --app-dir dist/brand_1/web --manifests-dir manifests/
 ```
 
 | ID | Severity | Check |
@@ -140,9 +143,9 @@ push-time app `displayName`, the server-default `loggingSettings`, and the app `
 - **`CONFLICT`**: both `ours` and `live` diverged from `base` (`<<<<<<< live ... ======= ... >>>>>>> ours` `.diff`).
 
 ```bash
-cxas lock --bundle dist/brand_alpha/web --lockfile dist/brand_alpha/web.lock.json
-cxas drift --app brand_alpha/web --dist dist/brand_alpha/web --live exports/live/ \
-  --lockfile dist/brand_alpha/web.lock.json --conflicts-dir dist/conflicts/
+cxas lock --bundle dist/brand_1/web --lockfile dist/brand_1/web.lock.json
+cxas drift --app brand_1/web --dist dist/brand_1/web --live exports/live/ \
+  --lockfile dist/brand_1/web.lock.json --conflicts-dir dist/conflicts/
 cxas drift ... --accept-live agents/human_interaction_agent   # adopt a Console hotfix into ours + lockfile
 cxas drift ... --force-ours agents/credit_cards_agent         # keep local Git state
 ```
@@ -153,11 +156,11 @@ cxas drift ... --force-ours agents/credit_cards_agent         # keep local Git s
 
 ```bash
 cxas push \
-  --app-dir dist/brand_alpha/web \
-  --to projects/cymbal-prod/locations/us/apps/brand-alpha-web \
+  --app-dir dist/brand_1/web \
+  --to projects/gcp-prod/locations/us/apps/brand-1-web \
   --overwrite \
   --lint --manifests-dir manifests/ \
-  --check-drift --live-dir exports/live/ --lockfile dist/brand_alpha/web.lock.json \
+  --check-drift --live-dir exports/live/ --lockfile dist/brand_1/web.lock.json \
   --create-version --version-name release-42
 ```
 
@@ -176,12 +179,12 @@ cxas push \
 
 ### Per-Brand `overrides.yaml` (`manifests/brands/<brand_id>/overrides.yaml`)
 
-An individual brand team (for example, `cymbal_direct` for `"Cymbal Direct"`) can customize `global_instruction`,
-individual agents, and tools in `manifests/brands/cymbal_direct/overrides.yaml` without touching shared `core/` and
-with **zero blast radius** on sibling brands (`cymbal_retail` for `"Cymbal Retail"` builds byte-for-byte unchanged):
+An individual brand team (for example, `brand_1` for `"Brand 1"`) can customize `global_instruction`,
+individual agents, and tools in `manifests/brands/brand_1/overrides.yaml` without touching shared `core/` and
+with **zero blast radius** on sibling brands (`brand_2` for `"Brand 2"` and `brand_3` for `"Brand 3"` build byte-for-byte unchanged):
 
 ```yaml
-brand_id: cymbal_direct
+brand_id: brand_1
 
 global_instruction:
   replace_lines:
@@ -212,15 +215,15 @@ agents:
 tools:
   change_credit_card_limit:
     description: "Update a @@brand.display_name@@ card limit authorized with @@brand.lexicon.auth_method@@."
-    url: "https://api.cymbal-direct.example.com/v1/cards/limit"
+    url: "https://api.brand-1.example.com/v1/cards/limit"
     channels:
       DIGITAL_APP:
         description: "In-app @@brand.display_name@@ card limit update via @@brand.lexicon.auth_method@@."
 ```
 
-In `manifests/brands/cymbal_direct/identity.yaml`, those placeholders bind cleanly to Cymbal Direct values (for
-example `display_name: "Cymbal Direct"`, `urls.portal: "https://direct.cymbal.example.com"`, and
-`lexicon.auth_method: "Cymbal Pass"`).
+In `manifests/brands/brand_1/identity.yaml`, those placeholders bind cleanly to Brand 1 values (for
+example `display_name: "Brand 1"`, `urls.portal: "https://portal.brand-1.example.com"`, and
+`lexicon.auth_method: "Brand 1 Auth"`).
 
 ### Console-to-Git PR Back-Porting (`cxas backport`)
 
@@ -239,29 +242,29 @@ CES Console UI and exports the live app, `cxas backport` lifts those changes bac
    `manifests/brands/<brand>/overrides.yaml` (`--target brand`, scoped to `--scope channel` by default or
    `--scope brand` across all channels of that brand) or directly to shared `core/` (`--target core`).
 4. **Round-Trip SHA-256 Proof**: Rebuilds from updated `core/` + `manifests/`, verifies canonical SHA-256 resource
-   equality with `live` (`ROUND_TRIP_PROOF PASS`), and proves sibling brand/channel bundles (`cymbal_retail/*`,
-   other channels of `cymbal_direct`) remain untouched (`UNCHANGED_SIBLINGS`).
+   equality with `live` (`ROUND_TRIP_PROOF PASS`), and proves sibling brand/channel bundles (`brand_2/*`,
+   `brand_3/*`, and other channels of `brand_1`) remain untouched (`UNCHANGED_SIBLINGS`).
 
 ```bash
 # Channel-scoped brand override (default: --target brand --scope channel)
 cxas backport \
   --core-dir core/ \
   --manifests-dir manifests/ \
-  --live exports/cymbal_direct_digital_live/ \
-  --brand cymbal_direct \
+  --live exports/brand_1_digital_live/ \
+  --brand brand_1 \
   --channel DIGITAL_APP \
   --env prod \
   --dist dist/ \
-  --lockfile dist/cymbal_direct/digital_app.lock.json \
+  --lockfile dist/brand_1/digital_app.lock.json \
   --pr-body-out backport_pr.md \
-  --git-branch backport/cymbal-direct-cards
+  --git-branch backport/brand-1-cards
 
-# Brand-wide override across all channels of cymbal_direct (--target brand --scope brand)
+# Brand-wide override across all channels of brand_1 (--target brand --scope brand)
 cxas backport \
   --core-dir core/ \
   --manifests-dir manifests/ \
-  --live exports/cymbal_direct_digital_live/ \
-  --brand cymbal_direct \
+  --live exports/brand_1_digital_live/ \
+  --brand brand_1 \
   --channel DIGITAL_APP \
   --env prod \
   --target brand \
@@ -272,8 +275,8 @@ cxas backport \
 cxas backport \
   --core-dir core/ \
   --manifests-dir manifests/ \
-  --live exports/cymbal_direct_digital_live/ \
-  --brand cymbal_direct \
+  --live exports/brand_1_digital_live/ \
+  --brand brand_1 \
   --channel DIGITAL_APP \
   --env prod \
   --target core \

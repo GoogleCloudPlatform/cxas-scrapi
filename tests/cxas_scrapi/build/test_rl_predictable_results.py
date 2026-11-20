@@ -424,16 +424,54 @@ def test_rl_pending_2_docs_build_guide_backport_examples_execute_cleanly(
 
     ws = tmp_path / "workspace"
     core, man = _make_cymbal_source(ws)
+    shutil.rmtree(man / "brands")
+    for num, voice_name, disable_branch in (
+        (1, "en-US-Chirp3-HD-Puck", True),
+        (2, "en-US-Chirp3-HD-Aoede", False),
+        (3, "en-US-Chirp3-HD-Aoede", False),
+    ):
+        b_id = f"brand_{num}"
+        disp = f"Brand {num}"
+        slug = f"brand-{num}"
+        _write(
+            man / f"brands/{b_id}/identity.yaml",
+            f"brand_id: {b_id}\n"
+            f"display_name: {disp}\n"
+            "urls:\n"
+            f"  portal: https://portal.{slug}.example.com\n"
+            "tts_voices:\n"
+            "  en-US:\n"
+            f"    voice: {voice_name}\n"
+            "    speaking_rate: 1.0\n",
+        )
+        disabled_block = (
+            "    disabled_agents:\n      - branch_agent\n"
+            if disable_branch
+            else ""
+        )
+        _write(
+            man / f"brands/{b_id}/channel_policy.yaml",
+            f"brand_id: {b_id}\n"
+            "api_routing:\n"
+            f"  cards_api: https://cards.{slug}.example.com\n"
+            "channels:\n"
+            "  DIGITAL_APP:\n"
+            f"{disabled_block}"
+            "    supported_modalities: ['TEXT']\n"
+            "  VOICE_TELEPHONY:\n"
+            f"{disabled_block}"
+            "    supported_modalities: ['AUDIO']\n",
+        )
     _init_git_repo(ws, branch="main")
     dist = ws / "dist"
     build_all(core, man, dist, "prod", write_locks=True)
 
     live = _export_ces_live_copy(
-        dist / "cymbal_direct/digital_app",
-        ws / "exports/cymbal_direct_digital_live",
+        dist / "brand_1/digital_app",
+        ws / "exports/brand_1_digital_live",
     )
     (live / "agents/guide_agent/instruction.txt").write_text(
-        "Answer Cymbal Direct questions clearly using {@TOOL: kb_search}.\n",
+        "Answer Brand 1 questions clearly using {@TOOL: kb_search}.\n",
         encoding="utf-8",
     )
 
