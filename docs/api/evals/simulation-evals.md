@@ -8,7 +8,7 @@ title: SimulationEvals
 
 Here are the key concepts:
 
-- **`Step`** (Pydantic model) — a single goal within a simulation, with a `goal`, `success_criteria`, optional `response_guide`, and a `max_turns` limit. Steps can also include a `static_utterance` for when you want a fixed first message, and `inject_variables` for seeding session state.
+- **`Step`** (Pydantic model) — a single goal within a simulation, with a `goal`, `success_criteria`, optional `response_guide`, and a `max_turns` limit. Steps can also include a `static_utterance` for when you want a fixed first message, `inject_variables` for seeding session state, and `barge_in` (`BargeInConfig`) for model-generated mid-playback voice interruptions.
 - **`StepStatus`** enum — tracks whether each step is `NOT_STARTED`, `IN_PROGRESS`, or `COMPLETED`.
 - **`simulate_conversation()`** — drives the full multi-turn loop, returning an `LLMUserConversation` object that contains the transcript, step progress, and expectation results.
 - **`generate_report()`** — produces a `SimulationReport` with two DataFrames: goal progress and expectation results. It renders as styled HTML in a Jupyter notebook.
@@ -92,7 +92,7 @@ sim = SimulationEvals(
 - **`to_milestone_yaml(test_cases)`** — sanitizes and converts one or more simulation test cases into CXAS 2.0 Milestone YAML (`evals:` format compatible with CES `MilestoneYamlTranslator`).
 - **`push_to_platform(test_cases, conflict_strategy="OVERWRITE")`** — converts and imports simulation test cases onto the platform as Milestone evaluations via `:importEvaluations`.
 - **`run_simulations_on_platform(test_cases, runs=1, timeout_seconds=600, use_tool_fakes=None)`** — imports, triggers `RunEvaluation` (with `EvaluationConfig.tool_call_behaviour` set to `FAKE` when `use_tool_fakes=True`), waits for completion, and returns results formatted as standard simulation result dictionaries.
-- **`requires_local_execution(test_case)`** — checks whether a test case uses local-only features (`modality: "audio"`, `audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, or `barge_in_after_ms`). Tool fakes (`use_tool_fakes`) are supported directly on the platform.
+- **`requires_local_execution(test_case)`** — checks whether a test case uses local-only features (`modality: "audio"`, `audio_expectations`, `audio_analysis`, `voice_config`, `naturalness_metric`, `barge_in_after_ms`, or `barge_in`). Tool fakes (`use_tool_fakes`) are supported directly on the platform.
 - **`run_simulations(..., run_on_platform=True, platform_timeout=600, use_tool_fakes=None)`** — automatically partitions `test_cases` into platform-compatible cases (executed via `run_simulations_on_platform`, forwarding `use_tool_fakes`) and local-only cases (executed locally via `simulate_conversation`). Run-level audio settings (`audio_analysis`, `capture_agent_audio`, `background_noise_file`, `burst_noise_files`) automatically force local execution.
 
 ## Reference
@@ -100,6 +100,8 @@ sim = SimulationEvals(
 ::: cxas_scrapi.evals.simulation_evals.SimulationEvals
 
 ::: cxas_scrapi.evals.simulation_evals.Step
+
+::: cxas_scrapi.evals.simulation_evals.BargeInConfig
 
 ::: cxas_scrapi.evals.simulation_evals.StepStatus
 

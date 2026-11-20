@@ -320,3 +320,181 @@ You must decide whether to:
     `"generate_tts"`, or `"end_conversation"` was chosen
   - `step_progresses`: updated list of step progress objects
 """
+
+
+BARGE_IN_STYLE_GUIDES = {
+    "urgent_pivot": {
+        "description": (
+            "Urgent interruption redirecting the agent to an immediate, "
+            "time-sensitive priority or topic switch."
+        ),
+        "phrasing_guidance": (
+            "Open with an urgent interjection (e.g., 'Wait, hold on—', "
+            "'Actually, stop for a second—', 'Listen, something more urgent "
+            "came up—') and immediately state the new priority."
+        ),
+        "timing_fraction": (0.2, 0.45),
+    },
+    "impatient_cutoff": {
+        "description": (
+            "Impatient or hurried caller cutting off a long explanation to "
+            "get straight to the point or action."
+        ),
+        "phrasing_guidance": (
+            "Cut in briskly and directly without pleasantries (e.g., "
+            "'Yeah, skip the details—', 'Look, I don't need the whole "
+            "rundown, just—', 'Right, got it, can we just—') and state the "
+            "exact request."
+        ),
+        "timing_fraction": (0.15, 0.4),
+    },
+    "polite_interruption": {
+        "description": (
+            "Courteous caller excusing themselves to interject a question, "
+            "change of mind, or clarification."
+        ),
+        "phrasing_guidance": (
+            "Use a brief, polite softener (e.g., 'Sorry to interrupt, "
+            "but—', 'Pardon me for cutting in—', 'Excuse me real quick—') "
+            "followed by the request."
+        ),
+        "timing_fraction": (0.35, 0.65),
+    },
+    "correction": {
+        "description": (
+            "Caller interrupting because they misspoke earlier or need to "
+            "correct a detail the agent is acting on."
+        ),
+        "phrasing_guidance": (
+            "Signal a self-correction or factual fix (e.g., 'Oh wait, I "
+            "gave you the wrong info—', 'Hold on, let me correct that—', "
+            "'Actually no, that's not right—') and provide the corrected "
+            "detail."
+        ),
+        "timing_fraction": (0.25, 0.55),
+    },
+    "preemptive_answer": {
+        "description": (
+            "Caller anticipating where the agent is going and jumping in "
+            "early with the answer or next step."
+        ),
+        "phrasing_guidance": (
+            "Jump in as if anticipating the prompt (e.g., 'Before you "
+            "ask—', 'I already have that ready—', 'Yeah, and to answer "
+            "your question—') and supply the information."
+        ),
+        "timing_fraction": (0.4, 0.75),
+    },
+}
+
+BARGE_IN_VARIATION_CUES = (
+    (
+        "Start directly with the core correction or pivot before adding a "
+        "brief clause of context."
+    ),
+    (
+        "Open with a short natural spoken interjection (1-3 words) and keep "
+        "the sentence compact and conversational."
+    ),
+    (
+        "Frame the interruption as a sudden realization or mid-thought pivot "
+        "using natural spoken contractions."
+    ),
+    "Use a brisk, direct question form to redirect the agent toward the goal.",
+    (
+        "Lead with the specific entity, number, or action needed, avoiding "
+        "boilerplate filler."
+    ),
+)
+
+BARGE_IN_USER_PROMPT = """
+You are an advanced Voice User Simulator AI generating a realistic mid-speech
+**barge-in interruption** during a live bidirectional voice call with an AI
+agent.
+
+In a real voice call, callers interrupt the agent mid-sentence when they want
+to pivot topics, cut off a verbose explanation, correct a detail, or jump
+ahead. Your task is to generate a natural, varied spoken interruption utterance
+and select a realistic interruption timing offset (`barge_in_after_ms`).
+
+---
+
+**`Conversation History So Far`:**
+```
+{current_conversation_history}
+```
+
+**`Preceding User Turn (Turn N that triggers the agent response)`:**
+{preceding_user_utterance}
+
+**`Agent's Current Speech Being Interrupted (if available in reactive mode)`:**
+{agent_current_speech}
+
+**`Barge-In Step Goal`:**
+{barge_in_goal}
+
+**`Barge-In Response Guide`:**
+{barge_in_response_guide}
+
+**`Requested Interruption Style`:**
+- Style Archetype: `{barge_in_style}`
+- Style Description: {barge_in_style_description}
+- Phrasing Guidance: {barge_in_style_guidance}
+
+**`Variation Directive (for multi-run diversity)`:**
+{variation_directive}
+
+**`Previously Used Barge-In Utterances (DO NOT repeat these phrasings)`:**
+{previous_barge_in_utterances}
+
+**`Timing Bounds`:**
+- Minimum offset: `{barge_in_min_ms}` ms
+- Maximum offset: `{barge_in_max_ms}` ms
+- Recommended style window: `{recommended_min_ms}` to `{recommended_max_ms}` ms
+
+---
+
+**Instructions:**
+
+1. **Craft a Natural, Varied Barge-In Utterance (`barge_in_utterance`):**
+   * The utterance MUST accomplish the `Barge-In Step Goal` and follow the
+     intent of the `Barge-In Response Guide` using the `{barge_in_style}`
+     style archetype and `Variation Directive`.
+   * **Anti-Verbatim Rule:** If `Barge-In Response Guide` includes an example
+     phrase in quotes (e.g., `Say "Wait, hold on — I need X"`), treat it as a
+     semantic template, NOT a literal script. Paraphrase the opener and
+     sentence structure so each run produces distinct, realistic phrasing.
+   * **Strict Entity Preservation:** You MUST preserve all specific entities,
+     IDs, order/account numbers, dates, dollar amounts, names, and technical
+     terms mentioned in the `Barge-In Step Goal` or `Barge-In Response Guide`
+     **verbatim** (e.g., if `ORD-99999` or `account 12345` is specified,
+     include that exact identifier).
+   * **Spoken Brevity:** Keep the interruption concise and natural for spoken
+     audio (typically 6 to 22 words). Do NOT include stage directions,
+     brackets, or `<context>` tags.
+   * If `Agent's Current Speech Being Interrupted` is provided (non-empty),
+     tailor the interruption so it reacts naturally to what the agent is
+     currently saying.
+
+2. **Decide Whether to Barge In Now (`should_barge_in`):**
+   * By default, set `should_barge_in` to `true`.
+   * Only when `Agent's Current Speech Being Interrupted` is provided AND the
+     barge-in mode is `"reactive"`, if the agent's current turn is a short
+     prerequisite clarifying/authentication question where interrupting
+     immediately would be incoherent with the `Barge-In Step Goal`, you may
+     set `should_barge_in` to `false` to defer the barge-in. Otherwise set
+     `should_barge_in` to `true`.
+
+3. **Select Interruption Timing (`barge_in_after_ms`):**
+   * Choose an integer millisecond offset between `{barge_in_min_ms}` and
+     `{barge_in_max_ms}` (inclusive), preferring the recommended style window
+     `[{recommended_min_ms}, {recommended_max_ms}]` when it fits the context.
+
+**Output Rules:**
+* Output a single valid JSON object matching the response schema with fields:
+  - `barge_in_utterance`: string
+  - `barge_in_after_ms`: integer within `[{barge_in_min_ms}, {barge_in_max_ms}]`
+  - `barge_in_style`: string (`"{barge_in_style}"`)
+  - `should_barge_in`: boolean
+  - `justification`: brief explanation of the chosen phrasing and timing
+"""
