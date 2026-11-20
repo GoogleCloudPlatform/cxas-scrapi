@@ -16,20 +16,25 @@
 r"""Lists the tools the model can see for each playbook and task of a CXAS app.
 
 Renders agents/<root>/instruction.txt the way CES does (Jinja rendered, {{# #}}
-comments kept) and applies the same word-boundary match as the dynamic
-tool-hiding handler. It also checks for mistakes that `cxas lint` misses.
-Needs jinja2 (installed with cxas-scrapi).
+comments kept, non-bare {{ ... }} output expressions left literal) and applies
+the same word-boundary match as the dynamic tool-hiding handler. It also checks
+for template, instruction, and tool anti-patterns that `cxas lint` misses, and
+automatically synthesizes branch states from `{{% if ... %}} / {{% elif ... %}}`
+conditions so multi-step `<current_step>` and `<pending_handoff>` branches are
+verified without manual `--state` flags. Needs jinja2 (installed with
+cxas-scrapi).
 
 Example:
   python3 check_tool_visibility.py cxas_app/my-agent
   python3 check_tool_visibility.py cxas_app/my-agent --print \
-    --state '{"current_playbook": "order_support", "current_task": "cancel"}'
+    --state '{"current_playbook": "live_agent", "current_task": "live_agent"}'
 
 Exits with 1 when it finds a problem.
 """
 
 import argparse
 import ast
+import copy
 import dataclasses
 import datetime
 import json
@@ -45,14 +50,87 @@ COMMENT = re.compile(r"\{\{#.*?#\}\}", re.S)
 SINGLE_COMMENT = re.compile(r"(?<!\{)\{#.*?#\}(?!\})", re.S)
 DOUBLE_BLOCK = re.compile(r"\{\{%(-?)(.*?)(-?)%\}\}", re.S)
 SINGLE_BLOCK = re.compile(r"(?<!\{)\{%.*?%\}(?!\})", re.S)
+OUTPUT_TAG = re.compile(r"(?<!\{)\{\{(?![%#])(.*?)\}\}(?!\})", re.S)
+VALID_OUTPUT_EXPR = re.compile(
+    r"^\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*$",
+    re.S,
+)
+SINGLE_VAR = re.compile(r"(?<!\{)\{([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\}(?!\})")
 TAG = re.compile(r"\{\{%.*?%\}\}|(?<!\{)\{%.*?%\}(?!\})|\{\{.*?\}\}", re.S)
+IDENT_PATTERN = r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
+PROSE_STATE_CHECK = re.compile(
+    r"\b(?:if|when|once|whether|unless)\s+`?([A-Za-z_]\w*(?:\.\w+)*)`?\s*"
+    r"(?:==|!=|\bis\s+(?:not\s+)?(?:empty|true|false|set|none|null)\b)"
+    r"|`([A-Za-z_]\w*(?:\.\w+)*)`\s*(?:==|!=)",
+    re.I,
+)
+PROSE_PRONOUNS = frozenset(
+    {
+        "it",
+        "that",
+        "this",
+        "there",
+        "nothing",
+        "anything",
+        "something",
+        "one",
+        "none",
+    }
+)
+SAMPLE_CODE_PATTERN = re.compile(
+    r"\b(?:such\s+as|for\s+example|e\.g\.?|example\s*:)[,:]?\s*"
+    r"[`'\"]?([A-Z]{2,6}-?\d{3,10}|\d{3,6}-[A-Z]{2,6})[`'\"]?"
+)
+TOOL_REF_PATTERN = re.compile(r"\{@TOOL:\s*([A-Za-z_]\w*)\s*\}")
 # Variables CES provides without a declaration.
 BUILTIN_VARIABLES = frozenset({"current_date", "_session"})
 # Tools the model must never see: built-in end_session and the queue helper.
 HIDDEN_TOOLS = ("end_session", "set_next_agent_actions")
+ROUTING_VARS = ("current_playbook", "current_task")
+# State the router tools may write.
+ROUTER_STATE_KEYS = frozenset({"current_playbook", "current_task"})
 JINJA_WORDS = frozenset(
-    {"in", "not", "and", "or", "is", "if", "elif", "else", "for"}
+    {
+        "in",
+        "not",
+        "and",
+        "or",
+        "is",
+        "if",
+        "elif",
+        "else",
+        "for",
+        "true",
+        "false",
+        "none",
+        "True",
+        "False",
+        "None",
+    }
 )
+PROSE_RETURN_KEYS = frozenset(
+    {
+        "message",
+        "phrase",
+        "script",
+        "text_to_say",
+        "instruction",
+        "instructions",
+        "next_step_guidance",
+        "wrap_up_guidance",
+        "anti_herding_rule",
+        "pre_transfer_message",
+        "prompt",
+        "guidance",
+    }
+)
+# Asks the model to repeat tool output word for word.
+VERBATIM_RESULT = re.compile(
+    r"\bexactly as (?:it's |it is )?(?:returned|the tool returns)\b", re.I
+)
+QUOTED = re.compile(r"['\"]([^'\"]+)['\"]")
+# Static blocks where an always-available tool must not be named.
+NO_TOOL_BLOCKS = ("role", "context", "constraints")
 OPEN_PLAYBOOK_CODE = "tools/open_playbook/python_function/python_code.py"
 LOAD_TASK_CODE = "tools/load_task/python_function/python_code.py"
 MAX_LABEL_WIDTH = 48
@@ -64,6 +142,7 @@ class _App:
 
     path: pathlib.Path
     config: dict[str, Any]
+    agent: dict[str, Any]
     tools: list[str]
     instruction: str
     without_comments: str
@@ -74,6 +153,7 @@ class _Render:
     """The instruction rendered for one state, or the error rendering it."""
 
     label: str
+    state: dict[str, Any]
     text: str | None = None
     error: str | None = None
 
@@ -94,15 +174,51 @@ def _literal(path: pathlib.Path, name: str) -> Any:
     return None
 
 
+def _empty(schema: dict[str, Any]) -> Any:
+    """Returns a variable's declared default, or an empty value of its type."""
+    if "default" in schema:
+        return copy.deepcopy(schema["default"])
+    kind = schema.get("type")
+    if kind == "OBJECT":
+        return {
+            k: _empty(v) for k, v in (schema.get("properties") or {}).items()
+        }
+    if kind == "ARRAY":
+        return []
+    return {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}.get(kind)
+
+
 def _defaults(app: dict[str, Any]) -> dict[str, Any]:
-    empty = {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}
     out = {}
     for var in app.get("variableDeclarations", []):
-        schema = var.get("schema", {})
-        out[var["name"]] = schema.get("default", empty.get(schema.get("type")))
+        out[var["name"]] = _empty(var.get("schema", {}))
     tz = app.get("timeZoneSettings", {}).get("timeZone", "UTC")
     out.setdefault("current_date", f"{datetime.date.today().isoformat()}[{tz}]")
     return out
+
+
+def _var_schemas(app: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        var["name"]: var.get("schema", {})
+        for var in app.get("variableDeclarations", [])
+    }
+
+
+def _declared_variables(app: _App) -> set[str]:
+    return {v["name"] for v in app.config.get("variableDeclarations", [])}
+
+
+def _object_schemas(app: _App) -> dict[str, dict[str, Any]]:
+    """Returns the schema of each declared OBJECT variable."""
+    return {
+        v["name"]: v.get("schema", {})
+        for v in app.config.get("variableDeclarations", [])
+        if v.get("schema", {}).get("type") == "OBJECT"
+    }
+
+
+def _root_var(path: str) -> str:
+    return path.split(".", maxsplit=1)[0]
 
 
 def _mentions(text: str, name: str) -> bool:
@@ -113,6 +229,13 @@ def _visible(text: str, tools: list[str]) -> list[str]:
     return sorted(t for t in tools if _mentions(text, t))
 
 
+def _block(text: str, tag: str) -> str:
+    """Returns the contents of every <tag>...</tag> block in `text`."""
+    return "\n".join(
+        re.findall(rf"<{tag}(?:\s[^>]*)?>(.*?)</{tag}>", text, re.S)
+    )
+
+
 def _compared_names(source: str, var: str) -> set[str]:
     """Names the template compares `var` with (== 'x', or in ['x', 'y'])."""
     names = set(re.findall(rf"\b{var}\s*==\s*['\"]([^'\"]+)['\"]", source))
@@ -121,20 +244,30 @@ def _compared_names(source: str, var: str) -> set[str]:
     return names
 
 
+def _format_override_value(val: Any) -> str:
+    if isinstance(val, dict):
+        non_empty = {
+            k: _format_override_value(sv)
+            for k, sv in val.items()
+            if sv not in ("", False, 0, None, [], {})
+        }
+        if non_empty:
+            inner = ", ".join(f"{k}={sv}" for k, sv in non_empty.items())
+            return f"{{{inner}}}"
+        return "{}"
+    return str(val)
+
+
 def _state_label(overrides: dict[str, Any]) -> str:
     """Returns a label like "order_support / cancel_order (order_id=1001)"."""
     label = (
-        " / ".join(
-            str(overrides[k])
-            for k in ("current_playbook", "current_task")
-            if overrides.get(k)
-        )
+        " / ".join(str(overrides[k]) for k in ROUTING_VARS if overrides.get(k))
         or "start"
     )
     rest = ", ".join(
-        f"{k}={v}"
+        f"{k}={_format_override_value(v)}"
         for k, v in overrides.items()
-        if k not in ("current_playbook", "current_task")
+        if k not in ROUTING_VARS
     )
     return f"{label} ({rest})" if rest else label
 
@@ -187,6 +320,7 @@ def _load_app(app_dir: pathlib.Path) -> _App:
     return _App(
         path=app_dir,
         config=config,
+        agent=agent,
         tools=agent.get("tools", []),
         instruction=instruction,
         without_comments=without_comments,
@@ -224,9 +358,10 @@ def _comment_problems(app: _App) -> list[str]:
     return problems
 
 
-def _syntax_problems(app: _App) -> list[str]:
-    """Finds template syntax that local jinja2 accepts or CES rejects."""
+def _instruction_problems(app: _App) -> list[str]:
+    """Finds template syntax and instruction anti-patterns CES mishandles."""
     problems = []
+    declared = _declared_variables(app) | BUILTIN_VARIABLES
     for tag in SINGLE_BLOCK.findall(app.without_comments):
         snippet = " ".join(tag.split())
         problems.append(
@@ -248,6 +383,293 @@ def _syntax_problems(app: _App) -> list[str]:
                 f"subscript in {snippet!r}: CES rejects `x[...]`, use dot"
                 " access (`x.key`)"
             )
+    for match in OUTPUT_TAG.finditer(app.without_comments):
+        expr = match.group(1)
+        if VALID_OUTPUT_EXPR.match(expr):
+            continue
+        if any(
+            m.group(1) not in JINJA_WORDS
+            for m in re.finditer(r"\b([A-Za-z_]\w*)\s*\[", expr)
+        ):
+            continue
+        snippet = " ".join(match.group(0).split())
+        problems.append(
+            f"output expression {snippet!r}: CES only substitutes bare"
+            " variables (`{{var}}`) in output tags and leaves expressions"
+            " literal; branch with `{{% if ... %}}` instead"
+        )
+    prose = TAG.sub(" ", app.without_comments)
+    for match in SINGLE_VAR.finditer(prose):
+        expr = match.group(1)
+        if _root_var(expr) in declared or "_" in expr:
+            problems.append(
+                f"single-brace '{{{expr}}}' is not substituted by CES; write"
+                f" '{{{{{{{expr}}}}}}}'"
+            )
+    if "<session_snapshot" in app.without_comments:
+        problems.append(
+            "<session_snapshot> state dump in instruction.txt; list only"
+            " confirmed task facts inside the task and branch with"
+            " `{{% if ... %}}`"
+        )
+    for match in PROSE_STATE_CHECK.finditer(prose):
+        var = match.group(1) or match.group(2)
+        if (
+            var
+            and var.lower() not in PROSE_PRONOUNS
+            and (_root_var(var) in declared or var.islower())
+        ):
+            snippet = " ".join(match.group(0).split())
+            problems.append(
+                f"prose state check on variable {var!r} ({snippet!r}): branch"
+                f" with `{{{{% if {var} ... %}}}}` instead of asking the model"
+                " to evaluate state variables"
+            )
+    for match in SAMPLE_CODE_PATTERN.finditer(prose):
+        code = match.group(1)
+        snippet = " ".join(match.group(0).split())
+        problems.append(
+            f"hardcoded sample confirmation code {code!r} in instruction.txt"
+            f" ({snippet!r}); describe the format in words so the model cannot"
+            " read a sample code aloud as real data"
+        )
+    for match in TOOL_REF_PATTERN.finditer(app.without_comments):
+        tool_name = match.group(1)
+        if tool_name not in app.tools:
+            problems.append(
+                f"instruction references {{@TOOL: {tool_name}}}, which is not"
+                " in the root agent's tools list"
+            )
+    if _mentions(app.without_comments, "execute_live_agent_handover") and not (
+        _mentions(app.without_comments, "reason")
+        or _mentions(app.without_comments, "pending_handoff_reason")
+    ):
+        problems.append(
+            "instruction.txt calls execute_live_agent_handover without"
+            " specifying a handoff reason or pending_handoff_reason"
+        )
+    return problems
+
+
+def _nested_property_problems(app: _App) -> list[str]:
+    """Finds instruction refs to properties an OBJECT variable doesn't declare.
+
+    An undeclared property always renders empty, which silently flips the
+    branch it's in.
+    """
+    problems = []
+    objects = _object_schemas(app)
+    for tag in TAG.findall(app.without_comments):
+        body = QUOTED.sub(" ", tag)
+        for head, child in re.findall(r"(?<![\w.])(\w+)\.(\w+)", body):
+            props = objects.get(head, {}).get("properties")
+            if props and child not in props:
+                problems.append(
+                    f"{head}.{child} isn't a declared property of {head!r}"
+                    f" (declared: {', '.join(sorted(props))}); it always"
+                    " renders empty"
+                )
+    return problems
+
+
+def _tool_name_problems(app: _App) -> list[str]:
+    """Finds tools named outside {@TOOL: ...} or in the wrong static block."""
+    problems = []
+    prose = TOOL_REF_PATTERN.sub(" ", TAG.sub(" ", app.without_comments))
+    for tool in _visible(prose, app.tools):
+        if tool in HIDDEN_TOOLS:
+            continue
+        problems.append(
+            f"tool {tool!r} is named outside {{@TOOL: ...}}, which shows it to"
+            " the model in that branch; refer to an earlier result by what it"
+            " holds ('the record you found'), and name a tool only where the"
+            " model may call it"
+        )
+    for tag in NO_TOOL_BLOCKS:
+        for tool in _visible(_block(app.without_comments, tag), app.tools):
+            problems.append(
+                f"tool {tool!r} is named in <{tag}>; put rules for"
+                " always-available tools in <anytime_actions>, so each"
+                " trigger has one rule"
+            )
+    for match in VERBATIM_RESULT.finditer(app.without_comments):
+        problems.append(
+            "instruction asks the model to repeat tool output"
+            f" ({match.group(0)!r}); queue exact text with"
+            " next_agent_actions from the tool instead"
+        )
+    return problems
+
+
+def _analyze_returned_dicts(func: ast.AST) -> tuple[set[str], bool]:
+    """Returns `(returned_keys, has_returned_spread)` for `func`."""
+    var_keys: dict[str, set[str]] = {}
+    var_spreads: set[str] = set()
+
+    def _keys_from_expr(expr: ast.AST | None) -> set[str]:
+        if expr is None:
+            return set()
+        if isinstance(expr, ast.Dict):
+            return {
+                k.value
+                for k in expr.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)
+            }
+        if (
+            isinstance(expr, ast.Call)
+            and isinstance(expr.func, ast.Name)
+            and expr.func.id == "dict"
+        ):
+            return {kw.arg for kw in expr.keywords if kw.arg is not None}
+        if isinstance(expr, ast.IfExp):
+            return _keys_from_expr(expr.body) | _keys_from_expr(expr.orelse)
+        if isinstance(expr, ast.BoolOp):
+            out: set[str] = set()
+            for val in expr.values:
+                out |= _keys_from_expr(val)
+            return out
+        if isinstance(expr, ast.Name):
+            return set(var_keys.get(expr.id, set()))
+        return set()
+
+    def _has_spread(expr: ast.AST | None) -> bool:
+        if expr is None:
+            return False
+        if isinstance(expr, ast.Dict):
+            return None in expr.keys
+        if isinstance(expr, ast.IfExp):
+            return _has_spread(expr.body) or _has_spread(expr.orelse)
+        if isinstance(expr, ast.BoolOp):
+            return any(_has_spread(val) for val in expr.values)
+        if isinstance(expr, ast.Name):
+            return expr.id in var_spreads
+        return False
+
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assign):
+            expr_keys = _keys_from_expr(node.value)
+            expr_spread = _has_spread(node.value)
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    if expr_keys:
+                        var_keys.setdefault(target.id, set()).update(expr_keys)
+                    if expr_spread:
+                        var_spreads.add(target.id)
+                elif (
+                    isinstance(target, ast.Subscript)
+                    and isinstance(target.value, ast.Name)
+                    and isinstance(target.slice, ast.Constant)
+                    and isinstance(target.slice.value, str)
+                ):
+                    var_keys.setdefault(target.value.id, set()).add(
+                        target.slice.value
+                    )
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.value is not None
+        ):
+            expr_keys = _keys_from_expr(node.value)
+            if expr_keys:
+                var_keys.setdefault(node.target.id, set()).update(expr_keys)
+            if _has_spread(node.value):
+                var_spreads.add(node.target.id)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in var_keys
+        ):
+            target_id = node.func.value.id
+            if node.func.attr == "setdefault" and node.args:
+                arg0 = node.args[0]
+                if isinstance(arg0, ast.Constant) and isinstance(
+                    arg0.value, str
+                ):
+                    var_keys[target_id].add(arg0.value)
+            elif node.func.attr == "update" and node.args:
+                arg0 = node.args[0]
+                var_keys[target_id].update(_keys_from_expr(arg0))
+                if _has_spread(arg0):
+                    var_spreads.add(target_id)
+
+    returned_keys: set[str] = set()
+    has_returned_spread = False
+    for node in ast.walk(func):
+        if isinstance(node, ast.Return):
+            returned_keys |= _keys_from_expr(node.value)
+            if _has_spread(node.value):
+                has_returned_spread = True
+    return returned_keys, has_returned_spread
+
+
+def _returned_dict_keys(func: ast.AST) -> set[str]:
+    """Returns string keys present in dictionaries returned by `func`."""
+    returned_keys, _ = _analyze_returned_dicts(func)
+    return returned_keys
+
+
+def _code_problems(app: _App) -> list[str]:
+    """Checks callbacks, tool docstrings, and tool return dictionaries."""
+    problems = []
+    if app.agent.get("afterModelCallbacks"):
+        problems.append(
+            "root agent has afterModelCallbacks; use a single"
+            " before_model_callback and never inspect or rewrite model replies"
+            " in after_model_callback"
+        )
+    for code_path in sorted(
+        app.path.glob("tools/*/python_function/python_code.py")
+    ):
+        tool_name = code_path.parent.parent.name
+        source = code_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        funcs = [
+            n
+            for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        found_spread = False
+        for func in funcs:
+            doc = ast.get_docstring(func) or ""
+            for match in SAMPLE_CODE_PATTERN.finditer(doc):
+                code = match.group(1)
+                snippet = " ".join(match.group(0).split())
+                problems.append(
+                    f"tool {tool_name!r} docstring has hardcoded sample"
+                    f" confirmation code {code!r} ({snippet!r}); describe the"
+                    " format in words"
+                )
+            returned_keys, has_spread = _analyze_returned_dicts(func)
+            if has_spread and not found_spread:
+                found_spread = True
+                problems.append(
+                    f"tool {tool_name!r} spreads a dict into its result"
+                    " (`**x`); build results from named fields so raw backend"
+                    " or on-file data doesn't reach the model"
+                )
+            for key in sorted(returned_keys & PROSE_RETURN_KEYS):
+                problems.append(
+                    f"tool {tool_name!r} builds a dict with prose key"
+                    f" {key!r}; return status codes and data fields instead,"
+                    " and keep behavior rules in instruction.txt"
+                )
+        if tool_name == "execute_live_agent_handover" and funcs:
+            entry = next((f for f in funcs if f.name == tool_name), funcs[0])
+            arg_names = {a.arg for a in entry.args.args + entry.args.kwonlyargs}
+            has_reason_arg = "reason" in arg_names
+            uses_reason = (
+                "reason" in source or "pending_handoff_reason" in source
+            )
+            has_end_session_reason = bool(
+                re.search(r"['\"]reason['\"]\s*:", source)
+            )
+            if not (has_reason_arg and uses_reason and has_end_session_reason):
+                problems.append(
+                    "execute_live_agent_handover is missing a handoff reason;"
+                    " accept `reason` (and check `pending_handoff_reason`) and"
+                    ' pass `"reason"` in `end_session`'
+                )
     return problems
 
 
@@ -293,15 +715,79 @@ def _router_problems(
     return problems
 
 
-def _to_jinja(raw: str) -> str:
+def _router_state_problems(app: _App) -> list[str]:
+    """Finds router tools that write domain state or read `rationale`."""
+    problems = []
+    for code_rel in (OPEN_PLAYBOOK_CODE, LOAD_TASK_CODE):
+        path = app.path / code_rel
+        if not path.exists():
+            continue
+        tool_name = path.parent.parent.name
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            key = None
+            if (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+                and "state" in ast.unparse(node.value)
+            ):
+                key = node.slice
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("pop", "update", "clear", "setdefault")
+                and "state" in ast.unparse(node.func.value)
+            ):
+                key = node.args[0] if node.args else None
+                if node.func.attr in ("update", "clear"):
+                    problems.append(
+                        f"router tool {tool_name!r} calls"
+                        f" state.{node.func.attr}(); routers set only"
+                        " current_playbook and current_task"
+                    )
+                    continue
+            else:
+                if (
+                    isinstance(node, ast.Name)
+                    and node.id == "rationale"
+                    and isinstance(node.ctx, ast.Load)
+                ):
+                    problems.append(
+                        f"router tool {tool_name!r} reads `rationale`; it's"
+                        " only a note the model leaves in the history"
+                    )
+                continue
+            if (
+                isinstance(key, ast.Constant)
+                and isinstance(key.value, str)
+                and key.value not in ROUTER_STATE_KEYS
+            ):
+                problems.append(
+                    f"router tool {tool_name!r} writes state {key.value!r};"
+                    " routers set only current_playbook and current_task, and"
+                    " the tool that changes a record clears what depended on it"
+                )
+    return problems
+
+
+def _to_jinja(raw: str, preserve_non_bare_output: bool = False) -> str:
     """Converts CES double-brace blocks and preserves unstripped comments."""
     source = DOUBLE_BLOCK.sub(r"{%\1\2\3%}", raw)
     source = COMMENT.sub(
         lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
     )
-    return SINGLE_COMMENT.sub(
+    source = SINGLE_COMMENT.sub(
         lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
     )
+    if preserve_non_bare_output:
+        source = OUTPUT_TAG.sub(
+            lambda m: (
+                m.group(0)
+                if VALID_OUTPUT_EXPR.match(m.group(1))
+                else "{% raw %}" + m.group(0) + "{% endraw %}"
+            ),
+            source,
+        )
+    return source
 
 
 def _compile(app: _App) -> tuple[jinja2.Template, list[str]]:
@@ -318,10 +804,10 @@ def _compile(app: _App) -> tuple[jinja2.Template, list[str]]:
       jinja2.TemplateSyntaxError: The instruction isn't a valid template.
     """
     env = jinja2.Environment()
-    source = _to_jinja(app.instruction)
-    declared = {v["name"] for v in app.config.get("variableDeclarations", [])}
+    parse_source = _to_jinja(app.instruction, preserve_non_bare_output=False)
+    declared = _declared_variables(app)
     undeclared = (
-        meta.find_undeclared_variables(env.parse(source))
+        meta.find_undeclared_variables(env.parse(parse_source))
         - declared
         - BUILTIN_VARIABLES
     )
@@ -330,14 +816,15 @@ def _compile(app: _App) -> tuple[jinja2.Template, list[str]]:
         " app.json, so it always renders empty"
         for name in sorted(undeclared)
     ]
-    return env.from_string(source), problems
+    render_source = _to_jinja(app.instruction, preserve_non_bare_output=True)
+    return env.from_string(render_source), problems
 
 
 def _default_states(
     playbook_tasks: dict[str, tuple[str, ...]],
 ) -> list[tuple[str, dict[str, Any]]]:
     """Returns the start state, then each playbook followed by its tasks."""
-    states = [("start", {})]
+    states: list[tuple[str, dict[str, Any]]] = [("start", {})]
     for playbook, tasks in playbook_tasks.items():
         states.append((playbook, {"current_playbook": playbook}))
         states += [
@@ -350,6 +837,350 @@ def _default_states(
     return states
 
 
+def _field_type(path: str, var_schemas: dict[str, dict[str, Any]]) -> str:
+    parts = path.split(".")
+    schema = var_schemas.get(parts[0], {})
+    for part in parts[1:]:
+        schema = (schema.get("properties") or {}).get(part, {})
+    return str(schema.get("type", "STRING"))
+
+
+def _truthy_value(path: str, var_schemas: dict[str, dict[str, Any]]) -> Any:
+    vtype = _field_type(path, var_schemas)
+    if vtype == "BOOLEAN":
+        return True
+    if vtype in ("NUMBER", "INTEGER"):
+        return 1
+    if vtype == "ARRAY":
+        return ["1"]
+    if vtype == "OBJECT":
+        schema = var_schemas.get(_root_var(path), {})
+        obj = _empty(schema)
+        if isinstance(obj, dict) and obj:
+            return obj
+        return {"_set": True}
+    return "1"
+
+
+def _falsy_value(path: str, var_schemas: dict[str, dict[str, Any]]) -> Any:
+    vtype = _field_type(path, var_schemas)
+    if vtype == "BOOLEAN":
+        return False
+    if vtype in ("NUMBER", "INTEGER"):
+        return 0
+    if vtype == "ARRAY":
+        return []
+    if vtype == "OBJECT":
+        return {}
+    return ""
+
+
+def _set_nested(
+    out: dict[str, Any],
+    path: str,
+    value: Any,
+    var_schemas: dict[str, dict[str, Any]],
+) -> None:
+    """Writes `value` at a flat or dotted path, initializing OBJECT schemas."""
+    parts = path.split(".")
+    if len(parts) == 1:
+        out[parts[0]] = value
+        return
+    root = parts[0]
+    if root not in out or not isinstance(out[root], dict):
+        schema = var_schemas.get(root, {})
+        default_obj = _empty(schema) if schema.get("type") == "OBJECT" else {}
+        out[root] = (
+            copy.deepcopy(default_obj) if isinstance(default_obj, dict) else {}
+        )
+    cur: dict[str, Any] = out[root]
+    for part in parts[1:-1]:
+        nxt = cur.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[part] = nxt
+        cur = nxt
+    cur[parts[-1]] = value
+
+
+def _get_nested(out: dict[str, Any], path: str) -> tuple[bool, Any]:
+    parts = path.split(".")
+    cur: Any = out
+    for part in parts:
+        if not isinstance(cur, dict) or part not in cur:
+            return False, None
+        cur = cur[part]
+    return True, cur
+
+
+def _merge_states(*dicts: dict[str, Any]) -> dict[str, Any]:
+    """Deep-merges state dictionaries so OBJECT subkeys are preserved."""
+    merged: dict[str, Any] = {}
+    for d in dicts:
+        for k, v in d.items():
+            if isinstance(v, dict) and isinstance(merged.get(k), dict):
+                merged[k] = _merge_states(merged[k], v)
+            else:
+                merged[k] = copy.deepcopy(v)
+    return merged
+
+
+def _strip_parens(text: str) -> str:
+    s = text.strip()
+    while s.startswith("(") and s.endswith(")"):
+        depth = 0
+        balanced = True
+        for i, ch in enumerate(s):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and i < len(s) - 1:
+                    balanced = False
+                    break
+        if not balanced or depth != 0:
+            break
+        s = s[1:-1].strip()
+    return s
+
+
+def _satisfy_condition(
+    cond: str,
+    target_true: bool,
+    var_schemas: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Synthesizes variable assignments to satisfy/falsify a Jinja condition."""
+    out: dict[str, Any] = {}
+    parts = re.split(r"\b(?:and|or)\b", cond)
+    for raw_part in parts:
+        part = _strip_parens(raw_part)
+        if not part:
+            continue
+        eq_match = re.match(
+            rf"^(not\s+)?({IDENT_PATTERN})\s*(==|!=)\s*['\"]([^'\"]*)['\"]$",
+            part,
+        )
+        if eq_match:
+            neg, var, op, val = eq_match.groups()
+            if _root_var(var) in ROUTING_VARS:
+                continue
+            want_equal = (op == "==") ^ bool(neg) ^ (not target_true)
+            assigned = val if want_equal else (f"not_{val}" if val else "1")
+            _set_nested(out, var, assigned, var_schemas)
+            continue
+        num_match = re.match(
+            rf"^(not\s+)?({IDENT_PATTERN})\s*(==|!=)\s*(-?\d+)$",
+            part,
+        )
+        if num_match:
+            neg, var, op, raw_num = num_match.groups()
+            if _root_var(var) in ROUTING_VARS:
+                continue
+            want_equal = (op == "==") ^ bool(neg) ^ (not target_true)
+            num_val = int(raw_num)
+            _set_nested(
+                out,
+                var,
+                num_val if want_equal else num_val + 1,
+                var_schemas,
+            )
+            continue
+        var_eq_match = re.match(
+            rf"^(not\s+)?({IDENT_PATTERN})\s*(==|!=)\s*({IDENT_PATTERN})$",
+            part,
+        )
+        if var_eq_match:
+            neg, var, op, rhs = var_eq_match.groups()
+            if _root_var(var) in ROUTING_VARS:
+                continue
+            want_equal = (op == "==") ^ bool(neg) ^ (not target_true)
+            if rhs in ("true", "True", "false", "False"):
+                bool_val = rhs.lower() == "true"
+                _set_nested(
+                    out,
+                    var,
+                    bool_val if want_equal else not bool_val,
+                    var_schemas,
+                )
+                continue
+            if rhs in JINJA_WORDS or _root_var(rhs) in ROUTING_VARS:
+                continue
+            found_rhs, existing_rhs = _get_nested(out, rhs)
+            if not found_rhs:
+                rhs_val: Any = "1"
+                _set_nested(out, rhs, rhs_val, var_schemas)
+            else:
+                rhs_val = existing_rhs
+            if want_equal:
+                _set_nested(out, var, rhs_val, var_schemas)
+            else:
+                neq_val = "2" if rhs_val == "1" else f"not_{rhs_val}"
+                _set_nested(out, var, neq_val, var_schemas)
+            continue
+        in_match = re.match(
+            rf"^(not\s+)?({IDENT_PATTERN})\s+in\s+[\[(]([^\])]*)[\])]$",
+            part,
+        )
+        if in_match:
+            neg, var, items_str = in_match.groups()
+            if _root_var(var) in ROUTING_VARS:
+                continue
+            vals = re.findall(r"['\"]([^'\"]+)['\"]", items_str)
+            if vals:
+                want_in = bool(target_true) ^ bool(neg)
+                _set_nested(
+                    out,
+                    var,
+                    vals[0] if want_in else "__other__",
+                    var_schemas,
+                )
+            continue
+        bool_match = re.match(rf"^(not\s+)?({IDENT_PATTERN})$", part)
+        if bool_match:
+            neg, var = bool_match.groups()
+            if var in JINJA_WORDS or _root_var(var) in ROUTING_VARS:
+                continue
+            want_truthy = bool(target_true) ^ bool(neg)
+            _set_nested(
+                out,
+                var,
+                _truthy_value(var, var_schemas)
+                if want_truthy
+                else _falsy_value(var, var_schemas),
+                var_schemas,
+            )
+    return out
+
+
+def _synthesize_branch_states(
+    app: _App, playbook_tasks: dict[str, tuple[str, ...]]
+) -> list[tuple[str, dict[str, Any]]]:
+    """Synthesizes states for `if/elif/else` branches in instruction.txt."""
+    var_schemas = _var_schemas(app.config)
+    base_defaults = _defaults(app.config)
+    task_to_playbook = {
+        task: playbook
+        for playbook, tasks in playbook_tasks.items()
+        for task in tasks
+    }
+    synthesized: list[tuple[str, dict[str, Any]]] = []
+    seen_states: set[str] = set()
+
+    def _add_state(state: dict[str, Any]) -> None:
+        if not state:
+            return
+        key = json.dumps(state, sort_keys=True)
+        if key not in seen_states:
+            seen_states.add(key)
+            synthesized.append((_state_label(state), state))
+
+    if "pending_handoff_reason" in var_schemas or _mentions(
+        app.without_comments, "pending_handoff_reason"
+    ):
+        _add_state({"pending_handoff_reason": "verification_failed"})
+
+    # Split instruction into task sections by `current_task == '...'`.
+    task_re = re.compile(
+        r"\{\{%-?\s*(if|elif)\s+current_task\s*==\s*['\"]([^'\"]+)['\"]"
+        r"\s*-?%\}\}"
+    )
+    sections: list[tuple[str | None, str, str]] = []
+    pos_idx = 0
+    prev_kw = "if"
+    prev_task: str | None = None
+    for match in task_re.finditer(app.without_comments):
+        sections.append(
+            (prev_task, prev_kw, app.without_comments[pos_idx : match.start()])
+        )
+        prev_kw, prev_task = match.group(1), match.group(2)
+        pos_idx = match.end()
+    sections.append((prev_task, prev_kw, app.without_comments[pos_idx:]))
+
+    block_re = re.compile(r"\{\{%-?\s*(if|elif|else|endif)\b(.*?)-?%\}\}", re.S)
+    outer_neg: dict[str, Any] = {}
+    for task_name, open_kw, body in sections:
+        base_ctx: dict[str, Any] = {}
+        if task_name and task_name in task_to_playbook:
+            base_ctx = {
+                "current_playbook": task_to_playbook[task_name],
+                "current_task": task_name,
+            }
+            if open_kw == "elif" and outer_neg:
+                base_ctx = _merge_states(outer_neg, base_ctx)
+                _add_state(base_ctx)
+        elif task_name:
+            continue
+
+        stack: list[dict[str, Any]] = []
+        for match in block_re.finditer(body):
+            kw, cond = match.group(1), match.group(2).strip()
+            if kw == "if":
+                pos = _satisfy_condition(cond, True, var_schemas)
+                neg = _satisfy_condition(cond, False, var_schemas)
+                parent_neg = copy.deepcopy(stack[-1]) if stack else {}
+                pb_ctx = (
+                    {"current_playbook": pb}
+                    for pb in _compared_names(cond, "current_playbook")
+                    if not base_ctx and pb in playbook_tasks
+                )
+                if pos:
+                    _add_state(_merge_states(base_ctx, parent_neg, pos))
+                    if base_ctx:
+                        _add_state(_merge_states(base_ctx, pos))
+                    else:
+                        for pbc in pb_ctx:
+                            _add_state(_merge_states(pbc, parent_neg, pos))
+                stack.append(_merge_states(parent_neg, neg))
+            elif kw == "elif":
+                neg_so_far = copy.deepcopy(stack[-1]) if stack else {}
+                pos = _satisfy_condition(cond, True, var_schemas)
+                neg = _satisfy_condition(cond, False, var_schemas)
+                pb_ctx = (
+                    {"current_playbook": pb}
+                    for pb in _compared_names(cond, "current_playbook")
+                    if not base_ctx and pb in playbook_tasks
+                )
+                if pos or neg_so_far:
+                    _add_state(_merge_states(base_ctx, neg_so_far, pos))
+                    if base_ctx and pos:
+                        _add_state(_merge_states(base_ctx, pos))
+                    elif pos:
+                        for pbc in pb_ctx:
+                            _add_state(_merge_states(pbc, neg_so_far, pos))
+                if stack:
+                    stack[-1] = _merge_states(stack[-1], neg)
+                else:
+                    stack.append(copy.deepcopy(neg))
+            elif kw == "else":
+                neg_so_far = copy.deepcopy(stack[-1]) if stack else {}
+                if neg_so_far:
+                    _add_state(_merge_states(base_ctx, neg_so_far))
+            elif kw == "endif" and stack:
+                stack.pop()
+
+        if task_name is None and stack:
+            outer_neg = {
+                k: v for k, v in stack[-1].items() if v != base_defaults.get(k)
+            }
+
+    # If instruction has conditions but no task split matched, also test
+    # conditions against every playbook/task pair.
+    if len(sections) == 1 and playbook_tasks:
+        for playbook, tasks in playbook_tasks.items():
+            for task in tasks:
+                base_ctx = {
+                    "current_playbook": playbook,
+                    "current_task": task,
+                }
+                for match in block_re.finditer(app.without_comments):
+                    kw, cond = match.group(1), match.group(2).strip()
+                    if kw in ("if", "elif"):
+                        pos = _satisfy_condition(cond, True, var_schemas)
+                        if pos:
+                            _add_state(_merge_states(base_ctx, pos))
+    return synthesized
+
+
 def _render(
     template: jinja2.Template,
     base: dict[str, Any],
@@ -358,12 +1189,13 @@ def _render(
     """Renders the instruction for each state on top of the default state."""
     results = []
     for label, overrides in states:
+        full_state = _merge_states(base, overrides)
         try:
-            text = template.render(**{**base, **overrides})
+            text = template.render(**full_state)
         except jinja2.TemplateError as e:
-            results.append(_Render(label, error=str(e)))
+            results.append(_Render(label, full_state, error=str(e)))
         else:
-            results.append(_Render(label, text=text))
+            results.append(_Render(label, full_state, text=text))
     return results
 
 
@@ -372,9 +1204,9 @@ def _rendered_problems(
     tools: list[str],
     playbook_tasks: dict[str, tuple[str, ...]],
 ) -> list[str]:
-    """Checks render errors, the playbook and task lists, and hidden tools."""
+    """Checks render errors, playbook/task lists, and hidden tools."""
     problems = []
-    hidden_tool_states = {t: [] for t in HIDDEN_TOOLS}
+    hidden_tool_states: dict[str, list[str]] = {t: [] for t in HIDDEN_TOOLS}
     for r in results:
         if r.text is None:
             problems.append(f"rendering {r.label!r} failed: {r.error}")
@@ -383,20 +1215,55 @@ def _rendered_problems(
         for tool in HIDDEN_TOOLS:
             if tool in visible:
                 hidden_tool_states[tool].append(r.label)
-        if r.label == "start":
-            problems += [
-                f"playbook {playbook!r} isn't in the playbook list the model"
-                " sees at the start"
-                for playbook in playbook_tasks
-                if not _mentions(r.text, playbook)
-            ]
-        elif r.label in playbook_tasks:
-            problems += [
-                f"task {task!r} isn't in the task list the model sees when"
-                f" {r.label!r} is open"
-                for task in playbook_tasks[r.label]
-                if not _mentions(r.text, task)
-            ]
+        if "<playbook_list>" not in r.text:
+            problems.append(
+                f"<playbook_list> isn't rendered in {r.label!r}; keep"
+                " <playbook_list> visible in every state"
+            )
+        if "open_playbook" not in visible:
+            problems.append(
+                f"open_playbook isn't visible in {r.label!r}; keep"
+                " <playbook_list> visible in every state so the agent can"
+                " switch playbooks"
+            )
+        for playbook in playbook_tasks:
+            if not _mentions(r.text, playbook):
+                if r.label == "start":
+                    problems.append(
+                        f"playbook {playbook!r} isn't in the playbook list the"
+                        " model sees at the start"
+                    )
+                else:
+                    problems.append(
+                        f"playbook {playbook!r} isn't in the playbook list the"
+                        f" model sees in {r.label!r}; keep <playbook_list>"
+                        " visible in every state"
+                    )
+        active_playbook = r.state.get("current_playbook") or ""
+        if active_playbook in playbook_tasks:
+            if "<task_list>" not in r.text:
+                problems.append(
+                    f"<task_list> isn't rendered in {r.label!r}; keep"
+                    " <task_list> visible whenever a playbook is open"
+                )
+            if "load_task" in tools and "load_task" not in visible:
+                problems.append(
+                    f"load_task isn't visible in {r.label!r}; keep <task_list>"
+                    " visible whenever a playbook is open"
+                )
+            for task in playbook_tasks[active_playbook]:
+                if not _mentions(r.text, task):
+                    if r.label == active_playbook:
+                        problems.append(
+                            f"task {task!r} isn't in the task list the model"
+                            f" sees when {r.label!r} is open"
+                        )
+                    else:
+                        problems.append(
+                            f"task {task!r} isn't in the task list the model"
+                            f" sees in {r.label!r}; keep <task_list> visible"
+                            " while a task is loaded"
+                        )
     for tool, labels in hidden_tool_states.items():
         if labels:
             problems.append(
@@ -406,12 +1273,33 @@ def _rendered_problems(
     return problems
 
 
+def _static_tool_problems(results: list[_Render], app: _App) -> list[str]:
+    """Checks that only open_playbook and anytime actions show at the start."""
+    start = next((r for r in results if r.label == "start" and r.text), None)
+    if start is None or start.text is None:
+        return []
+    allowed = {"open_playbook"} | set(
+        _visible(_block(app.without_comments, "anytime_actions"), app.tools)
+    )
+    return [
+        f"tool {tool!r} is visible before any playbook is open, but"
+        " <anytime_actions> doesn't name it; only open_playbook and the"
+        " anytime actions may be named in static text"
+        for tool in _visible(start.text, app.tools)
+        if tool not in allowed
+    ]
+
+
 def _leftover_problems(app: _App) -> list[str]:
     """Finds registered tools the instruction never names and no code calls."""
     called = set()
     for code in app.path.glob("**/python_code.py"):
+        text = code.read_text(encoding="utf-8")
+        called.update(re.findall(r"\btools\.(\w+)\s*\(", text))
         called.update(
-            re.findall(r"\btools\.(\w+)\s*\(", code.read_text(encoding="utf-8"))
+            re.findall(
+                r"from_function_call\(\s*name\s*=\s*[\"'](\w+)[\"']", text
+            )
         )
     return [
         f"tool {tool!r} is registered, but the instruction never names it and"
@@ -465,6 +1353,53 @@ def _print_rendered(results: list[_Render], labels: set[str]) -> None:
         print(f"\n===== {label}\n{squeezed}")
 
 
+def _static_problems(
+    app: _App, playbook_tasks: dict[str, tuple[str, ...]]
+) -> list[str]:
+    return (
+        _comment_problems(app)
+        + _instruction_problems(app)
+        + _tool_name_problems(app)
+        + _code_problems(app)
+        + _router_problems(app, playbook_tasks)
+        + _router_state_problems(app)
+        + _nested_property_problems(app)
+    )
+
+
+def check(
+    app_dir: pathlib.Path | str,
+    extra_states: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    """Runs static, template, branch-synthesis, and code checks on `app_dir`."""
+    app = _load_app(pathlib.Path(app_dir))
+    playbook_tasks = _literal(app.path / LOAD_TASK_CODE, "PLAYBOOK_TASKS") or {}
+    problems = _static_problems(app, playbook_tasks)
+    try:
+        template, undeclared = _compile(app)
+    except jinja2.TemplateSyntaxError as e:
+        return list(
+            dict.fromkeys(
+                [
+                    *problems,
+                    f"Jinja syntax error on line {e.lineno}: {e.message}",
+                ]
+            )
+        )
+
+    extra = [(_state_label(s), s) for s in extra_states or []]
+    synth = _synthesize_branch_states(app, playbook_tasks)
+    states = _default_states(playbook_tasks) + synth + extra
+    results = _render(template, _defaults(app.config), states)
+    problems += (
+        undeclared
+        + _rendered_problems(results, app.tools, playbook_tasks)
+        + _static_tool_problems(results, app)
+        + _leftover_problems(app)
+    )
+    return list(dict.fromkeys(problems))
+
+
 def _report(problems: list[str]) -> None:
     """Prints the problems and exits with 1, or says there are none."""
     if problems:
@@ -479,11 +1414,7 @@ def main() -> None:
     args = _parse_args()
     app = _load_app(args.app_dir)
     playbook_tasks = _literal(app.path / LOAD_TASK_CODE, "PLAYBOOK_TASKS") or {}
-    problems = (
-        _comment_problems(app)
-        + _syntax_problems(app)
-        + _router_problems(app, playbook_tasks)
-    )
+    problems = _static_problems(app, playbook_tasks)
     try:
         template, undeclared = _compile(app)
     except jinja2.TemplateSyntaxError as e:
@@ -491,18 +1422,26 @@ def main() -> None:
         sys.exit(1)
 
     extra = [(_state_label(s), s) for s in args.state]
-    states = _default_states(playbook_tasks) + extra
-    results = _render(template, _defaults(app.config), states)
+    default_states = _default_states(playbook_tasks)
+    synth_states = _synthesize_branch_states(app, playbook_tasks)
+    base_defaults = _defaults(app.config)
+    display_results = _render(template, base_defaults, default_states + extra)
+    all_results = _render(
+        template, base_defaults, default_states + synth_states + extra
+    )
     problems += (
         undeclared
-        + _rendered_problems(results, app.tools, playbook_tasks)
+        + _rendered_problems(all_results, app.tools, playbook_tasks)
+        + _static_tool_problems(all_results, app)
         + _leftover_problems(app)
     )
 
-    _print_table(results, app.tools)
-    _print_note(_state_dependent_tools(app, results))
+    _print_table(display_results, app.tools)
+    _print_note(_state_dependent_tools(app, all_results))
     if args.print_rendered:
-        _print_rendered(results, {label for label, _ in extra or states})
+        _print_rendered(
+            display_results, {label for label, _ in extra or default_states}
+        )
     _report(problems)
 
 

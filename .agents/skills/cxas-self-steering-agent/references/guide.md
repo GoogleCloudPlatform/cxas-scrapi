@@ -454,13 +454,22 @@ avoids the per-callback startup cost on the platform.
 
 ## Platform gotchas
 
--   **CES Jinja subset:** Templates support `if`/`elif`/`else`, `and`, `or`,
-    `not`, `in`, `==`, `!=`, and dot access inside double-brace blocks
-    (`{{% ... %}}`), but reject `not in` (write `not a in ['x', 'y']`) and
-    subscripts like `account['status']` (use `account.status`). Single-brace
-    blocks emit `<state_update>` notes into history, and CES does not strip
-    `{{# ... #}}` or `{# ... #}` comments. `check_tool_visibility.py` and
-    `cxas lint` (`I020`) flag unsupported constructs.
+-   **CES Jinja subset and output tags:** Templates support `if`/`elif`/`else`,
+    `and`, `or`, `not`, `in`, `==`, `!=`, and dot access inside double-brace
+    blocks (`{{% ... %}}`), but reject `not in` (write `not a in ['x', 'y']`)
+    and subscripts like `account['status']` (use `account.status`). Inside
+    `{{ ... }}` output tags, CES only substitutes bare variables (`{{var}}`,
+    `{{a.b}}`) and leaves expressions such as `{{ x or "none" }}` or
+    `{{ x | default("none") }}` literal; single-brace `{var}` is never
+    substituted, and single-brace `{% ... %}` blocks emit `<state_update>` notes
+    into history. CES also leaves `{{# ... #}}` / `{# ... #}` comments verbatim
+    in the prompt. `check_tool_visibility.py` and `cxas lint` (`I020`) flag
+    unsupported constructs, and `check_tool_visibility.py` automatically
+    synthesizes `if`/`elif`/`else` branch states (including dotted `OBJECT`
+    conditions) to catch hidden-branch regressions, undeclared `OBJECT`
+    properties, returned-dict prose keys or `**x` spreads, router state
+    violations, missing handoff reasons, and hardcoded sample confirmation codes
+    before you push.
 -   **Banned `<context>` tag (`I015`):** Never wrap prompt sections in
     `<context>`. Put `Today's date is {{current_date}}.` inside `<status>`.
 -   **`Part.from_end_session` signature (`C018`):** Takes `reason` and
@@ -493,7 +502,9 @@ avoids the per-callback startup cost on the platform.
     `Any` and `Optional` from `typing` explicitly (`C019`), put the entry
     function (named like the tool directory) first (`T004`, `T015`), annotate
     parameters and `-> dict[str, Any]` (`T016`), and keep tool JSON
-    descriptions in sync with docstrings via `scripts/sync_tool_descriptions.py`.
+    descriptions in sync with docstrings via
+    `scripts/sync_tool_descriptions.py` (which creates missing `<tool>.json`
+    wrappers automatically when run without `--check`).
 -   **`cxaslint.yaml` overrides:** The starter disables `I001`, `T001`, `T011`,
     `I012`, `A007`, `A009`, and `T014` with explanations and sets
     `options.V105.ignore: [current_task, pending_handoff_reason, next_agent_actions]`.

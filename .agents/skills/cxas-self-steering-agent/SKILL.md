@@ -30,11 +30,11 @@ The skill bundles a generic starter agent
 
 - `scripts/scaffold_from_sample.py` copies the starter into a new app
   directory.
-- `scripts/check_tool_visibility.py` renders the instruction for every
-  playbook and task, lists the tools the model can see, and catches mistakes
-  `cxas lint` misses.
-- `scripts/sync_tool_descriptions.py` copies tool docstrings into the tool
-  JSON files.
+- `scripts/check_tool_visibility.py` renders the instruction across playbooks,
+  tasks, and synthesized `{{% if ... %}}` branches, lists the tools the model
+  can see, and catches template and tool anti-patterns `cxas lint` misses.
+- `scripts/sync_tool_descriptions.py` copies tool docstrings into tool JSON
+  files and creates missing `<tool>.json` wrappers automatically.
 - `scripts/run_locally.py` runs tools and the callback on your machine.
 - `scripts/run_conversation.py` runs a test conversation against the deployed
   app.
@@ -196,9 +196,10 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    python3 <skill-dir>/scripts/sync_tool_descriptions.py cxas_app/<app-dir>
    ```
 
-   The sync only updates tools that already have a JSON file, so copy a starter
-   tool's JSON, replace the tool name in it, and let the sync fill in
-   `pythonFunction.description`.
+   `sync_tool_descriptions.py` automatically creates a missing
+   `tools/<name>/<name>.json` wrapper when only `python_code.py` exists, and
+   updates existing `pythonFunction.description` fields from each entry
+   function's docstring.
 
 1. Check before pushing:
 
@@ -215,11 +216,21 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    fit this pattern (`I001`, `T001`, `T011`, `I012`, `A007`, `A009`, `T014`)
    and keeps `options.V105.ignore` for framework keys (`current_task`,
    `pending_handoff_reason`, `next_agent_actions`). `check_tool_visibility.py`
-   fails on a missing `load_task`, undeclared instruction variables,
-   single-brace control tags, `not in` and subscripts, Jinja comments, names
-   shared by a playbook/task and a tool, mismatched router lists, unused
-   registered tools, and visible `end_session` or `set_next_agent_actions`. Pass
-   extra state with `--state '{"current_playbook": "...", "current_task": "...", ...}'`
+   automatically synthesizes branch states from `{{% if ... %}}` / `{{% elif ... %}}`
+   conditions (including `pending_handoff_reason` and dotted `OBJECT`
+   properties) and fails on a missing `load_task`, undeclared instruction
+   variables or `OBJECT` properties, single-brace control tags or `{var}`
+   outputs, non-bare `{{ ... }}` output expressions, `not in` and subscripts,
+   Jinja comments, `<session_snapshot>` state dumps, prose state checks on
+   declared variables, hardcoded sample confirmation codes, tool names outside
+   `{@TOOL: ...}` or inside `<role>`/`<context>`/`<constraints>` or start-state
+   static text, verbatim repeat instructions, tools returning coaching prose
+   (`message`, `instructions`, `phrase`, etc.) or spreading dicts (`**x`),
+   missing handoff `reason` handling, `afterModelCallbacks`, hidden
+   `<playbook_list>`/`<task_list>`, routers writing non-router state or reading
+   `rationale`, names shared by a playbook/task and a tool, mismatched router
+   lists, unused registered tools, and visible `end_session` or
+   `set_next_agent_actions`. Pass extra state with `--state '{"current_playbook": "...", "current_task": "...", ...}'`
    and `--print` to inspect rendered branches. `run_locally.py` walks flows
    through the real tool and callback code; the first `callback` step plays the
    greeting, and later ones print visible tools or queued responses.
