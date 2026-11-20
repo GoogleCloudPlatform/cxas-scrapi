@@ -1,0 +1,15 @@
+{
+  "displayName": "freeze_card_agent",
+  "afterModelCallbacks": [
+    {
+      "description": "after_model_callbacks_01",
+      "pythonCode": "after_model_callbacks/after_model_callbacks_01/python_code.py",
+      "disabled": false
+    },
+    {
+      "description": "after_model_callbacks_02",
+      "pythonCode": "after_model_callbacks/after_model_callbacks_02/python_code.py",
+      "disabled": false
+    }
+  ]
+}
