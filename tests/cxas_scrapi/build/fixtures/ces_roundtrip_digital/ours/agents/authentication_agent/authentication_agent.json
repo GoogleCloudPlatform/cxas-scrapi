@@ -1,5 +1,5 @@
 {
-  "description": "Customer identity verification and SecureSign step-up authentication specialist for Cymbal Bank.",
+  "description": "Customer identity verification and Cymbal Sign step-up authentication specialist for Cymbal Bank.",
   "displayName": "authentication_agent",
   "instruction": "agents/authentication_agent/instruction.txt",
   "modelSettings": {

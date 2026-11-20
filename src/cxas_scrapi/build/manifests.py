@@ -18,6 +18,7 @@ Layout under ``<manifests_root>/``::
 
     brands/<brand_id>/identity.yaml        -> BrandIdentity
     brands/<brand_id>/channel_policy.yaml  -> ChannelPolicy
+    brands/<brand_id>/overrides.yaml       -> BrandOverrides (optional)
     envs/<environment>.yaml                -> EnvManifest
     locales/content_blocks.yaml            -> ContentBlockCatalog (optional)
 
@@ -231,6 +232,120 @@ class ContentBlockCatalog(_StrictModel):
         ]
 
 
+def _validate_override_channel_keys(value: dict[str, Any]) -> dict[str, Any]:
+    unknown = sorted(set(value) - set(CHANNEL_PROFILE_TYPES))
+    if unknown:
+        raise ValueError(
+            f"unknown channel(s) {unknown}; expected one of "
+            f"{sorted(CHANNEL_PROFILE_TYPES)}"
+        )
+    return value
+
+
+class LineReplacement(_StrictModel):
+    """Deterministic line or unique-substring replacement inside text."""
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, populate_by_name=True
+    )
+
+    match: str = Field(min_length=1)
+    replace_with: str = Field(alias="with")
+
+
+class InstructionOverride(_StrictModel):
+    """Structured prompt override (`instruction`, `replace_lines`, rules)."""
+
+    instruction: str | None = None
+    replace_lines: list[LineReplacement] = Field(default_factory=list)
+    append_rules: list[str] = Field(default_factory=list)
+
+
+class GlobalInstructionOverride(InstructionOverride):
+    """Brand-wide and per-channel overrides for ``global_instruction.txt``."""
+
+    channels: dict[str, InstructionOverride] = Field(default_factory=dict)
+
+    @field_validator("channels")
+    @classmethod
+    def _known_channels(
+        cls, value: dict[str, InstructionOverride]
+    ) -> dict[str, InstructionOverride]:
+        return _validate_override_channel_keys(value)
+
+
+class AgentChannelOverride(InstructionOverride):
+    """Channel-scoped overrides for a single subagent or root agent."""
+
+    description: str | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    model: str | None = None
+
+
+class AgentOverride(AgentChannelOverride):
+    """Brand-wide and channel-scoped overrides for a single agent."""
+
+    channels: dict[str, AgentChannelOverride] = Field(default_factory=dict)
+
+    @field_validator("channels")
+    @classmethod
+    def _known_channels(
+        cls, value: dict[str, AgentChannelOverride]
+    ) -> dict[str, AgentChannelOverride]:
+        return _validate_override_channel_keys(value)
+
+
+class ToolChannelOverride(_StrictModel):
+    """Channel-scoped overrides for a single tool."""
+
+    description: str | None = None
+    url: str | None = None
+
+
+class ToolOverride(ToolChannelOverride):
+    """Brand-wide and channel-scoped overrides for a single tool."""
+
+    channels: dict[str, ToolChannelOverride] = Field(default_factory=dict)
+
+    @field_validator("channels")
+    @classmethod
+    def _known_channels(
+        cls, value: dict[str, ToolChannelOverride]
+    ) -> dict[str, ToolChannelOverride]:
+        return _validate_override_channel_keys(value)
+
+
+def _validate_override_resource_ids(value: dict[str, Any]) -> dict[str, Any]:
+    """Rejects override keys that could escape ``core/`` or ``out_dir``."""
+    bad = sorted(
+        k
+        for k in value
+        if not k
+        or k in {".", ".."}
+        or any(sep in k for sep in ("/", "\\", "\x00"))
+    )
+    if bad:
+        raise ValueError(
+            f"invalid resource id(s) {bad}; override keys must be a single "
+            "directory name (no '.', '..', or path separators)"
+        )
+    return value
+
+
+class BrandOverrides(_StrictModel):
+    """Optional per-brand/channel overrides (`brands/<id>/overrides.yaml`)."""
+
+    brand_id: str = Field(pattern=BRAND_ID_PATTERN)
+    global_instruction: GlobalInstructionOverride | None = None
+    agents: dict[str, AgentOverride] = Field(default_factory=dict)
+    tools: dict[str, ToolOverride] = Field(default_factory=dict)
+
+    @field_validator("agents", "tools")
+    @classmethod
+    def _safe_resource_ids(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return _validate_override_resource_ids(value)
+
+
 class Manifests(BaseModel):
     """All manifests loaded from one ``manifests/`` root."""
 
@@ -241,6 +356,7 @@ class Manifests(BaseModel):
     policies: dict[str, ChannelPolicy]
     envs: dict[str, EnvManifest]
     content_blocks: ContentBlockCatalog | None = None
+    overrides: dict[str, BrandOverrides] = Field(default_factory=dict)
 
     def brand(self, brand_id: str) -> BrandIdentity:
         try:
@@ -268,6 +384,9 @@ class Manifests(BaseModel):
                 f"{sorted(self.envs)}"
             ) from exc
 
+    def brand_overrides(self, brand_id: str) -> BrandOverrides | None:
+        return self.overrides.get(brand_id)
+
 
 # ── Loading ─────────────────────────────────────────────────────────────
 
@@ -277,6 +396,8 @@ def _read_yaml(path: Path) -> dict[str, Any]:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise ManifestError(f"{path}: invalid YAML: {exc}") from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ManifestError(f"{path}: unreadable manifest: {exc}") from exc
     if data is None:
         return {}
     if not isinstance(data, dict):
@@ -309,6 +430,7 @@ def load_manifests(root: str | Path) -> Manifests:
 
     brands: dict[str, BrandIdentity] = {}
     policies: dict[str, ChannelPolicy] = {}
+    overrides: dict[str, BrandOverrides] = {}
     for brand_dir in sorted(p for p in brands_dir.iterdir() if p.is_dir()):
         if not _BRAND_ID_RE.fullmatch(brand_dir.name):
             raise ManifestError(
@@ -336,6 +458,16 @@ def load_manifests(root: str | Path) -> Manifests:
                 )
             policies[policy.brand_id] = policy
 
+        overrides_path = brand_dir / "overrides.yaml"
+        if overrides_path.is_file():
+            ov: BrandOverrides = _load_model(BrandOverrides, overrides_path)
+            if ov.brand_id != brand_dir.name:
+                raise ManifestError(
+                    f"{overrides_path}: brand_id '{ov.brand_id}' does not "
+                    f"match directory name '{brand_dir.name}'"
+                )
+            overrides[ov.brand_id] = ov
+
     envs: dict[str, EnvManifest] = {}
     envs_dir = root / "envs"
     if envs_dir.is_dir():
@@ -359,4 +491,5 @@ def load_manifests(root: str | Path) -> Manifests:
         policies=policies,
         envs=envs,
         content_blocks=content_blocks,
+        overrides=overrides,
     )

@@ -29,7 +29,7 @@
   "locked": false,
   "metadata": {
     "audioRewriterDisabled": "false",
-    "blueprintId": "db-retail-polymorphic-v2",
+    "blueprintId": "cymbal-retail-polymorphic-v2",
     "brandId": "cymbal",
     "modality": "digital",
     "model_pool.agent_planner": "gemini-2.5-flash-001",
@@ -94,10 +94,6 @@
             "description": "Warm human escalation correlation reference token.",
             "type": "STRING"
           },
-          "mandator_id": {
-            "description": "Numeric core-banking mandator identifier.",
-            "type": "NUMBER"
-          },
           "modality": {
             "description": "Active interaction modality (voice or digital).",
             "type": "STRING"
@@ -117,6 +113,10 @@
           "surface_id": {
             "description": "Entry surface identifier (call-center, mobile-app, public-web, olb).",
             "type": "STRING"
+          },
+          "tenant_id": {
+            "description": "Numeric core-banking tenant identifier.",
+            "type": "NUMBER"
           }
         },
         "required": [],
@@ -211,7 +211,7 @@
       "schema": {
         "properties": {
           "ai_disclosure_shown": {
-            "description": "True once the mandatory EU AI Act Art. 50 disclosure has been delivered.",
+            "description": "True once the required EU AI Act Art. 50 disclosure has been delivered.",
             "type": "BOOLEAN"
           },
           "consent_status": {

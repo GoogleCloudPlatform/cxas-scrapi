@@ -21,7 +21,7 @@
   "guardrails": ["banking_scope_llm_policy", "pii_iban_content_filter", "prompt_security_guard"],
   "metadata": {
     "audioRewriterDisabled": "false",
-    "blueprintId": "db-retail-polymorphic-v2",
+    "blueprintId": "cymbal-retail-polymorphic-v2",
     "brandId": "cymbal",
     "modality": "digital",
     "model_pool.agent_planner": "gemini-2.5-flash-001",
@@ -95,7 +95,7 @@
       "properties": {
         "ai_disclosure_shown": {
           "type": "BOOLEAN",
-          "description": "True once the mandatory EU AI Act Art. 50 disclosure has been delivered."
+          "description": "True once the required EU AI Act Art. 50 disclosure has been delivered."
         },
         "consent_status": {
           "type": "STRING",
@@ -193,9 +193,9 @@
           "type": "STRING",
           "description": "Warm human escalation correlation reference token."
         },
-        "mandator_id": {
+        "tenant_id": {
           "type": "NUMBER",
-          "description": "Numeric core-banking mandator identifier."
+          "description": "Numeric core-banking tenant identifier."
         },
         "modality": {
           "type": "STRING",

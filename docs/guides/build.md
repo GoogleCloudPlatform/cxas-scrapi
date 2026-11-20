@@ -1,10 +1,10 @@
-# CXAS SCRAPI Build, Lint Gate, Governed Lock, and Drift Gate
+# CXAS SCRAPI Build, Lint Gate, Governed Lock, Drift Gate, and Back-Porting
 
 `cxas build --core-dir ... --manifests-dir ...` is the single build path: one shared, templated `core/` CES app plus
-Pydantic-validated YAML manifests (brand identity, channel policy, environment, locale content blocks) compile into
-one CES app per `brand x channel`. Compiled apps are checked by `cxas lint` (including the polymorphic rules
-P001-P005), locked to a canonical SHA-256 lockfile, and promoted with `cxas push` behind an optional lint gate,
-3-way drift gate, and a governed lock applied after import.
+Pydantic-validated YAML manifests (brand identity, channel policy, optional per-brand `overrides.yaml`, environment,
+locale content blocks) compile into one CES app per `brand x channel`. Compiled apps are checked by `cxas lint`
+(including the polymorphic rules P001-P005), locked to a canonical SHA-256 lockfile, promoted with `cxas push` behind
+an optional lint gate, 3-way drift gate, and governed lock, and reconciled from Console tweaks via `cxas backport`.
 
 ## 1. Core + Manifests Builds (`cxas build`)
 
@@ -19,6 +19,7 @@ manifests/
     brand_beta/
       identity.yaml
       channel_policy.yaml
+      overrides.yaml        # optional per-brand agent/tool/instruction overrides
   envs/
     prod.yaml
   locales/
@@ -58,7 +59,7 @@ display_name: Cymbal Alpha
 assistant_title: Virtual Agent
 lexicon:
   ai_disclosure: "Hello! You are chatting with Cymbal Alpha's AI assistant."
-forbidden_tokens: [BetaTAN]   # P001: never in brand_alpha's compiled app
+forbidden_tokens: [CymbalBetaPass]   # P001: never in brand_alpha's compiled app
 tts_voices:
   en:
     voice: en-US-Standard-A
@@ -168,6 +169,127 @@ cxas push \
   (`FAILED_PRECONDITION ... is locked`). When the bundle declares `locked: true` (env manifest `locked: true`),
   push imports a copy with `locked=false`, creates the version, then calls `UpdateApp(locked=true)`. An already-locked
   target is unlocked first and re-locked afterwards; a failed import restores the lock.
+
+---
+
+## 5. Per-Brand Overrides & Console-to-Git Back-Porting (`overrides.yaml`, `cxas backport`)
+
+### Per-Brand `overrides.yaml` (`manifests/brands/<brand_id>/overrides.yaml`)
+
+An individual brand team (for example, `cymbal_direct` for `"Cymbal Direct"`) can customize `global_instruction`,
+individual agents, and tools in `manifests/brands/cymbal_direct/overrides.yaml` without touching shared `core/` and
+with **zero blast radius** on sibling brands (`cymbal_retail` for `"Cymbal Retail"` compiles byte-for-byte unchanged):
+
+```yaml
+brand_id: cymbal_direct
+
+global_instruction:
+  replace_lines:
+    - match: "Support hours are 08:00-20:00 local time."
+      with: "24/7 digital support is available inside @@brand.urls.portal@@."
+  append_rules:
+    - "Always identify yourself as the @@brand.display_name@@ digital concierge."
+  channels:
+    DIGITAL_APP:
+      append_rules:
+        - "Surface self-service controls before offering a live transfer."
+
+agents:
+  credit_cards_agent:
+    description: "Card controls and limit servicing specialist for @@brand.display_name@@."
+    temperature: 1.0
+    model: gemini-3.5-flash
+    replace_lines:
+      - match: "Confirm the last four card digits before submitting a limit change."
+        with: "Confirm the last four digits and @@brand.lexicon.auth_method@@ approval first."
+    append_rules:
+      - "Remind @@brand.display_name@@ cardholders that virtual cards activate immediately."
+    channels:
+      DIGITAL_APP:
+        append_rules:
+          - "Direct cardholders to @@brand.urls.portal@@ for instant card freeze."
+
+tools:
+  change_credit_card_limit:
+    description: "Update a @@brand.display_name@@ card limit authorized with @@brand.lexicon.auth_method@@."
+    url: "https://api.cymbal-direct.example.com/v1/cards/limit"
+    channels:
+      DIGITAL_APP:
+        description: "In-app @@brand.display_name@@ card limit update via @@brand.lexicon.auth_method@@."
+```
+
+In `manifests/brands/cymbal_direct/identity.yaml`, those placeholders bind cleanly to Cymbal Direct values (for
+example `display_name: "Cymbal Direct"`, `urls.portal: "https://direct.cymbal.example.com"`, and
+`lexicon.auth_method: "Cymbal Pass"`).
+
+### Console-to-Git PR Back-Porting (`cxas backport`)
+
+When a prompt engineer or brand owner refines instructions, descriptions, models, temperatures, or OpenAPI URLs in the
+CES Console UI and exports the live app, `cxas backport` lifts those changes back into Git safely:
+
+1. **Pre- & Post-Backport `cxas lint` Gate (`P001`–`P005` + structural rules)**: Validates the live export and the
+   recompiled bundle through `cxas lint` (unless `--no-lint` is passed), catching sister-brand leaks (`P001`),
+   unresolved `@@...@@` / `{@start...}` tokens (`P003`), disabled agent/tool leaks (`P004`), or unpinned/deprecated
+   models (`P005`).
+2. **3-Way Lockfile Conflict Protection**: Compares `base` (`<app>.lock.json`), `ours` (compiled `core/` +
+   `manifests/`), and `live` so concurrent Git edits emit `.diff` conflict markers instead of being silently
+   overwritten (unless explicitly overridden via `--force-live`).
+3. **Reverse-Templating & Scoped Targeting**: Lifts brand literals back to `@@brand.display_name@@` /
+   `@@brand.urls.*@@` / `@@brand.lexicon.*@@` tokens and writes either to
+   `manifests/brands/<brand>/overrides.yaml` (`--target brand`, scoped to `--scope channel` by default or
+   `--scope brand` across all channels of that brand) or directly to shared `core/` (`--target core`).
+4. **Round-Trip SHA-256 Proof**: Recompiles from updated `core/` + `manifests/`, verifies canonical SHA-256 resource
+   equality with `live` (`ROUND_TRIP_PROOF PASS`), and proves sibling brand/channel bundles (`cymbal_retail/*`,
+   other channels of `cymbal_direct`) remain untouched (`UNCHANGED_SIBLINGS`).
+
+```bash
+# Channel-scoped brand override (default: --target brand --scope channel)
+cxas backport \
+  --core-dir core/ \
+  --manifests-dir manifests/ \
+  --live exports/cymbal_direct_digital_live/ \
+  --brand cymbal_direct \
+  --channel DIGITAL_APP \
+  --env prod \
+  --dist dist/ \
+  --lockfile dist/cymbal_direct/digital_app.lock.json \
+  --pr-body-out backport_pr.md \
+  --git-branch backport/cymbal-direct-cards
+
+# Brand-wide override across all channels of cymbal_direct (--target brand --scope brand)
+cxas backport \
+  --core-dir core/ \
+  --manifests-dir manifests/ \
+  --live exports/cymbal_direct_digital_live/ \
+  --brand cymbal_direct \
+  --channel DIGITAL_APP \
+  --env prod \
+  --target brand \
+  --scope brand \
+  --dist dist/
+
+# Shared core/ promotion across every brand (--target core)
+cxas backport \
+  --core-dir core/ \
+  --manifests-dir manifests/ \
+  --live exports/cymbal_direct_digital_live/ \
+  --brand cymbal_direct \
+  --channel DIGITAL_APP \
+  --env prod \
+  --target core \
+  --dist dist/ \
+  --json
+```
+
+Real CES Console exports carry no `deployments/*.yaml`, so pass `--brand`, `--channel`, and `--env` whenever `--dist`
+points at a multi-brand `dist/` root. When they are omitted, `cxas backport` infers the app only if every declared
+candidate is compiled under `dist/`, exactly one of them has the live export's resource set, and it shares at least one
+identical normalized SHA-256 resource; otherwise it fails closed and lists the ambiguous or unproven candidates.
+Resources that Git advanced since the last lockfile while the Console left them untouched (`CLEAN` with
+`live == base`, `ours != base`) keep their Git state; `--accept-live` hotfixes are still backported. Only the
+reconciled app's `.lock.json` is
+refreshed (sibling lockfiles are never rewritten). Conflict `.diff` files are written only when an unresolved conflict
+remains (or when `--conflicts-dir` is passed explicitly).
 
 ---
 

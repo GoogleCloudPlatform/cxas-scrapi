@@ -2,7 +2,7 @@ openapi: 3.0.0
 info:
   title: verify_tpin
   version: 1.0.0
-  description: Verify telephone banking PIN against Cymbal Bank ID / Filial-Kundennummer
+  description: Verify telephone banking PIN against Cymbal Bank ID / Cymbal-Kundennummer
     for Cymbal Bank via server-side BFA.
 servers:
 - url: $env_var
@@ -10,9 +10,9 @@ paths:
   /v1/auth/verify-tpin:
     post:
       operationId: verifyTpin
-      summary: Verify telephone banking PIN against Cymbal Bank ID / Filial-Kundennummer
+      summary: Verify telephone banking PIN against Cymbal Bank ID / Cymbal-Kundennummer
         for Cymbal Bank via server-side BFA.
-      description: Verify telephone banking PIN against Cymbal Bank ID / Filial-Kundennummer
+      description: Verify telephone banking PIN against Cymbal Bank ID / Cymbal-Kundennummer
         for Cymbal Bank via server-side BFA.
       responses:
         '200':
