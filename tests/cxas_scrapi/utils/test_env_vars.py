@@ -23,11 +23,15 @@ import yaml
 
 from cxas_scrapi.utils.env_vars import (
     ENV_VAR_PLACEHOLDER,
+    collect_env_var_connector_toolsets,
     collect_env_var_declaration_names,
+    extract_env_connector_toolset_connections,
     extract_env_variable_defaults,
     parse_env_variable_declarations,
+    preserve_connector_toolset_env_vars_on_pull,
     preserve_env_var_placeholders_on_pull,
     resolve_app_env_variables_in_dir,
+    resolve_connector_toolset_env_vars_in_dir,
     validate_value_for_schema,
 )
 
@@ -331,3 +335,163 @@ def test_preserve_env_var_placeholders_on_pull(tmp_path: Path) -> None:
             "schema": {"type": "BOOLEAN", "default": False},
         }
     ]
+
+
+def test_resolve_connector_toolset_env_vars_display_name_and_stem(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "app"
+    ts_dir_1 = app_dir / "toolsets" / "find_customer"
+    ts_dir_1.mkdir(parents=True)
+    (ts_dir_1 / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": ENV_VAR_PLACEHOLDER,
+                    "connectorActions": [{"connectionActionId": "Lookup"}],
+                },
+            }
+        )
+    )
+
+    ts_dir_2 = app_dir / "toolsets" / "billing_lookup"
+    ts_dir_2.mkdir(parents=True)
+    (ts_dir_2 / "billing_lookup.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "display_name": "Billing Lookup",
+                "connector_toolset": {
+                    "connection": ENV_VAR_PLACEHOLDER,
+                    "connector_actions": [{"connection_action_id": "GetBill"}],
+                },
+            }
+        )
+    )
+
+    conn_1 = "projects/proj-uat/locations/us-central1/connections/cymbal-uat"
+    conn_2 = "projects/proj-uat/locations/us-east1/connections/billing-uat"
+    (app_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    # Keyed by directory stem even when displayName has spaces
+                    "find_customer": {
+                        "connectorToolset": {"connection": conn_1}
+                    },
+                    # Keyed by displayName with snake_case connector_toolset
+                    "Billing Lookup": {
+                        "connector_toolset": {"connection": conn_2}
+                    },
+                }
+            }
+        )
+    )
+
+    assert collect_env_var_connector_toolsets(app_dir) == {
+        "Find Customer",
+        "Billing Lookup",
+    }
+    resolved = resolve_connector_toolset_env_vars_in_dir(app_dir)
+    assert set(resolved) == {"Find Customer", "Billing Lookup"}
+
+    updated_1 = json.loads((ts_dir_1 / "find_customer.json").read_text())
+    assert updated_1["connectorToolset"]["connection"] == conn_1
+
+    updated_2 = yaml.safe_load((ts_dir_2 / "billing_lookup.yaml").read_text())
+    assert updated_2["connector_toolset"]["connection"] == conn_2
+
+
+def test_resolve_connector_toolset_env_vars_rejects_missing_or_invalid_path(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "app"
+    ts_dir = app_dir / "toolsets" / "find_customer"
+    ts_dir.mkdir(parents=True)
+    (ts_dir / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": ENV_VAR_PLACEHOLDER,
+                    "connectorActions": [{"connectionActionId": "Lookup"}],
+                },
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match=r"environment\.json was not found"):
+        resolve_connector_toolset_env_vars_in_dir(app_dir)
+
+    (app_dir / "environment.json").write_text(json.dumps({"toolsets": {}}))
+    with pytest.raises(ValueError, match=r"missing from environment\.json"):
+        resolve_connector_toolset_env_vars_in_dir(app_dir)
+
+    (app_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {"connection": "not-a-full-path"}
+                    }
+                }
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="invalid connection resource name"):
+        resolve_connector_toolset_env_vars_in_dir(app_dir)
+
+
+def test_preserve_connector_toolset_env_vars_on_pull(tmp_path: Path) -> None:
+    app_dir = tmp_path / "app"
+    ts_dir = app_dir / "toolsets" / "find_customer"
+    ts_dir.mkdir(parents=True)
+    exported_conn = (
+        "projects/proj-dev/locations/us-central1/connections/cymbal-dev"
+    )
+    (ts_dir / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": exported_conn,
+                    "connectorActions": [{"connectionActionId": "Lookup"}],
+                },
+            }
+        )
+    )
+    (app_dir / "environment.json").write_text(
+        json.dumps({"tools": {"auth_api": {"url": "https://dev.example.com"}}})
+    )
+
+    prev_conns = extract_env_connector_toolset_connections(
+        {
+            "toolsets": {
+                "find_customer": {
+                    "connectorToolset": {
+                        "connection": (
+                            "projects/old/locations/us/connections/old-conn"
+                        )
+                    }
+                }
+            }
+        }
+    )
+    preserved = preserve_connector_toolset_env_vars_on_pull(
+        app_dir,
+        {"Find Customer"},
+        previous_env_connections=prev_conns,
+    )
+    assert preserved == ["Find Customer"]
+
+    pulled_ts = json.loads((ts_dir / "find_customer.json").read_text())
+    assert pulled_ts["connectorToolset"]["connection"] == ENV_VAR_PLACEHOLDER
+
+    pulled_env = json.loads((app_dir / "environment.json").read_text())
+    assert pulled_env["tools"]["auth_api"]["url"] == "https://dev.example.com"
+    assert (
+        pulled_env["toolsets"]["find_customer"]["connectorToolset"][
+            "connection"
+        ]
+        == exported_conn
+    )

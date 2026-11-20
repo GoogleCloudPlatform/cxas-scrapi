@@ -1779,3 +1779,155 @@ def test_app_lint_with_env_file_flag(
     assert excinfo.value.code == 1
     results = json.loads(capsys.readouterr().out)
     assert any(r["rule_id"] == "A017" for r in results)
+
+
+def test_app_push_resolves_connector_toolset_env_var_without_mutating_source(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    app_dir = tmp_path / "agent_src"
+    ts_dir = app_dir / "toolsets" / "find_customer"
+    ts_dir.mkdir(parents=True)
+    (app_dir / "app.json").write_text(
+        json.dumps({"name": "test-app", "displayName": "Support Agent"})
+    )
+    source_ts_json = ts_dir / "find_customer.json"
+    source_ts_json.write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": "$env_var",
+                    "connectorActions": [{"connectionActionId": "GetAccount"}],
+                },
+            }
+        )
+    )
+
+    prod_conn = "projects/prod-proj/locations/us-central1/connections/crm-prod"
+    prod_env_file = tmp_path / "env.prod.json"
+    prod_env_file.write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {"connection": prod_conn}
+                    }
+                }
+            }
+        )
+    )
+
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/prod-id", []
+    )
+
+    args = argparse.Namespace(
+        app_dir=str(app_dir),
+        to=None,
+        env_file=str(prod_env_file),
+        display_name="Support Agent Prod",
+        project_id="test-project",
+        location="us",
+    )
+    cli_app.app_push(args)
+
+    zip_bytes = mock_apps_client.import_as_new_app.call_args[1]["app_content"]
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        pushed_ts = json.loads(
+            zf.read("agent/toolsets/find_customer/find_customer.json").decode(
+                "utf-8"
+            )
+        )
+
+    assert pushed_ts["connectorToolset"]["connection"] == prod_conn
+    local_after = json.loads(source_ts_json.read_text())
+    assert local_after["connectorToolset"]["connection"] == "$env_var"
+    captured = capsys.readouterr()
+    assert (
+        "Resolved 1 '$env_var' connectorToolset connection(s)" in captured.out
+    )
+
+
+def test_app_pull_preserves_connector_toolset_env_var_and_syncs_env_json(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    local_app_dir = tmp_path / "My_App"
+    local_ts_dir = local_app_dir / "toolsets" / "find_customer"
+    local_ts_dir.mkdir(parents=True)
+    (local_app_dir / "app.json").write_text(
+        json.dumps({"displayName": "My App"})
+    )
+    (local_ts_dir / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": "$env_var",
+                    "connectorActions": [{"connectionActionId": "GetAccount"}],
+                },
+            }
+        )
+    )
+
+    exported_conn = (
+        "projects/uat-project/locations/us-central1/connections/crm-uat"
+    )
+    export_buf = io.BytesIO()
+    with zipfile.ZipFile(export_buf, "w") as zf:
+        zf.writestr(
+            "My_App/app.json",
+            json.dumps({"displayName": "My App"}),
+        )
+        zf.writestr(
+            "My_App/toolsets/find_customer/find_customer.json",
+            json.dumps(
+                {
+                    "displayName": "Find Customer",
+                    "connectorToolset": {
+                        "connection": exported_conn,
+                        "connectorActions": [
+                            {"connectionActionId": "GetAccount"}
+                        ],
+                    },
+                }
+            ),
+        )
+        zf.writestr("My_App/environment.json", json.dumps({}))
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    mock_lro = mock.MagicMock()
+    mock_lro.result.return_value = mock.MagicMock(
+        app_content=export_buf.getvalue()
+    )
+    mock_apps_client.export_app.return_value = mock_lro
+
+    args = argparse.Namespace(
+        app="My App",
+        target_dir=str(tmp_path),
+        project_id="test-project",
+        location="us",
+        overwrite=True,
+    )
+    cli_app.app_pull(args)
+
+    pulled_ts = json.loads((local_ts_dir / "find_customer.json").read_text())
+    assert pulled_ts["connectorToolset"]["connection"] == "$env_var"
+
+    pulled_env = json.loads((local_app_dir / "environment.json").read_text())
+    assert (
+        pulled_env["toolsets"]["Find Customer"]["connectorToolset"][
+            "connection"
+        ]
+        == exported_conn
+    )

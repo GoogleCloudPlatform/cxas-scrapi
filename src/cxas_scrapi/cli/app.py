@@ -31,10 +31,14 @@ from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions
 from cxas_scrapi.utils.env_vars import (
+    collect_env_var_connector_toolsets,
     collect_env_var_declaration_names,
+    extract_env_connector_toolset_connections,
     extract_env_variable_defaults,
+    preserve_connector_toolset_env_vars_on_pull,
     preserve_env_var_placeholders_on_pull,
     resolve_app_env_variables_in_dir,
+    resolve_connector_toolset_env_vars_in_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -235,16 +239,31 @@ def _app_pull(
                 )
             )
             prev_env_vars = collect_env_var_declaration_names(pulled_app_root)
+            prev_connector_toolsets = collect_env_var_connector_toolsets(
+                pulled_app_root
+            )
             prev_env_defaults: dict[str, Any] = {}
+            prev_toolset_conns: dict[str, str] = {}
             prev_env_path = os.path.join(pulled_app_root, "environment.json")
-            if prev_env_vars and os.path.isfile(prev_env_path):
+            if (prev_env_vars or prev_connector_toolsets) and os.path.isfile(
+                prev_env_path
+            ):
                 try:
                     with open(prev_env_path, encoding="utf-8") as ef:
+                        loaded_prev_env = json.load(ef)
+                    if prev_env_vars:
                         prev_env_defaults, _ = extract_env_variable_defaults(
-                            json.load(ef)
+                            loaded_prev_env
+                        )
+                    if prev_connector_toolsets:
+                        prev_toolset_conns = (
+                            extract_env_connector_toolset_connections(
+                                loaded_prev_env
+                            )
                         )
                 except (OSError, ValueError):
                     prev_env_defaults = {}
+                    prev_toolset_conns = {}
 
             if dest_app_root is not None:
                 os.makedirs(dest_app_root, exist_ok=True)
@@ -364,6 +383,19 @@ def _app_pull(
                     "environment.json."
                 )
 
+        if prev_connector_toolsets:
+            preserved_toolsets = preserve_connector_toolset_env_vars_on_pull(
+                pulled_app_root,
+                prev_connector_toolsets,
+                previous_env_connections=prev_toolset_conns,
+            )
+            if preserved_toolsets:
+                print(
+                    "Preserved $env_var placeholders for "
+                    f"{len(preserved_toolsets)} connectorToolset "
+                    "connection(s) and updated environment.json."
+                )
+
         print("Successfully pulled app.")
 
     except Exception as e:
@@ -469,6 +501,7 @@ def _app_push(
 
         if env_file_missing and (
             collect_env_var_declaration_names(inner_dir)
+            or collect_env_var_connector_toolsets(inner_dir)
             or has_bool_env_var_placeholders(inner_dir)
         ):
             raise FileNotFoundError(
@@ -481,6 +514,14 @@ def _app_push(
             print(
                 f"Resolved {len(resolved_vars)} '$env_var' variable "
                 f"default(s) from environment.json: {', '.join(resolved_vars)}"
+            )
+
+        resolved_toolsets = resolve_connector_toolset_env_vars_in_dir(inner_dir)
+        if resolved_toolsets:
+            print(
+                f"Resolved {len(resolved_toolsets)} '$env_var' "
+                "connectorToolset connection(s) from environment.json: "
+                f"{', '.join(resolved_toolsets)}"
             )
 
         # Resolve boolean $env_var placeholders and boolean environment

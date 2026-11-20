@@ -393,6 +393,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100) |
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
     | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
+    | A018 | `connector-toolset-env-vars` | Error | Validates `connectorToolset.connection` resource format and cross-checks `"$env_var"` placeholders against `environment.json` |
 
     ---
 
@@ -425,6 +426,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* A static `schema.default` does not match its declared `schema.type` (e.g. `"true"` on a `BOOLEAN`), `variableDeclarations` is placed at the top level of `environment.json` instead of under `app.variableDeclarations`, a `"$env_var"` variable is missing or has a mismatched type in `environment.json`, or `environment.json` overrides a variable that is undeclared or lacks `"default": "$env_var"` in `app.json`.
 
     *Fix:* Ensure `schema.default` values match the declared schema type, set `"default": "$env_var"` in `app.json` for environment-specific variables, and nest per-environment values under `app.variableDeclarations` in `environment.json`.
+
+    ---
+
+    **A018 — connector-toolset-env-vars**
+
+    Validates `connectorToolset.connection` resource paths (`projects/{project}/locations/{location}/connections/{connection}`) across `toolsets/` manifests and cross-validates `"$env_var"` placeholders against `environment.json` (or `--env-file` when provided).
+
+    *Triggers:* A hardcoded `connectorToolset.connection` is not in `projects/{project}/locations/{location}/connections/{connection}` format, `"connection": "$env_var"` is missing a matching `toolsets.<displayName_or_dir>.connectorToolset.connection` entry in `environment.json` (when `environment.json` or `--env-file` is present), or the `environment.json` connection path is empty or malformed.
+
+    *Fix:* Set `"connection": "$env_var"` in the toolset JSON/YAML and define a valid `projects/{project}/locations/{location}/connections/{connection}` resource name under `toolsets.<displayName_or_dir>.connectorToolset.connection` in `environment.json` (or `--env-file`).
 
 === "S — Structure"
 
