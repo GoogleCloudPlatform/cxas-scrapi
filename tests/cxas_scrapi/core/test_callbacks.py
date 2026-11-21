@@ -155,3 +155,39 @@ def test_execute_callback_callable() -> None:
     res = Callbacks.execute_callback(my_callable, {})
     assert res["success"] is True
     assert res["result"]["added_by_callable"] is True
+
+
+def test_execute_callback_import_blocked() -> None:
+    """Verifies that execute_callback fails safely on import statements."""
+    code = """
+def beforeModelCallback(session):
+    import os
+    return session
+"""
+    res = Callbacks.execute_callback(code, {})
+    assert "error" in res
+    assert "Security validation failed" in res["error"]
+
+
+def test_execute_callback_dunder_reflection_blocked() -> None:
+    """Verifies that execute_callback fails safely on dunder attacks."""
+    code = """
+def beforeModelCallback(session):
+    subclasses = session.__class__.__base__.__subclasses__()
+    return session
+"""
+    res = Callbacks.execute_callback(code, {})
+    assert "error" in res
+    assert "Security validation failed" in res["error"]
+
+
+def test_execute_callback_forbidden_builtin_blocked() -> None:
+    """Verifies that execute_callback fails safely on open() and eval()."""
+    code = """
+def beforeModelCallback(session):
+    open('/tmp/test', 'w')
+    return session
+"""
+    res = Callbacks.execute_callback(code, {})
+    assert "error" in res
+    assert "Security validation failed" in res["error"]
