@@ -51,6 +51,7 @@ _REMOVABLE_APP_ROOT_DIRS = frozenset(
         "evaluations",
         "evaluationDatasets",
         "evaluationExpectations",
+        "pythonEnvFiles",
     }
 )
 
@@ -431,6 +432,7 @@ def _app_push(
         "evaluations",
         "evaluationDatasets",
         "evaluationExpectations",
+        "pythonEnvFiles",
         ".github/workflows",
     ]
 
@@ -441,7 +443,15 @@ def _app_push(
                 dst_path = os.path.join(inner_dir, item)
                 os.makedirs(os.path.dirname(dst_path), exist_ok=True)
                 if os.path.isdir(src_path):
-                    shutil.copytree(src_path, dst_path)
+                    shutil.copytree(
+                        src_path,
+                        dst_path,
+                        # Exclude local Python cache files so they are not
+                        # imported as PythonEnvFile resources.
+                        ignore=shutil.ignore_patterns(
+                            "__pycache__", "*.pyc", "*.pyo"
+                        ),
+                    )
                 else:
                     shutil.copy2(src_path, dst_path)
 

@@ -1779,3 +1779,121 @@ def test_app_lint_with_env_file_flag(
     assert excinfo.value.code == 1
     results = json.loads(capsys.readouterr().out)
     assert any(r["rule_id"] == "A017" for r in results)
+
+
+def test_app_push_includes_python_env_files_and_ignores_pycache(
+    mock_apps_client: typing.Any, tmp_path: typing.Any
+) -> None:
+    """Verifies cxas push packages pythonEnvFiles while excluding bytecode."""
+    (tmp_path / "app.json").write_text('{"displayName": "Test App"}')
+
+    env_dir = tmp_path / "pythonEnvFiles"
+    (env_dir / "pkg" / "__pycache__").mkdir(parents=True)
+    (env_dir / "__pycache__").mkdir(parents=True)
+    (env_dir / "pythonEnvFiles.json").write_text(
+        '{"pythonEnvFiles": [{"name": "helpers", "filePath": "helpers.py"}]}'
+    )
+    (env_dir / "helpers.py").write_text("VALUE = 1\n")
+    (env_dir / "pkg" / "utils.py").write_text("def run(): return 1\n")
+    (env_dir / "__pycache__" / "helpers.cpython-312.pyc").write_bytes(b"pyc")
+    (env_dir / "pkg" / "__pycache__" / "utils.cpython-312.pyc").write_bytes(
+        b"pyc"
+    )
+    (env_dir / "stale.pyc").write_bytes(b"pyc")
+    (env_dir / "stale.pyo").write_bytes(b"pyo")
+
+    tool_dir = tmp_path / "tools" / "my_tool"
+    (tool_dir / "__pycache__").mkdir(parents=True)
+    (tool_dir / "python_code.py").write_text("def my_tool(): return {}\n")
+    (tool_dir / "__pycache__" / "python_code.cpython-312.pyc").write_bytes(
+        b"pyc"
+    )
+
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/new-id", []
+    )
+
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        display_name="Test App",
+        project_id="test-project",
+        location="us",
+    )
+    cli_app.app_push(args)
+
+    mock_apps_client.import_as_new_app.assert_called_once()
+    app_content = mock_apps_client.import_as_new_app.call_args[1]["app_content"]
+    with zipfile.ZipFile(io.BytesIO(app_content)) as zf:
+        names = set(zf.namelist())
+
+    assert "agent/pythonEnvFiles/pythonEnvFiles.json" in names
+    assert "agent/pythonEnvFiles/helpers.py" in names
+    assert "agent/pythonEnvFiles/pkg/utils.py" in names
+    assert "agent/tools/my_tool/python_code.py" in names
+    assert not any("__pycache__" in name for name in names)
+    assert not any(name.endswith((".pyc", ".pyo")) for name in names)
+
+
+def test_app_push_without_python_env_files_is_noop(
+    mock_apps_client: typing.Any, tmp_path: typing.Any
+) -> None:
+    """Verifies apps without pythonEnvFiles push cleanly without error."""
+    (tmp_path / "app.json").write_text('{"displayName": "Test App"}')
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/new-id", []
+    )
+
+    args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        to=None,
+        display_name="Test App",
+        project_id="test-project",
+        location="us",
+    )
+    cli_app.app_push(args)
+
+    app_content = mock_apps_client.import_as_new_app.call_args[1]["app_content"]
+    with zipfile.ZipFile(io.BytesIO(app_content)) as zf:
+        names = zf.namelist()
+
+    assert "agent/app.json" in names
+    assert not any("pythonEnvFiles" in name for name in names)
+
+
+def test_app_pull_overwrite_prunes_deleted_python_env_files(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    """Verifies pull --overwrite prunes pythonEnvFiles omitted from export."""
+    app_dir = tmp_path / "My_App"
+    (app_dir / "pythonEnvFiles").mkdir(parents=True)
+    (app_dir / "pythonEnvFiles" / "pythonEnvFiles.json").write_text("{}")
+    (app_dir / "pythonEnvFiles" / "helpers.py").write_text("VALUE = 1\n")
+    (app_dir / "app.json").write_text('{"displayName": "My App"}')
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("My_App/app.json", '{"displayName": "My App"}')
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    lro = mock.MagicMock()
+    lro.result.return_value = mock.MagicMock(app_content=buf.getvalue())
+    mock_apps_client.export_app.return_value = lro
+
+    cli_app.app_pull(
+        argparse.Namespace(
+            app="My App",
+            target_dir=str(tmp_path),
+            project_id="test-project",
+            location="us",
+            overwrite=True,
+        )
+    )
+
+    assert (app_dir / "app.json").exists()
+    assert not (app_dir / "pythonEnvFiles").exists()
