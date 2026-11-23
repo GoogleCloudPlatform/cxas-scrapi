@@ -31,6 +31,12 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | I018 | `composite-v2-normalization-scope` | Warning | Text normalization block lacks a `Scope:` guard excluding tool arguments (`gemini-composite-v2`) |
     | I019 | `live-audio-inline-tags` | Error | Inline TTS delivery tags emitted on native audio-to-audio (`live`) models |
     | I020 | `ces-jinja-subset-syntax` | Error | Instruction uses unsupported CES Jinja syntax (`not in`, `dict['key']` subscripts, or `{# ... #}` comments) |
+    | I021 | `modular-callback-timing-race` | Warning | Jinja template reads a state variable written in `before_model_callback` rather than `before_agent_callback` |
+    | I022 | `modular-prefix-cache-hazard` | Warning | Volatile (turn-varying) state variable used in `{{var}}` or `{% if %}` near the top of a long instruction |
+    | I023 | `modular-unsupported-jinja-subset` | Warning | Unsupported Jinja filter, `loop.*` attribute, unknown function/macro, unsupported block tag, nested braces, or unbalanced block |
+    | I024 | `modular-channel-modality-tag` | Warning | Invalid `{@startModality_*}` / `{@startChannel_*}` tag name, mismatched closer, unclosed tag, or top-level XML wrapping |
+    | I025 | `modular-unmasked-modality-tool` | Warning | `{@TOOL: ...}` or `{@WIDGET: ...}` referenced only in one modality without callback masking or explicit prohibition |
+    | I026 | `modular-hyphenated-var-in-expr` | Warning | Hyphenated variable name inside `{% if %}`/`{% elif %}`/`{% for %}` or filtered print `{{ var \| filter }}` |
 
     ---
 
@@ -158,6 +164,46 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Configurable:* `options.I016.min_distinct_categories` (default 2), `options.I016.min_total` (default 4), `options.I016.min_strong_edges` (default 3).
 
+    ---
+
+    **I021 — modular-callback-timing-race**
+
+    CES renders Jinja instructions *before* `before_model_callback` executes. Any state variable written in `before_model_callback` (and not also written in `before_agent_callback`) referenced in `{{ var }}`, `{% if %}`, or `{% for %}` experiences a silent 1-turn lag.
+
+    *Fix:* Derive the variable inside `before_agent_callback` so the value is set before CES renders the instruction template. For `{{var}}` prints, single-brace `{var}` stays literal in `system_instruction` and injects `<state_update>` turns in history instead.
+
+    ---
+
+    **I022 — modular-prefix-cache-hazard**
+
+    When a turn-varying state variable (written in callbacks or tools without a one-time init guard) is injected via `{{ var }}` or `{% if %}` near the top of a long instruction, mutations invalidate the KV prompt prefix cache for every token below it.
+
+    *Configurable:* `options.I022.top_fraction` (default `0.40`), `options.I022.min_trailing_tokens` (default `500`), `options.I022.immutable_keys` (list of extra exempt variable names).
+
+    ---
+
+    **I023 — modular-unsupported-jinja-subset**
+
+    Complements `I020` by validating expressions against the CES Jinja subset: allowed filters (`length`, `upper`, `default`), allowed `loop.*` attribute (`loop.last` only), built-in functions (`default`, `length`, `in_time_window`) and local `{% macro %}` definitions, supported block keywords (`if`, `elif`, `else`, `endif`, `for`, `endfor`, `macro`, `endmacro`), no nested curly braces inside block tags, and balanced block open/close nesting.
+
+    ---
+
+    **I024 — modular-channel-modality-tag**
+
+    Validates `{@startModality_*}` / `{@endModality_*}` and `{@startChannel_*}` / `{@endChannel_*}` tags against the CES allowlists (including `WebWidget` and uppercase enum aliases), detects mismatched or unclosed tag pairs (which otherwise normalize identically to `{% endif %}`), and warns if a tag wraps top-level structural XML (`<role>`, `<persona>`, `<constraints>`, `<taskflow>`, `<examples>`, `<goal>`).
+
+    ---
+
+    **I025 — modular-unmasked-modality-tool**
+
+    Flags `{@TOOL: ...}` or `{@WIDGET: ...}` references that appear exclusively inside a single modality (`TEXT` or `VOICE`) when there is no `_session.modality` masking reference in `before_model_callback` and no explicit prohibition in the opposite modality block.
+
+    ---
+
+    **I026 — modular-hyphenated-var-in-expr**
+
+    Flags hyphenated variable names inside `{% if %}` / `{% elif %}` / `{% for %}` expressions and filtered print tags (`{{ caller-id | default('x') }}`). Plain hyphenated prints (`{{ caller-id }}`) and quoted literals (`'vip-gold'`, `'-1'`, `'/privacy-notice'`) are allowed.
+
 === "C — Callbacks"
 
     Rules in the `C` category check callback `python_code.py` files for naming conventions, correct signatures, and safe coding practices.
@@ -176,6 +222,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C012 | `after-model-unreturned-response` | Error | `after_model_callback` mutates or constructs `LlmResponse` without returning it |
     | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
     | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
+    | C020 | `before-agent-missing-turn-guard` | Warning | `before_agent_callback` assigns empty/zero default literals (`""`, `0`, `False`, `[]`, `{}`) to session state unconditionally without a one-time init guard |
 
     ---
 
@@ -250,6 +297,14 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     Invalid Python syntax means the callback file can't be loaded. The platform silently fails to register callbacks with syntax errors.
 
     *Fix:* Fix the syntax error. Run `python -m py_compile python_code.py` locally to check.
+
+    ---
+
+    **C020 — before-agent-missing-turn-guard**
+
+    `before_agent_callback` runs at the start of **every** turn. Assigning empty or zero default literals (`""`, `0`, `False`, `[]`, `{}`) unconditionally at the top level wipes conversation memory on Turn 2+.
+
+    *Fix:* Wrap one-time initialization in `if not state.get("_initialized"):`, add an early return `if state.get("_initialized") == "true": return None` at the top of `before_agent_callback`, or use `state.setdefault(key, default)`.
 
 === "T — Tools"
 
