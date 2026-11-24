@@ -1665,7 +1665,7 @@ def deployments_promote(args: argparse.Namespace) -> None:
         location=None,
         create_version=True,
         version_description=f"Promote {time.strftime('%Y%m%d%H%M%S')}",
-        profile=getattr(args, "profile", None),
+        profile=str(profile.source_path) if profile is not None else None,
         allow_protected=True,
     )
 

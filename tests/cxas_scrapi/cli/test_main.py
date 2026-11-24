@@ -918,3 +918,83 @@ def test_llm_lint_does_not_map_ces_us_eu_into_vertex_location(
         location="us-central1",
         model_name="gemini-2.5-flash",
     )
+
+
+def test_deployments_promote_legacy_works_with_cxas_profile_env(
+    tmp_path: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy deployments promote under CXAS_PROFILE must not hit --to conflict."""
+    import json as json_mod  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    (tmp_path / ".git").mkdir()
+    app_dir = tmp_path / "agent"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json_mod.dumps({"displayName": "Base", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    profiles_dir = tmp_path / ".cxas" / "profiles"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "qa.yml").write_text(
+        yaml.safe_dump(
+            {
+                "protected": True,
+                "target": {
+                    "project_id": "qa-proj",
+                    "location": "us",
+                    "app_id": "qa-app",
+                },
+                "app_dir": "agent",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CXAS_PROFILE", "qa")
+    monkeypatch.setenv("CI", "true")
+
+    mock_lro = mock.MagicMock()
+    mock_lro.result.return_value = mock.MagicMock(
+        name="projects/qa-proj/locations/us/apps/qa-app",
+        warnings=[],
+    )
+    mock_version = mock.MagicMock(
+        name="projects/qa-proj/locations/us/apps/qa-app/versions/v1"
+    )
+    mock_version.name = "projects/qa-proj/locations/us/apps/qa-app/versions/v1"
+
+    with (
+        mock.patch("cxas_scrapi.cli.app.Apps") as mock_apps_cls,
+        mock.patch("cxas_scrapi.cli.app.Versions") as mock_versions_cls,
+        mock.patch("cxas_scrapi.core.deployments.Deployments") as mock_deps_cls,
+    ):
+        mock_apps_cls.return_value.import_app.return_value = mock_lro
+        mock_versions_cls.return_value.create_version.return_value = (
+            mock_version
+        )
+        args = argparse.Namespace(
+            app_resource_name=None,
+            app_dir=None,
+            env_file=None,
+            live_deployment_resource_name=(
+                "projects/qa-proj/locations/us/apps/qa-app/deployments/live"
+            ),
+            app_name=None,
+            deployment_id=None,
+            version=None,
+            traffic_split=None,
+            project_id=None,
+            location=None,
+            profile=None,
+            allow_protected=False,
+        )
+        main_cli.deployments_promote(args)
+
+    mock_apps_cls.return_value.import_app.assert_called_once()
+    mock_deps_cls.return_value.update_deployment.assert_called_once_with(
+        deployment_id="live",
+        app_version="projects/qa-proj/locations/us/apps/qa-app/versions/v1",
+    )
