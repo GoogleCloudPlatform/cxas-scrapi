@@ -129,19 +129,67 @@ def get_project_path(*parts: typing.Any) -> typing.Any:
     return os.path.join(resolve_project_dir(), *parts)
 
 
-def load_config() -> typing.Any:
+def _extract_cli_profile_arg() -> typing.Optional[str]:
+    """Extract ``--profile <val>`` or ``--profile=<val>`` from ``sys.argv``."""
+    argv = sys.argv[1:]
+    for idx, tok in enumerate(argv):
+        if tok == "--profile" and idx + 1 < len(argv):
+            return argv[idx + 1]
+        if tok.startswith("--profile="):
+            return tok.split("=", 1)[1]
+    return None
+
+
+def load_config(profile: typing.Optional[str] = None) -> typing.Any:
     """Load gecx-config.json from the active project and return the full config dict.
+
+    Respects ``--profile`` and ``CXAS_PROFILE`` via
+    ``cxas_scrapi.utils.profiles.resolve_runtime_config`` when ``cxas_scrapi``
+    is installed, with a graceful fallback to raw ``gecx-config.json`` when not.
 
     Required keys: gcp_project_id, deployed_app_id
     Optional keys: location (default: "us"), modality, default_channel, app_dir
     """
-    config_file = get_project_path("gecx-config.json")
+    project_dir = resolve_project_dir()
+    config_file = os.path.join(project_dir, "gecx-config.json")
     if not os.path.exists(config_file):
         print(f"Error: {config_file} not found. Create gecx-config.json with your project settings.")
         sys.exit(1)
 
     with open(config_file) as f:
         config = json.load(f)
+
+    effective_profile = (
+        profile
+        or _extract_cli_profile_arg()
+        or os.environ.get("CXAS_PROFILE", "").strip()
+        or None
+    )
+    if effective_profile:
+        try:
+            from cxas_scrapi.utils.profiles import (
+                ProfileError,
+                resolve_runtime_config,
+            )
+
+            try:
+                runtime = resolve_runtime_config(
+                    effective_profile,
+                    start_dir=project_dir,
+                    base_gecx_config=config,
+                )
+            except ProfileError as e:
+                print(f"Error resolving profile '{effective_profile}': {e}", file=sys.stderr)
+                sys.exit(1)
+            config = dict(runtime.gecx_config)
+            if runtime.profile is not None:
+                config["_profile"] = runtime.profile.name
+        except ImportError:
+            print(
+                f"Warning: profile '{effective_profile}' requested, but "
+                "cxas_scrapi is not installed; falling back to gecx-config.json.",
+                file=sys.stderr,
+            )
 
     project = config.get("gcp_project_id")
     app_id = config.get("deployed_app_id")
@@ -151,16 +199,16 @@ def load_config() -> typing.Any:
 
     config.setdefault("location", "us")
     # Store the resolved project dir in config for convenience
-    config["_project_dir"] = resolve_project_dir()
+    config["_project_dir"] = project_dir
     return config
 
 
-def load_app_name() -> typing.Any:
-    """Load the full app resource name from gecx-config.json.
+def load_app_name(profile: typing.Optional[str] = None) -> typing.Any:
+    """Load the full app resource name from gecx-config.json (with optional profile).
 
     Returns: "projects/{project}/locations/{location}/apps/{app_id}"
     """
-    config = load_config()
+    config = load_config(profile=profile)
     return (
         f"projects/{config['gcp_project_id']}"
         f"/locations/{config['location']}"

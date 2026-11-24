@@ -6,6 +6,7 @@
 
 ```
 cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
+          [--profile PROFILE] [--allow-protected] [--dry-run]
           [--app-name APP] [--display-name NAME]
           [--create-version] [--version-name NAME] [--version-description DESC]
           [--overwrite]
@@ -16,9 +17,12 @@ cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `--app-dir DIR` | No | `.` (current directory) | Path to the local agent directory to upload. |
+| `--app-dir DIR` | No | Profile `app_dir` or `.` | Path to the local agent directory to upload. |
 | `--to TARGET` | No | — | Target app to overwrite. Accepts a full resource name or display name. When provided, the existing app is updated in place. |
-| `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json` before uploading. Useful for supplying environment-specific resource bindings and resolving `"$env_var"` defaults in `app.json` / `app.yaml` `variableDeclarations` without committing secrets or per-stage overrides. |
+| `--env-file FILE` | No | Profile `env_file` | Path to a JSON environment file to inject as `environment.json` before uploading. Useful for supplying environment-specific resource bindings and resolving `"$env_var"` defaults in `app.json` / `app.yaml` `variableDeclarations` without committing secrets or per-stage overrides. |
+| `--profile PROFILE` | No | `$CXAS_PROFILE` | Runtime profile name (`.cxas/profiles/<name>.yml`) or file path. Supplies target, `app_dir`, `env_file`, and staged `app.json`/`app.yaml` overrides without modifying tracked files. |
+| `--allow-protected` | No | `false` | Allow pushing to a profile marked `protected: true` from a local workstation (not needed when `CI=true`). |
+| `--dry-run` | No | `false` | Print resolved target, env file, and unified diffs of merged `app.json`/`app.yaml` and `gecx-config.json` without calling CES. |
 | `--app-name APP` | No | — | Explicit app resource name to push to (v1beta API). Use this when you want to overwrite a specific app and already know its full ID. |
 | `--display-name NAME` | No | `"Pushed Agent"` | Display name for the new app when no target is specified and a new app will be created. |
 | `--create-version` | No | `false` | Automatically create a version snapshot after a successful push. |
@@ -128,6 +132,7 @@ cxas push \
 
 ## Related Commands
 
+- [`cxas profile`](profile.md) — Manage environment profiles (`.cxas/profiles/`) for zero-stash pushing.
 - [`cxas pull`](pull.md) — Download an app to a local directory first.
 - [`cxas create`](create.md) — Create an empty app shell before pushing.
 - [`cxas ci-test`](ci-test.md) — Run the full push + test lifecycle in CI.

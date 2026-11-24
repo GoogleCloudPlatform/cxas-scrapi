@@ -24,6 +24,14 @@ import yaml
 
 from cxas_scrapi.prompts import LLM_LINT_SYSTEM_PROMPT, LLM_LINT_USER_PROMPT
 from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.profiles import (
+    ProfileError,
+    load_profile,
+    print_profile_warnings,
+)
+
+# CES multi-region codes that are NOT valid Vertex AI regional endpoints.
+_CES_ONLY_LOCATIONS = frozenset({"us", "eu"})
 
 
 def discover_agent_callbacks(agent_dir: Path) -> list[tuple[str, Path]]:
@@ -278,7 +286,14 @@ def resolve_gcp_credentials(
                     if not project_id:
                         project_id = config_data.get("gcp_project_id")
                     if not location:
-                        location = config_data.get("location")
+                        cfg_loc = config_data.get("vertex_location") or (
+                            config_data.get("location")
+                        )
+                        if (
+                            isinstance(cfg_loc, str)
+                            and cfg_loc.lower() not in _CES_ONLY_LOCATIONS
+                        ):
+                            location = cfg_loc
             except (json.JSONDecodeError, OSError) as e:
                 print(
                     f"Warning: Failed to parse config at {config_path}: {e}",
@@ -300,7 +315,14 @@ def resolve_gcp_credentials(
                         if not project_id:
                             project_id = config_data.get("gcp_project_id")
                         if not location:
-                            location = config_data.get("location")
+                            cfg_loc = config_data.get("vertex_location") or (
+                                config_data.get("location")
+                            )
+                            if (
+                                isinstance(cfg_loc, str)
+                                and cfg_loc.lower() not in _CES_ONLY_LOCATIONS
+                            ):
+                                location = cfg_loc
                 except (json.JSONDecodeError, OSError):
                     pass
                 break
@@ -324,7 +346,52 @@ def resolve_gcp_credentials(
 
 def llm_lint(args: argparse.Namespace) -> None:
     """Executes the main linter flow."""
-    agent_path = Path(args.agent_dir)
+    profile = None
+    try:
+        profile = load_profile(getattr(args, "profile", None))
+    except ProfileError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if profile is not None:
+        print_profile_warnings(profile.warnings)
+        print(profile.format_banner())
+        if not getattr(args, "project_id", None) and profile.target.project_id:
+            args.project_id = profile.target.project_id
+        # Never map CES multi-regions ('us'/'eu') into Vertex AI --location;
+        # only honor an explicit vertex_location from gecx-config overrides.
+        if not getattr(args, "location", None):
+            vloc = profile.gecx_config_overrides.get("vertex_location")
+            if (
+                isinstance(vloc, str)
+                and vloc
+                and vloc.lower() not in _CES_ONLY_LOCATIONS
+            ):
+                args.location = vloc
+
+    agent_dir_arg = getattr(args, "agent_dir", None)
+    if not agent_dir_arg and profile is not None and profile.app_dir:
+        candidate_dir = profile.app_dir
+        if (candidate_dir / "instruction.txt").is_file():
+            agent_dir_arg = str(candidate_dir)
+        elif (candidate_dir / "agents").is_dir():
+            subdirs = [
+                d
+                for d in sorted((candidate_dir / "agents").iterdir())
+                if d.is_dir() and (d / "instruction.txt").is_file()
+            ]
+            if len(subdirs) == 1:
+                agent_dir_arg = str(subdirs[0])
+
+    if not agent_dir_arg:
+        print(
+            "Error: --agent-dir is required (could not infer a single agent "
+            "directory from profile).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    agent_path = Path(agent_dir_arg)
 
     if not agent_path.exists():
         print(
