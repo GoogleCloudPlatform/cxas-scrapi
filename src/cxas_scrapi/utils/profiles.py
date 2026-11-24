@@ -199,6 +199,7 @@ class ResolvedProfile:
                     merged,
                     self.overrides[filename],
                     warn_on_list_replace=False,
+                    preserve_nulls=True,
                 )
         return merged
 
@@ -499,6 +500,7 @@ def deep_merge(
     overlay: dict[str, Any],
     *,
     warn_on_list_replace: bool = True,
+    preserve_nulls: bool = False,
     warnings_out: list[str] | None = None,
     _path: str = "",
 ) -> dict[str, Any]:
@@ -506,7 +508,9 @@ def deep_merge(
 
     Semantics:
     - ``dict`` + ``dict``: merge recursively.
-    - ``None`` (YAML ``null``): delete key from the merged dict.
+    - ``None`` (YAML ``null``): delete key from the merged dict (or keep as a
+      ``None`` tombstone when ``preserve_nulls=True`` for overlay-on-overlay
+      merges).
     - ``list``: replace entirely (emits a warning when replacing an existing
       list so users know lists are replaced rather than appended).
     - Scalars / mismatched types: replace.
@@ -515,21 +519,26 @@ def deep_merge(
     for key, value in overlay.items():
         key_path = f"{_path}.{key}" if _path else str(key)
         if value is None:
-            result.pop(key, None)
+            if preserve_nulls:
+                result[key] = None
+            else:
+                result.pop(key, None)
         elif isinstance(value, dict) and isinstance(result.get(key), dict):
             result[key] = deep_merge(
                 result[key],
                 value,
                 warn_on_list_replace=warn_on_list_replace,
+                preserve_nulls=preserve_nulls,
                 warnings_out=warnings_out,
                 _path=key_path,
             )
         elif isinstance(value, dict):
-            # Strip null tombstones when creating a fresh nested dict.
+            # Strip null tombstones unless preserving them for a later merge.
             result[key] = deep_merge(
                 {},
                 value,
                 warn_on_list_replace=warn_on_list_replace,
+                preserve_nulls=preserve_nulls,
                 warnings_out=warnings_out,
                 _path=key_path,
             )
@@ -728,6 +737,7 @@ def _load_profile_chain(
                 merged_overrides[fname] = deep_merge(
                     merged_overrides.get(fname, {}),
                     foverlay,
+                    preserve_nulls=True,
                     warnings_out=warnings_out,
                     _path=f"overrides.{fname}",
                 )

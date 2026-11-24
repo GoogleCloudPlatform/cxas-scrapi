@@ -242,9 +242,10 @@ class TestInheritanceAndCycles:
         assert gecx["location"] == "europe-west2"
         assert gecx["deployed_app_id"] == "personal-v2"
         assert gecx["model"] == "gemini-2.5-pro"
-        # Note: null in child deleted gcs_bucket during profile inheritance;
-        # setting gcs_bucket: null directly in a profile deletes base keys too.
-        assert "gcs_bucket" not in prof.gecx_config_overrides
+        # Child null tombstone is preserved through inheritance and deletes the
+        # key from base gecx-config.json when resolved.
+        assert prof.gecx_config_overrides["gcs_bucket"] is None
+        assert "gcs_bucket" not in gecx
 
     def test_extends_cycle_detection(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -415,6 +416,69 @@ class TestDeepMergeAndStaging:
             merge_app_config_data(base, {"displayName": None})
         with pytest.raises(ProfileError, match="rootAgent"):
             merge_app_config_data(base, {"rootAgent": None})
+
+    def test_null_tombstones_survive_single_and_inherited_profiles(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".git").mkdir()
+        _write_json(
+            tmp_path / "app.json",
+            {
+                "displayName": "Base App",
+                "rootAgent": "root",
+                "description": "Remove me",
+                "modelSettings": {
+                    "model": "gemini-2.5-flash",
+                    "temperature": 0.2,
+                },
+            },
+        )
+        _write_yaml(
+            tmp_path / ".cxas" / "profiles" / "single.yml",
+            {
+                "overrides": {
+                    "app.json": {
+                        "description": None,
+                        "modelSettings": {"temperature": None},
+                    },
+                    "gecx-config.json": {"gcs_bucket": None},
+                }
+            },
+        )
+        single = load_profile("single")
+        assert single is not None
+        assert single.app_overrides["description"] is None
+        assert single.app_overrides["modelSettings"]["temperature"] is None
+
+        staged = tmp_path / "staged_single"
+        staged.mkdir()
+        _write_json(
+            staged / "app.json",
+            json.loads((tmp_path / "app.json").read_text(encoding="utf-8")),
+        )
+        apply_app_overrides_in_dir(staged, single)
+        merged_single = json.loads(
+            (staged / "app.json").read_text(encoding="utf-8")
+        )
+        assert "description" not in merged_single
+        assert "temperature" not in merged_single["modelSettings"]
+        assert "gcs_bucket" not in single.resolve_gecx_config(
+            {"gcs_bucket": "gs://base"}
+        )
+
+        # Inherited child null tombstone deleting key from base app.json
+        _write_yaml(
+            tmp_path / ".cxas" / "profiles" / "child.yml",
+            {
+                "extends": "single",
+                "overrides": {
+                    "app.json": {"displayName": None},
+                },
+            },
+        )
+        _, errors, _ = validate_profile("child")
+        assert any("displayName" in err for err in errors)
 
     def test_staging_handles_app_yaml_and_optional_app_wrapper(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
