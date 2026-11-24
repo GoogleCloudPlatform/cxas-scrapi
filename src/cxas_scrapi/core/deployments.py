@@ -62,6 +62,16 @@ class Deployments(Apps):
         "very_high",
     )
 
+    @classmethod
+    def _resolve_proto_channel_type(cls, channel_type: ChannelType) -> Any:
+        """Map SDK ChannelType to CES protobuf ChannelProfile.ChannelType.
+
+        Messaging channels not yet present on the installed ces_v1beta
+        protobuf enum fall back to ``API`` until the GAPIC enum adds them.
+        """
+        proto_enum = types.common.ChannelProfile.ChannelType
+        return getattr(proto_enum, channel_type.value, proto_enum.API)
+
     def __init__(
         self,
         app_name: str,
@@ -259,8 +269,8 @@ class Deployments(Apps):
 
         channel_profile = types.ChannelProfile()
 
-        channel_profile.channel_type = getattr(
-            types.common.ChannelProfile.ChannelType, channel_type.value
+        channel_profile.channel_type = self._resolve_proto_channel_type(
+            channel_type
         )
 
         channel_profile.disable_dtmf = disable_dtmf
@@ -387,8 +397,8 @@ class Deployments(Apps):
                 channel_type = kwargs.pop("channel_type")
                 if isinstance(channel_type, str):
                     channel_type = self.ChannelType[channel_type.upper()]
-                channel_profile.channel_type = getattr(
-                    types.common.ChannelProfile.ChannelType, channel_type.value
+                channel_profile.channel_type = self._resolve_proto_channel_type(
+                    channel_type
                 )
                 mask_paths.append("channel_profile.channel_type")
 

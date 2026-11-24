@@ -172,10 +172,14 @@ class EnvManifest(_StrictModel):
 
         # Copy input mapping so we do not mutate caller-owned dicts.
         out = dict(data)
-        templates = dict(out.get("templates") or {})
+        raw_templates = out.get("templates")
+        if raw_templates is not None and not isinstance(raw_templates, dict):
+            return out
+
+        templates = dict(raw_templates or {})
 
         for k, v in list(out.items()):
-            if k.endswith("_template"):
+            if isinstance(k, str) and k.endswith("_template"):
                 key_name = k[:-9]  # len("_template") == 9
                 templates[key_name] = v
                 del out[k]
@@ -267,7 +271,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
 def _load_model(model: type[BaseModel], path: Path) -> Any:
     try:
         return model.model_validate(_read_yaml(path))
-    except ValueError as exc:  # pydantic.ValidationError is a ValueError
+    except (ValueError, TypeError) as exc:
         raise ManifestError(f"{path}: {exc}") from exc
 
 

@@ -93,7 +93,10 @@ def app_package(args: argparse.Namespace) -> None:
     )
 
     try:
-        out = package_app_archive(app_dir, zip_path, env_file)
+        resolved_vars: list[str] = []
+        out = package_app_archive(
+            app_dir, zip_path, env_file, resolved_env_vars=resolved_vars
+        )
         print(f"Packaged app to {out}")
     except (OSError, ValueError) as e:
         print(f"Package Error: {e}", file=sys.stderr)
