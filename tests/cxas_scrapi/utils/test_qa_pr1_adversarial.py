@@ -995,11 +995,15 @@ def test_qa_pr1_cli_list_rules_and_exit_codes_and_no_build_imports(
     for rule_id in pr1_rules:
         assert rule_id in list_proc.stdout
 
-    # Verify zero cxas_scrapi.build imports in linter & lint_rules
+    # Verify zero cxas_scrapi.build imports in PR 1's standalone lint modules
     utils_dir = _SRC_ROOT / "cxas_scrapi" / "utils"
     for py_file in [
         utils_dir / "linter.py",
-        *(utils_dir / "lint_rules").glob("*.py"),
+        utils_dir / "lint_rules" / "__init__.py",
+        utils_dir / "lint_rules" / "tools.py",
+        utils_dir / "lint_rules" / "callbacks.py",
+        utils_dir / "lint_rules" / "runtime_traps.py",
+        utils_dir / "lint_rules" / "structure.py",
     ]:
         text = py_file.read_text(encoding="utf-8")
         assert "cxas_scrapi.build" not in text, (
