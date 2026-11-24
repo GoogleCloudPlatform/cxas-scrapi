@@ -38,6 +38,9 @@ from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
 from cxas_scrapi.cli.trace_cli import register as register_trace_subparser
+from cxas_scrapi.cli.workspace_cli import (
+    register as register_workspace_subparser,
+)
 from cxas_scrapi.utils.eval_utils import (
     COMBINED_REPORT_FILENAME,
     COMBINED_REPORT_JSON_FILENAME,
@@ -3717,6 +3720,9 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'lock', 'unlock', 'lock-status', and 'rollback'.
     register_lock_subparsers(subparsers)
+
+    # Subparsers for 'workspace' — ephemeral GitOps workspaces.
+    register_workspace_subparser(subparsers)
 
     return parser
 
