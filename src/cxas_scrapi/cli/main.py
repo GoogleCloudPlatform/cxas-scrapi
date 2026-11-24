@@ -30,6 +30,9 @@ from typing import TYPE_CHECKING, Any
 
 from cxas_scrapi.cli.arc_cli import register as register_arc_subparser
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
+from cxas_scrapi.cli.profile_cli import (
+    register as register_profile_subparser,
+)
 from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
 )
@@ -523,6 +526,42 @@ def run_eval(args: argparse.Namespace) -> None:
 
     from cxas_scrapi.core.evaluations import Evaluations
     from cxas_scrapi.utils.eval_utils import EvalUtils
+    from cxas_scrapi.utils.profiles import (
+        ProfileError,
+        print_profile_warnings,
+        resolve_runtime_config,
+    )
+
+    try:
+        runtime = resolve_runtime_config(
+            getattr(args, "profile", None),
+            cli_overrides={
+                "app_name": getattr(args, "app_name", None),
+                "modality": getattr(args, "modality", None),
+            },
+        )
+    except ProfileError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if runtime.profile is not None:
+        print_profile_warnings(runtime.warnings)
+        print(runtime.profile.format_banner())
+        if not getattr(args, "app_name", None) and runtime.app_name:
+            args.app_name = runtime.app_name
+        if not getattr(args, "modality", None) and runtime.modality:
+            args.modality = runtime.modality
+
+    if not getattr(args, "modality", None):
+        args.modality = "text"
+
+    if not getattr(args, "app_name", None):
+        print(
+            "Error: --app-name is required (or configure 'target' in a "
+            "--profile / CXAS_PROFILE).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     print(f"Triggering evaluation for App: {args.app_name}")
     eval_client = Evaluations(app_name=args.app_name)
@@ -748,9 +787,43 @@ def run_eval(args: argparse.Namespace) -> None:
 
 def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     """Handles the 'evals report' command."""
+    from cxas_scrapi.utils.profiles import (  # noqa: PLC0415
+        ProfileError,
+        print_profile_warnings,
+        resolve_runtime_config,
+    )
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
         generate_combined_report_from_dir,
     )
+
+    try:
+        runtime = resolve_runtime_config(
+            getattr(args, "profile", None),
+            cli_overrides={
+                "app_name": getattr(args, "app_name", None),
+                "app_dir": getattr(args, "app_dir", None),
+                "modality": getattr(args, "modality", None),
+                "deployment_id": getattr(args, "deployment_id", None),
+            },
+        )
+    except ProfileError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if runtime.profile is not None:
+        print_profile_warnings(runtime.warnings)
+        print(runtime.profile.format_banner())
+        if not getattr(args, "app_name", None) and runtime.app_name:
+            args.app_name = runtime.app_name
+        if not getattr(args, "app_dir", None) and runtime.app_dir:
+            args.app_dir = runtime.app_dir
+        if not getattr(args, "deployment_id", None) and runtime.deployment_id:
+            args.deployment_id = runtime.deployment_id
+        if not getattr(args, "modality", None) and runtime.modality:
+            args.modality = runtime.modality
+
+    if not getattr(args, "modality", None):
+        args.modality = "text"
 
     output_dir = args.output_dir
     timestamp = None
@@ -1053,6 +1126,47 @@ def ci_test(args: argparse.Namespace) -> None:
     from cxas_scrapi.cli.app import app_push
     from cxas_scrapi.core.apps import Apps
     from cxas_scrapi.core.evaluations import Evaluations
+    from cxas_scrapi.utils.profiles import (
+        ProfileError,
+        resolve_runtime_config,
+    )
+
+    try:
+        runtime = resolve_runtime_config(
+            getattr(args, "profile", None),
+            cli_overrides={
+                "project_id": getattr(args, "project_id", None),
+                "location": getattr(args, "location", None),
+                "app_dir": getattr(args, "app_dir", None),
+                "env_file": getattr(args, "env_file", None),
+            },
+        )
+    except ProfileError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if runtime.profile is not None:
+        if not getattr(args, "project_id", None) and runtime.project_id:
+            args.project_id = runtime.project_id
+        if not getattr(args, "location", None) and runtime.location:
+            args.location = runtime.location
+        if not getattr(args, "app_dir", None) and runtime.app_dir:
+            args.app_dir = runtime.app_dir
+        if not getattr(args, "env_file", None) and runtime.env_file:
+            args.env_file = runtime.env_file
+
+    if not getattr(args, "app_dir", None):
+        args.app_dir = "."
+
+    if not getattr(args, "project_id", None) or not getattr(
+        args, "location", None
+    ):
+        print(
+            "Error: --project-id and --location are required (or configure "
+            "'target' in a --profile / CXAS_PROFILE).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     # Resolve cxas binary path relative to the current python interpreter
     cxas_bin = os.path.join(os.path.dirname(sys.executable), "cxas")
@@ -1068,6 +1182,7 @@ def ci_test(args: argparse.Namespace) -> None:
 
     args.display_name = temp_display_name
     args.app_name = None  # Force create by default
+    args._ci_test_ephemeral = True
 
     apps_client = Apps(project_id=args.project_id, location=args.location)
 
@@ -1444,6 +1559,43 @@ def deployments_promote(args: argparse.Namespace) -> None:
 
     from cxas_scrapi.cli.app import app_push
     from cxas_scrapi.core.deployments import Deployments
+    from cxas_scrapi.utils.profiles import (
+        ProfileError,
+        guard_protected_mutation,
+        load_profile,
+        print_profile_warnings,
+    )
+
+    profile = None
+    try:
+        profile = load_profile(getattr(args, "profile", None))
+        guard_protected_mutation(
+            profile,
+            command="deployments promote",
+            allow_protected=getattr(args, "allow_protected", False),
+        )
+    except ProfileError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if profile is not None:
+        print_profile_warnings(profile.warnings)
+        if not getattr(args, "app_name", None) and (
+            profile.target.app_resource_name
+        ):
+            args.app_name = profile.target.app_resource_name
+        if not getattr(args, "app_resource_name", None) and (
+            profile.target.app_resource_name
+        ):
+            args.app_resource_name = profile.target.app_resource_name
+        if not getattr(args, "deployment_id", None) and (
+            profile.target.deployment_id
+        ):
+            args.deployment_id = profile.target.deployment_id
+        if not getattr(args, "app_dir", None) and profile.app_dir:
+            args.app_dir = str(profile.app_dir)
+        if not getattr(args, "env_file", None) and profile.env_file:
+            args.env_file = str(profile.env_file)
 
     has_id = getattr(args, "deployment_id", None)
     has_split_or_ver = getattr(args, "version", None) or getattr(
@@ -1513,6 +1665,8 @@ def deployments_promote(args: argparse.Namespace) -> None:
         location=None,
         create_version=True,
         version_description=f"Promote {time.strftime('%Y%m%d%H%M%S')}",
+        profile=getattr(args, "profile", None),
+        allow_protected=True,
     )
 
     try:
@@ -1630,6 +1784,31 @@ def get_parser() -> argparse.ArgumentParser:
             required=required,
             help=f"The GCP Location (e.g., global, us-central1).{help_suffix}",
         )
+
+    def _add_profile_args(
+        subparser: argparse.ArgumentParser,
+        *,
+        include_allow_protected: bool = False,
+    ) -> None:
+        """Helper to add --profile (and optionally --allow-protected)."""
+        subparser.add_argument(
+            "--profile",
+            default=None,
+            help=(
+                "Runtime profile name (.cxas/profiles/<name>.yml) or file path. "
+                "Falls back to CXAS_PROFILE env var."
+            ),
+        )
+        if include_allow_protected:
+            subparser.add_argument(
+                "--allow-protected",
+                action="store_true",
+                default=False,
+                help=(
+                    "Allow mutating a profile marked protected: true from a "
+                    "local workstation (not needed when CI=true)."
+                ),
+            )
 
     subparsers = parser.add_subparsers(
         title="Commands", dest="command", required=True
@@ -2066,7 +2245,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser_report.add_argument(
         "--modality",
         choices=["text", "audio"],
-        default="text",
+        default=None,
         help="Evaluation execution modality (text or audio). Defaults to text.",
     )
     parser_report.add_argument(
@@ -2341,6 +2520,7 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional GCS bucket/URI override for CES call audio recordings used by --enriched-report.",
     )
+    _add_profile_args(parser_report)
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
     parser_test_tools = subparsers.add_parser(
@@ -2520,7 +2700,8 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_run.add_argument(
         "--app-name",
-        required=True,
+        required=False,
+        default=None,
         help="The CXAS App ID (projects/.../locations/.../apps/...).",
     )
     parser_run.add_argument(
@@ -2534,7 +2715,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser_run.add_argument(
         "--modality",
         choices=["text", "audio"],
-        default="text",
+        default=None,
         help="Evaluation execution modality (text or audio). Defaults to text.",
     )
     parser_run.add_argument(
@@ -2608,6 +2789,7 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
         help="Minimum fraction of evaluations (0.0-1.0) that must pass; fails closed if 0 run.",
     )
+    _add_profile_args(parser_run)
 
     parser_run.set_defaults(func=run_eval)
 
@@ -2639,9 +2821,10 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_ci_test.add_argument(
         "--app-dir",
-        default=".",
+        default=None,
         help=(
-            "Path to the app directory to test. Defaults to current directory."
+            "Path to the app directory to test. Defaults to profile app_dir or "
+            "current directory."
         ),
     )
     parser_ci_test.add_argument(
@@ -2658,7 +2841,8 @@ def get_parser() -> argparse.ArgumentParser:
             "file to include as environment.json."
         ),
     )
-    _add_project_location_args(parser_ci_test)
+    _add_project_location_args(parser_ci_test, required=False)
+    _add_profile_args(parser_ci_test, include_allow_protected=True)
     parser_ci_test.set_defaults(func=ci_test)
 
     # Parser for 'delete'
@@ -2685,6 +2869,7 @@ def get_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force delete even if there are child resources.",
     )
+    _add_profile_args(parser_delete, include_allow_protected=True)
     parser_delete.set_defaults(func=app_delete)
 
     # Parser for 'local-test'
@@ -2710,7 +2895,12 @@ def get_parser() -> argparse.ArgumentParser:
     parser_pull = subparsers.add_parser(
         "pull", help="Export an app to a local directory."
     )
-    parser_pull.add_argument("app", help="App Resource Name or Display Name.")
+    parser_pull.add_argument(
+        "app",
+        nargs="?",
+        default=None,
+        help="App Resource Name or Display Name (optional when using --profile).",
+    )
     parser_pull.add_argument(
         "--target-dir", default=".", help="Directory to extract to."
     )
@@ -2741,7 +2931,18 @@ def get_parser() -> argparse.ArgumentParser:
             "the exported app will be deleted."
         ),
     )
+    parser_pull.add_argument(
+        "--accept-profile-overrides",
+        action="store_true",
+        default=False,
+        help=(
+            "When pulling with --profile, allow remote values to overwrite "
+            "keys managed by overrides.app.json / app.yaml instead of "
+            "preserving local tracked values."
+        ),
+    )
     _add_project_location_args(parser_pull, required=False)
+    _add_profile_args(parser_pull)
     parser_pull.set_defaults(func=app_pull)
 
     # Parser for 'push'
@@ -2749,7 +2950,9 @@ def get_parser() -> argparse.ArgumentParser:
         "push", help="Import local files back to CXAS."
     )
     parser_push.add_argument(
-        "--app-dir", default=".", help="Local app directory."
+        "--app-dir",
+        default=None,
+        help="Local app directory (defaults to profile app_dir or '.').",
     )
     parser_push.add_argument(
         "--to", help="Target App Resource Name or Display Name."
@@ -2794,6 +2997,16 @@ def get_parser() -> argparse.ArgumentParser:
             "will be deleted"
         ),
     )
+    parser_push.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help=(
+            "Print resolved target, env file, and unified config diffs "
+            "without calling CES."
+        ),
+    )
+    _add_profile_args(parser_push, include_allow_protected=True)
     parser_push.set_defaults(func=app_push)
 
     # Parser for 'lint'
@@ -2914,7 +3127,8 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_llm_lint.add_argument(
         "--agent-dir",
-        required=True,
+        required=False,
+        default=None,
         help="Path to the sub-agent directory containing instruction.txt.",
     )
     parser_llm_lint.add_argument(
@@ -2923,7 +3137,7 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser_llm_lint.add_argument(
         "--location",
-        default="us-central1",
+        default=None,
         help="GCP location for Vertex AI queries (default: us-central1).",
     )
     parser_llm_lint.add_argument(
@@ -2935,6 +3149,7 @@ def get_parser() -> argparse.ArgumentParser:
         "--output",
         help="Optional path to write the markdown lint report.",
     )
+    _add_profile_args(parser_llm_lint)
     parser_llm_lint.set_defaults(func=llm_lint)
 
     # Parser for 'help'
@@ -3231,6 +3446,7 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_project_location_args(parser_deps_promote, required=False)
+    _add_profile_args(parser_deps_promote, include_allow_protected=True)
     parser_deps_promote.set_defaults(func=deployments_promote)
 
     # Subparsers for 'local'
@@ -3400,6 +3616,9 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'arc' — the CX Agent Studio AI assistant.
     register_arc_subparser(subparsers)
+
+    # Subparsers for 'profile' — runtime environment profiles.
+    register_profile_subparser(subparsers)
 
     return parser
 

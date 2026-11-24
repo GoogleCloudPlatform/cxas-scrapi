@@ -36,6 +36,19 @@ from cxas_scrapi.utils.env_vars import (
     preserve_env_var_placeholders_on_pull,
     resolve_app_env_variables_in_dir,
 )
+from cxas_scrapi.utils.profiles import (
+    ProfileError,
+    ResolvedProfile,
+    apply_app_overrides_in_dir,
+    guard_env_profile_target_conflict,
+    guard_protected_mutation,
+    load_profile,
+    print_profile_warnings,
+    render_app_config_diff,
+    render_gecx_config_diff,
+    restore_overridden_app_values,
+    snapshot_overridden_app_values,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,9 +160,38 @@ def _handle_import_result(result: Any, success_verb: str) -> str | None:
 
 def app_pull(args: argparse.Namespace) -> None:
     """Handles the 'pull' command."""
-    print(f"Pulling app: {args.app}")
+    profile: ResolvedProfile | None = None
+    try:
+        profile = load_profile(getattr(args, "profile", None))
+    except ProfileError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    apps_client, app_name, _ = _resolve_app_args(args.app, args)
+    if profile is not None:
+        print_profile_warnings(profile.warnings)
+        print(profile.format_banner())
+        if not getattr(args, "project_id", None) and profile.target.project_id:
+            args.project_id = profile.target.project_id
+        if not getattr(args, "location", None) and profile.target.location:
+            args.location = profile.target.location
+
+    app_identifier = getattr(args, "app", None)
+    if not app_identifier and profile is not None:
+        app_identifier = (
+            profile.target.app_resource_name or profile.target.display_name
+        )
+
+    if not app_identifier:
+        print(
+            "Error: No app specified. Provide an app argument or configure "
+            "'target' in a --profile / CXAS_PROFILE.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print(f"Pulling app: {app_identifier}")
+
+    apps_client, app_name, _ = _resolve_app_args(app_identifier, args)
 
     version_id = getattr(args, "version_id", None)
     app_version = None
@@ -168,6 +210,10 @@ def app_pull(args: argparse.Namespace) -> None:
         getattr(args, "overwrite", False),
         app_version=app_version,
         app_dir_name=getattr(args, "app_dir_name", None),
+        profile=profile,
+        accept_profile_overrides=getattr(
+            args, "accept_profile_overrides", False
+        ),
     )
 
 
@@ -178,6 +224,8 @@ def _app_pull(
     overwrite: bool = False,
     app_version: str | None = None,
     app_dir_name: str | None = None,
+    profile: ResolvedProfile | None = None,
+    accept_profile_overrides: bool = False,
 ) -> None:
     """Helper to pull an app from CXAS."""
     try:
@@ -235,6 +283,15 @@ def _app_pull(
                 )
             )
             prev_env_vars = collect_env_var_declaration_names(pulled_app_root)
+            prev_overridden_snapshot: dict[str, Any] = {}
+            if (
+                profile is not None
+                and profile.app_overrides
+                and not accept_profile_overrides
+            ):
+                prev_overridden_snapshot = snapshot_overridden_app_values(
+                    pulled_app_root, profile
+                )
             prev_env_defaults: dict[str, Any] = {}
             prev_env_path = os.path.join(pulled_app_root, "environment.json")
             if prev_env_vars and os.path.isfile(prev_env_path):
@@ -364,6 +421,19 @@ def _app_pull(
                     "environment.json."
                 )
 
+        if prev_overridden_snapshot and profile is not None:
+            restored_keys = restore_overridden_app_values(
+                pulled_app_root, prev_overridden_snapshot, profile
+            )
+            if restored_keys:
+                print(
+                    "Warning: Preserved tracked base value(s) for "
+                    f"profile-overridden key(s): {', '.join(restored_keys)}. "
+                    "Pass --accept-profile-overrides to overwrite them with "
+                    "remote values.",
+                    file=sys.stderr,
+                )
+
         print("Successfully pulled app.")
 
     except Exception as e:
@@ -373,13 +443,91 @@ def _app_pull(
 
 def app_push(args: argparse.Namespace) -> str | None:
     """Handles the 'push' command."""
-    # We will reuse the deploy_agent logic from main.py, slightly adjusted.
-    app_dir = args.app_dir if args.app_dir else "."
-    print(f"Pushing app from {app_dir}...")
+    # Resolve --profile / CXAS_PROFILE at the top (ahead of staging/lint/patch).
+    profile: ResolvedProfile | None = None
+    try:
+        profile = load_profile(getattr(args, "profile", None))
+        guard_env_profile_target_conflict(
+            profile, explicit_to=getattr(args, "to", None)
+        )
+    except ProfileError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if profile is not None:
+        print_profile_warnings(profile.warnings)
+
+    app_dir = (
+        getattr(args, "app_dir", None)
+        or (str(profile.app_dir) if profile and profile.app_dir else None)
+        or "."
+    )
+    env_file = getattr(args, "env_file", None) or (
+        str(profile.env_file) if profile and profile.env_file else None
+    )
+    if profile is not None:
+        if not getattr(args, "project_id", None) and profile.target.project_id:
+            args.project_id = profile.target.project_id
+        if not getattr(args, "location", None) and profile.target.location:
+            args.location = profile.target.location
 
     target_app = getattr(args, "to", None)
     app_name_arg = getattr(args, "app_name", None)
+    display_name_arg = getattr(args, "display_name", None)
+
+    is_ephemeral = bool(getattr(args, "_ci_test_ephemeral", False))
+    if not is_ephemeral and profile is not None:
+        if not target_app and not app_name_arg:
+            if profile.target.app_resource_name:
+                app_name_arg = profile.target.app_resource_name
+            elif profile.target.display_name and not display_name_arg:
+                target_app = profile.target.display_name
+        if not display_name_arg and profile.target.display_name:
+            display_name_arg = profile.target.display_name
+
     identifier = target_app or app_name_arg
+
+    if getattr(args, "dry_run", False):
+        print("[DRY RUN] Resolved push configuration (no CES API calls):")
+        if profile is not None:
+            print(f"  {profile.format_banner()}")
+            print(f"  Protected : {'true' if profile.protected else 'false'}")
+        print(f"  App Dir   : {app_dir}")
+        print(f"  Project   : {getattr(args, 'project_id', None) or '(unset)'}")
+        print(f"  Location  : {getattr(args, 'location', None) or '(unset)'}")
+        print(
+            f"  Target    : {identifier or display_name_arg or 'Pushed Agent'}"
+        )
+        print(f"  Env File  : {env_file or '(none)'}")
+        if profile is not None:
+            try:
+                app_diff = render_app_config_diff(app_dir, profile)
+                gecx_path = profile.project_root / "gecx-config.json"
+                gecx_diff = render_gecx_config_diff(
+                    gecx_path if gecx_path.is_file() else None, profile
+                )
+            except ProfileError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                sys.exit(1)
+            if app_diff:
+                print("\n--- App Config Diff ---")
+                print(app_diff, end="")
+            if gecx_diff:
+                print("\n--- gecx-config.json Diff ---")
+                print(gecx_diff, end="")
+        return None
+
+    try:
+        guard_protected_mutation(
+            profile,
+            command="push",
+            allow_protected=getattr(args, "allow_protected", False),
+        )
+    except ProfileError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Pushing app from {app_dir}...")
 
     if identifier:
         apps_client, app_name, display_name = _resolve_app_args(
@@ -390,16 +538,17 @@ def app_push(args: argparse.Namespace) -> str | None:
         apps_client = Apps(project_id=args.project_id, location=args.location)
         app_name = None
         print("No target specified, using existing name if needed.")
-        display_name = getattr(args, "display_name", None) or "Pushed Agent"
+        display_name = display_name_arg or "Pushed Agent"
 
     return _app_push(
         app_dir=app_dir,
         apps_client=apps_client,
-        target_app_name=getattr(args, "app_name", None) or app_name,
-        identifier=getattr(args, "to", None) or getattr(args, "app_name", None),
-        display_name=getattr(args, "display_name", None) or display_name,
-        env_file=getattr(args, "env_file", None),
+        target_app_name=app_name_arg or app_name,
+        identifier=identifier,
+        display_name=display_name_arg or display_name,
+        env_file=env_file,
         args=args,
+        profile=profile,
     )
 
 
@@ -411,6 +560,7 @@ def _app_push(
     display_name: str | None = None,
     env_file: str | None = None,
     args: argparse.Namespace | None = None,
+    profile: ResolvedProfile | None = None,
 ) -> str | None:
     """Helper to push an app to CXAS."""
     temp_dir = tempfile.mkdtemp()
@@ -460,6 +610,19 @@ def _app_push(
                 print(
                     f"Warning: Custom environment file "
                     f"'{env_file}' not found. Skipping."
+                )
+
+        # Apply profile overrides to staged app.json / app.yaml BEFORE
+        # $env_var and boolean env-override resolvers run.
+        if profile is not None and profile.app_overrides:
+            staged_cfg, overlay_warnings = apply_app_overrides_in_dir(
+                inner_dir, profile
+            )
+            print_profile_warnings(overlay_warnings)
+            if staged_cfg is not None:
+                print(
+                    f"Applied profile '{profile.name}' overrides to staged "
+                    f"{staged_cfg.name}"
                 )
 
         from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
@@ -581,8 +744,33 @@ def app_create(args: argparse.Namespace) -> None:
 
 def app_delete(args: argparse.Namespace) -> None:
     """Handles the 'delete' command."""
+    profile: ResolvedProfile | None = None
+    try:
+        profile = load_profile(getattr(args, "profile", None))
+        guard_protected_mutation(
+            profile,
+            command="delete",
+            allow_protected=getattr(args, "allow_protected", False),
+        )
+    except ProfileError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if profile is not None:
+        print_profile_warnings(profile.warnings)
+        if not getattr(args, "project_id", None) and profile.target.project_id:
+            args.project_id = profile.target.project_id
+        if not getattr(args, "location", None) and profile.target.location:
+            args.location = profile.target.location
 
     app_name_arg = getattr(args, "app_name", None)
+    display_name_arg = getattr(args, "display_name", None)
+    if not app_name_arg and not display_name_arg and profile is not None:
+        if profile.target.app_resource_name:
+            app_name_arg = profile.target.app_resource_name
+        elif profile.target.display_name:
+            display_name_arg = profile.target.display_name
+            args.display_name = display_name_arg
 
     if app_name_arg:
         print(f"Deleting App: {app_name_arg}")

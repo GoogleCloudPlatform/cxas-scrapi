@@ -768,3 +768,153 @@ def test_parser_lint_and_branch_and_promote_env_file() -> None:
     )
     assert promote_args.deployments_command == "promote"
     assert promote_args.env_file == "./env.prod.json"
+
+
+def test_parser_profile_defaults_do_not_clobber_profile_values() -> None:
+    """Verify argparse defaults stay None so profile values are not clobbered."""
+    parser = get_parser()
+
+    pull_args = parser.parse_args(["pull", "--profile", "dev"])
+    assert pull_args.app is None
+    assert pull_args.profile == "dev"
+    assert pull_args.accept_profile_overrides is False
+
+    push_args = parser.parse_args(
+        ["push", "--profile", "prod", "--allow-protected", "--dry-run"]
+    )
+    assert push_args.app_dir is None
+    assert push_args.profile == "prod"
+    assert push_args.allow_protected is True
+    assert push_args.dry_run is True
+
+    ci_args = parser.parse_args(["ci-test", "--profile", "dev"])
+    assert ci_args.app_dir is None
+    assert ci_args.project_id is None
+    assert ci_args.location is None
+    assert ci_args.profile == "dev"
+
+    run_args = parser.parse_args(["run", "--profile", "dev", "--tags", "smoke"])
+    assert run_args.app_name is None
+    assert run_args.modality is None
+    assert run_args.profile == "dev"
+
+    llm_args = parser.parse_args(["llm-lint", "--profile", "dev"])
+    assert llm_args.agent_dir is None
+    assert llm_args.location is None
+    assert llm_args.profile == "dev"
+
+    report_args = parser.parse_args(
+        ["evals", "report", "--output-dir", "out", "--profile", "dev"]
+    )
+    assert report_args.modality is None
+    assert report_args.profile == "dev"
+
+    promote_args = parser.parse_args(
+        ["deployments", "promote", "--profile", "prod", "--allow-protected"]
+    )
+    assert promote_args.profile == "prod"
+    assert promote_args.allow_protected is True
+
+
+def test_profile_cli_list_show_validate(
+    tmp_path: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: typing.Any,
+) -> None:
+    """Test `cxas profile list | show | validate` subcommands."""
+    import json as json_mod  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    (tmp_path / ".git").mkdir()
+    profiles_dir = tmp_path / ".cxas" / "profiles"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "dev.yml").write_text(
+        yaml.safe_dump(
+            {
+                "target": {
+                    "project_id": "dev-proj",
+                    "location": "us",
+                    "app_id": "dev-app",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CXAS_PROFILE", raising=False)
+
+    with mock.patch.object(sys, "argv", ["cxas", "profile", "list", "--json"]):
+        main_cli.main()
+    listed = json_mod.loads(capsys.readouterr().out)
+    assert len(listed) == 1
+    assert listed[0]["name"] == "dev"
+
+    with mock.patch.object(
+        sys, "argv", ["cxas", "profile", "show", "dev", "--json"]
+    ):
+        main_cli.main()
+    shown = json_mod.loads(capsys.readouterr().out)
+    assert shown["target"]["project_id"] == "dev-proj"
+
+    with mock.patch.object(
+        sys, "argv", ["cxas", "profile", "validate", "--all", "--json"]
+    ):
+        main_cli.main()
+    validated = json_mod.loads(capsys.readouterr().out)
+    assert validated["valid"] is True
+
+
+def test_llm_lint_does_not_map_ces_us_eu_into_vertex_location(
+    tmp_path: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ensure CES multi-region 'us'/'eu' never leaks into Vertex AI location."""
+    import yaml  # noqa: PLC0415
+
+    from cxas_scrapi.cli.llm_lint import llm_lint  # noqa: PLC0415
+
+    (tmp_path / ".git").mkdir()
+    agent_dir = tmp_path / "src" / "agent" / "agents" / "root"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "instruction.txt").write_text(
+        "Be helpful and concise.", encoding="utf-8"
+    )
+    profiles_dir = tmp_path / ".cxas" / "profiles"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "eu-dev.yml").write_text(
+        yaml.safe_dump(
+            {
+                "target": {
+                    "project_id": "eu-proj",
+                    "location": "eu",
+                    "app_id": "eu-app",
+                },
+                "app_dir": "src/agent",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("LOCATION", raising=False)
+    monkeypatch.delenv("REGION", raising=False)
+
+    with mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate") as mock_gemini:
+        mock_gemini.return_value.generate.return_value = "## OK"
+        args = argparse.Namespace(
+            agent_dir=None,
+            project_id=None,
+            location=None,
+            model="gemini-2.5-flash",
+            output=None,
+            profile="eu-dev",
+        )
+        llm_lint(args)
+
+    mock_gemini.assert_called_once_with(
+        project_id="eu-proj",
+        location="us-central1",
+        model_name="gemini-2.5-flash",
+    )

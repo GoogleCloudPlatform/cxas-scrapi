@@ -1779,3 +1779,315 @@ def test_app_lint_with_env_file_flag(
     assert excinfo.value.code == 1
     results = json.loads(capsys.readouterr().out)
     assert any(r["rule_id"] == "A017" for r in results)
+
+
+def test_app_push_with_profile_overlays_before_env_var_resolution(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    (tmp_path / ".git").mkdir()
+    app_dir = tmp_path / "src" / "agent"
+    app_dir.mkdir(parents=True)
+    source_app_json = app_dir / "app.json"
+    source_app_json.write_text(
+        json.dumps(
+            {
+                "displayName": "Base Agent",
+                "rootAgent": "root",
+                "modelSettings": {"model": "gemini-2.5-flash"},
+                "variableDeclarations": [
+                    {
+                        "name": "enable_auth",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "dev.env.json"
+    env_file.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {"name": "enable_auth", "schema": {"default": True}}
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    profiles_dir = tmp_path / ".cxas" / "profiles"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "dev.yml").write_text(
+        yaml.safe_dump(
+            {
+                "target": {
+                    "project_id": "dev-proj",
+                    "location": "europe-west2",
+                    "app_id": "dev-app-1",
+                },
+                "app_dir": "src/agent",
+                "env_file": "dev.env.json",
+                "overrides": {
+                    "app.json": {
+                        "displayName": "Dev Sandbox",
+                        "modelSettings": {"model": "gemini-2.5-pro"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CXAS_PROFILE", raising=False)
+
+    mock_apps_client.import_app.return_value = _mock_import_lro(
+        "projects/dev-proj/locations/europe-west2/apps/dev-app-1", []
+    )
+
+    args = argparse.Namespace(
+        app_dir=None,
+        to=None,
+        app_name=None,
+        display_name=None,
+        env_file=None,
+        project_id=None,
+        location=None,
+        profile="dev",
+        allow_protected=False,
+        dry_run=False,
+    )
+    cli_app.app_push(args)
+
+    out = capsys.readouterr().out
+    assert "Profile: dev -> dev-proj/europe-west2/dev-app-1" in out
+
+    zip_bytes = mock_apps_client.import_app.call_args[1]["app_content"]
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        pushed_app = json.loads(zf.read("agent/app.json").decode("utf-8"))
+
+    assert pushed_app["displayName"] == "Dev Sandbox"
+    assert pushed_app["modelSettings"]["model"] == "gemini-2.5-pro"
+    assert pushed_app["variableDeclarations"][0]["schema"]["default"] is True
+
+    # Tracked working tree remains untouched
+    tracked = json.loads(source_app_json.read_text(encoding="utf-8"))
+    assert tracked["displayName"] == "Base Agent"
+    assert tracked["variableDeclarations"][0]["schema"]["default"] == "$env_var"
+
+
+def test_app_push_protected_profile_blocked_locally_and_dry_run_allowed(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "app.json").write_text(
+        json.dumps({"displayName": "Base", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    profiles_dir = tmp_path / ".cxas" / "profiles"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "prod.yml").write_text(
+        yaml.safe_dump(
+            {
+                "protected": True,
+                "target": {
+                    "project_id": "prod-proj",
+                    "location": "us",
+                    "app_id": "prod-app",
+                },
+                "overrides": {"app.json": {"displayName": "Prod Agent"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("CXAS_PROFILE", raising=False)
+
+    # Dry-run succeeds even on protected profile without calling CES
+    dry_args = argparse.Namespace(
+        app_dir=None,
+        to=None,
+        app_name=None,
+        display_name=None,
+        env_file=None,
+        project_id=None,
+        location=None,
+        profile="prod",
+        allow_protected=False,
+        dry_run=True,
+    )
+    assert cli_app.app_push(dry_args) is None
+    dry_out = capsys.readouterr().out
+    assert "[DRY RUN]" in dry_out
+    assert "Prod Agent" in dry_out
+    mock_apps_client.import_app.assert_not_called()
+
+    # Mutating push without --allow-protected fails fast
+    push_args = argparse.Namespace(
+        app_dir=None,
+        to=None,
+        app_name=None,
+        display_name=None,
+        env_file=None,
+        project_id=None,
+        location=None,
+        profile="prod",
+        allow_protected=False,
+        dry_run=False,
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_push(push_args)
+    assert excinfo.value.code == 1
+    assert "protected profile" in capsys.readouterr().err
+    mock_apps_client.import_app.assert_not_called()
+
+
+def test_app_push_fails_on_explicit_to_with_cxas_profile_env(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: typing.Any,
+) -> None:
+    import yaml  # noqa: PLC0415
+
+    (tmp_path / ".git").mkdir()
+    profiles_dir = tmp_path / ".cxas" / "profiles"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "dev.yml").write_text(
+        yaml.safe_dump(
+            {"target": {"project_id": "p", "location": "us", "app_id": "a"}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CXAS_PROFILE", "dev")
+
+    args = argparse.Namespace(
+        app_dir=None,
+        to="projects/other/locations/us/apps/other-app",
+        app_name=None,
+        display_name=None,
+        env_file=None,
+        project_id=None,
+        location=None,
+        profile=None,
+        allow_protected=False,
+        dry_run=False,
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_push(args)
+    assert excinfo.value.code == 1
+    assert "CXAS_PROFILE" in capsys.readouterr().err
+    mock_apps_client.import_app.assert_not_called()
+
+
+def test_app_pull_with_profile_preserves_overridden_keys(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    (tmp_path / ".git").mkdir()
+    app_dir = tmp_path / "my_app"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Tracked Base",
+                "modelSettings": {
+                    "model": "gemini-2.5-flash",
+                    "temperature": 0.2,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    profiles_dir = tmp_path / ".cxas" / "profiles"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "dev.yml").write_text(
+        yaml.safe_dump(
+            {
+                "target": {
+                    "project_id": "dev-proj",
+                    "location": "us",
+                    "app_id": "dev-app",
+                },
+                "overrides": {
+                    "app.json": {
+                        "displayName": "Sandbox Name",
+                        "modelSettings": {"model": "gemini-2.5-pro"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CXAS_PROFILE", raising=False)
+
+    # Create zip archive mimicking CES export with sandbox values + temperature edit
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "my_app/app.json",
+            json.dumps(
+                {
+                    "displayName": "Sandbox Name",
+                    "modelSettings": {
+                        "model": "gemini-2.5-pro",
+                        "temperature": 0.7,
+                    },
+                }
+            ),
+        )
+    export_resp = mock.MagicMock()
+    export_resp.app_content = buf.getvalue()
+    mock_apps_client.export_app.return_value.result.return_value = export_resp
+
+    args = argparse.Namespace(
+        app=None,
+        target_dir=str(tmp_path),
+        overwrite=False,
+        version_id=None,
+        app_dir_name=None,
+        project_id=None,
+        location=None,
+        profile="dev",
+        accept_profile_overrides=False,
+    )
+    cli_app.app_pull(args)
+
+    pulled = json.loads((app_dir / "app.json").read_text(encoding="utf-8"))
+    assert pulled["displayName"] == "Tracked Base"
+    assert pulled["modelSettings"]["model"] == "gemini-2.5-flash"
+    assert pulled["modelSettings"]["temperature"] == 0.7
+    assert "Preserved tracked base value(s)" in capsys.readouterr().err
+
+    # With --accept-profile-overrides, remote values overwrite local base
+    args.accept_profile_overrides = True
+    cli_app.app_pull(args)
+    pulled_accepted = json.loads(
+        (app_dir / "app.json").read_text(encoding="utf-8")
+    )
+    assert pulled_accepted["displayName"] == "Sandbox Name"
+    assert pulled_accepted["modelSettings"]["model"] == "gemini-2.5-pro"
