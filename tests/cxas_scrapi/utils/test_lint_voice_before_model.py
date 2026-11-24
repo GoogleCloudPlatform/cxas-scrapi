@@ -286,3 +286,31 @@ def test_is_voice_app_ignores_non_utf8_deployment_and_app_files(
     bad_yaml_app.mkdir()
     (bad_yaml_app / "app.yaml").write_bytes(b"\xff\xfe\x00invalid")
     assert is_voice_app(_context(bad_yaml_app)) is False
+
+
+def test_run_rules_ignores_non_utf8_deployment_file_without_crashing(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.json").write_text(
+        '{"displayName": "app", "rootAgent": "root"}', encoding="utf-8"
+    )
+    ag_dir = tmp_path / "agents" / "root"
+    ag_dir.mkdir(parents=True)
+    (ag_dir / "root.json").write_text(
+        '{"displayName": "root", "instruction": "agents/root/instruction.txt"}',
+        encoding="utf-8",
+    )
+    (ag_dir / "instruction.txt").write_text("Hello.\n", encoding="utf-8")
+    deps = tmp_path / "deployments"
+    deps.mkdir()
+    (deps / "00_corrupt.yaml").write_bytes(b"\xff\xfe\x00invalid")
+
+    report = LintReport()
+    run_rules(
+        build_registry(),
+        LintConfig(),
+        _context(tmp_path),
+        Discovery(tmp_path, tmp_path / "evals"),
+        report,
+    )
+    assert isinstance(report.results, list)

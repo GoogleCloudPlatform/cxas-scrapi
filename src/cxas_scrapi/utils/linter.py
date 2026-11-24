@@ -1043,7 +1043,13 @@ def run_rules(
             if config.is_ignored(rel):
                 continue
             file_model = context.get_model_for_file(file_path)
-            content = file_path.read_text() if file_path.is_file() else ""
+            if file_path.is_file():
+                try:
+                    content = file_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+            else:
+                content = ""
             for rule_obj in rules:
                 if not rule_obj.is_applicable_for_model(file_model):
                     continue
