@@ -44,7 +44,9 @@ _DANGLING_TOKEN_RE = re.compile(
     r"@@(?:brand|env|routing|build)\.[A-Za-z0-9_.:-]+"
 )
 _PY_STR_PREFIX_RE = re.compile(r"^([rRuUbBfF]*)('''|\"\"\"|'|\")")
+_FSTRING_START = getattr(tokenize, "FSTRING_START", None)
 _FSTRING_MIDDLE = getattr(tokenize, "FSTRING_MIDDLE", None)
+_FSTRING_END = getattr(tokenize, "FSTRING_END", None)
 
 
 class BuildError(Exception):
@@ -104,18 +106,53 @@ def _render_env_template(
     return _ENV_TEMPLATE_BRACE_RE.sub(_sub, template)
 
 
-def _escape_for_python_quote(value: str, quote: str) -> str:
+def _escape_for_python_quote(
+    value: str, quote: str, *, escape_braces: bool = False
+) -> str:
     escaped = value.replace("\\", "\\\\")
     if len(quote) == 1:
-        return (
+        escaped = (
             escaped.replace(quote, f"\\{quote}")
             .replace("\n", "\\n")
             .replace("\r", "\\r")
         )
-    escaped = escaped.replace(quote, f"\\{quote[0]}" * 3)
-    if escaped.endswith(quote[0]):
-        escaped = escaped[:-1] + f"\\{quote[0]}"
+    else:
+        escaped = escaped.replace(quote[0], f"\\{quote[0]}").replace(
+            "\r", "\\r"
+        )
+    if escape_braces:
+        escaped = escaped.replace("{", "{{").replace("}", "}}")
     return escaped
+
+
+def _escape_for_raw_python_quote(
+    value: str, quote: str, *, escape_braces: bool = False
+) -> str:
+    """Validate and prepare a value for substitution inside a raw string."""
+    if "\r" in value or (len(quote) == 1 and "\n" in value):
+        raise BuildError(
+            "Cannot safely substitute multiline value into a raw Python "
+            "string literal."
+        )
+    if quote in value:
+        raise BuildError(
+            "Cannot safely substitute value containing quote delimiter into "
+            "a raw Python string literal."
+        )
+    if len(quote) == 3 and value.endswith(quote[0]):
+        raise BuildError(
+            "Cannot safely substitute value ending in quote delimiter into a "
+            "raw triple-quoted Python string literal."
+        )
+    trailing_bs = len(value) - len(value.rstrip("\\"))
+    if trailing_bs % 2 == 1:
+        raise BuildError(
+            "Cannot safely substitute value ending in an odd number of "
+            "backslashes into a raw Python string literal."
+        )
+    if escape_braces:
+        return value.replace("{", "{{").replace("}", "}}")
+    return value
 
 
 def _render_python_source(
@@ -126,9 +163,9 @@ def _render_python_source(
 ) -> str:
     """Process conditionals and tokens in Python code with safe string escaping.
 
-    Escapes substituted values inside Python string literals so quotes,
-    backslashes, and newlines do not corrupt syntax, then validates the result
-    with ``ast.parse``.
+    Escapes substituted values inside Python string literals (and f-strings,
+    including doubling ``{``/``}``) so quotes, backslashes, newlines, or braces
+    cannot corrupt syntax or inject code, then validates with ``ast.parse``.
     """
     text = process_conditionals(source)
     if "@@" not in text:
@@ -149,13 +186,49 @@ def _render_python_source(
         row, col = pos
         return line_offsets[row - 1] + col
 
+    def _sub_in_literal(
+        s: str,
+        quote: str,
+        *,
+        is_raw: bool = False,
+        escape_braces: bool = False,
+    ) -> str:
+        def _esc_token(match: re.Match[str]) -> str:
+            resolved = process_string(match.group(0))
+            if is_raw:
+                return _escape_for_raw_python_quote(
+                    resolved, quote, escape_braces=escape_braces
+                )
+            return _escape_for_python_quote(
+                resolved, quote, escape_braces=escape_braces
+            )
+
+        replaced = re.sub(r"@@[^@\s]+@@", _esc_token, s)
+        dangling = _DANGLING_TOKEN_RE.findall(replaced)
+        if dangling:
+            raise BuildError(
+                f"Unresolved placeholders remain in string: {dangling}"
+            )
+        return replaced
+
     edits: list[tuple[int, int, str]] = []
+    fstring_stack: list[tuple[str, str]] = []
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
     except (tokenize.TokenError, IndentationError) as exc:
         raise BuildError(f"{path}: invalid Python syntax: {exc}") from exc
 
     for tok in tokens:
+        if _FSTRING_START is not None and tok.type == _FSTRING_START:
+            m_fs = _PY_STR_PREFIX_RE.match(tok.string)
+            if m_fs:
+                fstring_stack.append((m_fs.group(1), m_fs.group(2)))
+            continue
+        if _FSTRING_END is not None and tok.type == _FSTRING_END:
+            if fstring_stack:
+                fstring_stack.pop()
+            continue
+
         if "@@" not in tok.string:
             continue
         start_off = _to_offset(tok.start)
@@ -169,7 +242,9 @@ def _render_python_source(
                 )
             prefix, quote = m.group(1), m.group(2)
             body = tok.string[len(prefix) + len(quote) : -len(quote)]
-            if "r" in prefix.lower():
+            is_f = "f" in prefix.lower()
+            is_raw = "r" in prefix.lower()
+            if is_raw and not is_f:
                 rendered_val = process_string(body)
                 new_prefix = "".join(c for c in prefix if c not in "rR")
                 new_tok = (
@@ -177,36 +252,16 @@ def _render_python_source(
                     f"{_escape_for_python_quote(rendered_val, quote)}{quote}"
                 )
             else:
-                # Substitute only inside placeholder spans while keeping
-                # existing escapes in the literal intact.
-                def _sub_literal(s: str, q: str = quote) -> str:
-                    def _esc_token(
-                        match: re.Match[str],
-                    ) -> str:
-                        resolved = process_string(match.group(0))
-                        return _escape_for_python_quote(resolved, q)
-
-                    # Replace closed @@...@@ tokens first, then verify no
-                    # dangling tokens remain.
-                    replaced = re.sub(r"@@[^@\s]+@@", _esc_token, s)
-                    dangling = _DANGLING_TOKEN_RE.findall(replaced)
-                    if dangling:
-                        raise BuildError(
-                            f"Unresolved placeholders remain in string: "
-                            f"{dangling}"
-                        )
-                    return replaced
-
-                new_tok = f"{prefix}{quote}{_sub_literal(body)}{quote}"
+                new_body = _sub_in_literal(
+                    body, quote, is_raw=is_raw, escape_braces=is_f
+                )
+                new_tok = f"{prefix}{quote}{new_body}{quote}"
             edits.append((start_off, end_off, new_tok))
         elif _FSTRING_MIDDLE is not None and tok.type == _FSTRING_MIDDLE:
-            rendered = process_string(tok.string)
-            safe = (
-                rendered.replace("\\", "\\\\")
-                .replace('"', '\\"')
-                .replace("'", "\\'")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
+            prefix, quote = fstring_stack[-1] if fstring_stack else ("f", '"')
+            is_raw = "r" in prefix.lower()
+            safe = _sub_in_literal(
+                tok.string, quote, is_raw=is_raw, escape_braces=True
             )
             edits.append((start_off, end_off, safe))
         elif tok.type == tokenize.COMMENT:
