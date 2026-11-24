@@ -38,6 +38,8 @@ class Deployments(Apps):
         CONTACT_CENTER_AS_A_SERVICE = "CONTACT_CENTER_AS_A_SERVICE"
         FIVE9 = "FIVE9"
         AUDIOCODES = "CONTACT_CENTER_INTEGRATION"
+        WHATSAPP = "WHATSAPP"
+        INSTAGRAM = "INSTAGRAM"
 
     class Modality(Enum):
         CHAT_AND_VOICE = "CHAT_AND_VOICE"

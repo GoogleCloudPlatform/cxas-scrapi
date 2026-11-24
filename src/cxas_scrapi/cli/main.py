@@ -29,6 +29,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from cxas_scrapi.cli.arc_cli import register as register_arc_subparser
+from cxas_scrapi.cli.build_cli import register as register_build_subparsers
 from cxas_scrapi.cli.hot_patch_cli import (
     attach_hot_patch_args,
 )
@@ -3473,6 +3474,9 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'trace' — observability/debugging for past conversations.
     register_trace_subparser(subparsers)
+
+    # Subparsers for 'build' and 'package' — Multi-Brand Build & ZIP packaging.
+    register_build_subparsers(subparsers)
 
     # Subparsers for 'arc' — the CX Agent Studio AI assistant.
     register_arc_subparser(subparsers)

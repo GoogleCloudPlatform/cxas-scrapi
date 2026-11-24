@@ -24,6 +24,12 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!src/cxas_scrapi/build/
+!src/cxas_scrapi/build/**
+src/cxas_scrapi/build/__pycache__/
+!tests/**/build/
+!tests/**/build/**
+tests/**/build/__pycache__/
 develop-eggs/
 dist/
 downloads/
