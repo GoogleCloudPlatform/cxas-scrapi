@@ -1522,8 +1522,12 @@ def ci_test(args: argparse.Namespace) -> None:
                         "--wait",
                         "--filter-auto-metrics",
                     ]
-                    if getattr(args, "snapshot", False) and snap_ctx is None:
+                    if getattr(args, "snapshot", False):
                         cmd.append("--snapshot")
+                        if getattr(args, "snapshot_label", None):
+                            cmd.extend(
+                                ["--snapshot-label", args.snapshot_label]
+                            )
                     print(f"Executing: {' '.join(cmd)}")
                     res = subprocess.run(cmd, check=False)
                     if res.returncode != 0:

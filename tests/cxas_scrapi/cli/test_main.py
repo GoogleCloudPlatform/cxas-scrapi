@@ -1096,18 +1096,23 @@ def test_ci_test_batch_gating_and_impact_filter(
         min_pass_rate=0.9,
     )
 
+    # Pre-import reporting before patching Evaluations (SimulationEvals subclasses Evaluations)
+    import cxas_scrapi.utils.reporting as reporting_mod  # noqa: PLC0415
+
     with (
         mock.patch("cxas_scrapi.core.apps.Apps") as mock_apps,
         mock.patch("cxas_scrapi.cli.app.app_push", return_value=app_name),
         mock.patch(
             "cxas_scrapi.core.evaluations.Evaluations"
         ) as mock_evals_cls,
-        mock.patch(
-            "cxas_scrapi.utils.reporting.load_golden_results",
+        mock.patch.object(
+            reporting_mod,
+            "load_golden_results",
             return_value=[{"case": "Billing Check", "passed": False}],
         ),
-        mock.patch(
-            "cxas_scrapi.utils.reporting.summarize_and_gate_evals",
+        mock.patch.object(
+            reporting_mod,
+            "summarize_and_gate_evals",
             return_value={
                 "gate_passed": False,
                 "passed_cases": 0,
@@ -1125,3 +1130,60 @@ def test_ci_test_batch_gating_and_impact_filter(
     assert excinfo.value.code == 1
     assert mock_evals_cls.return_value.run_evaluation.call_count == 2
     mock_gate.assert_called_once()
+
+
+def test_ci_test_single_run_forwards_snapshot_to_subprocess(
+    tmp_path: typing.Any,
+) -> None:
+    """Single-run `ci-test --snapshot` must forward --snapshot to `cxas run`."""
+    app_name = "projects/p/locations/us/apps/temp-snap"
+    eval_id = f"{app_name}/evaluations/e1"
+    fake_snap_ctx = mock.MagicMock(pinned_version=f"{app_name}/versions/v1")
+
+    with (
+        mock.patch("cxas_scrapi.core.apps.Apps") as mock_apps,
+        mock.patch("cxas_scrapi.cli.app.app_push", return_value=app_name),
+        mock.patch(
+            "cxas_scrapi.core.evaluations.Evaluations"
+        ) as mock_evals_cls,
+        mock.patch(
+            "cxas_scrapi.collab.snapshot_testing.begin_run",
+            return_value=fake_snap_ctx,
+        ),
+        mock.patch("cxas_scrapi.collab.snapshot_testing.report_finish"),
+        mock.patch(
+            "cxas_scrapi.cli.main.subprocess.run",
+            return_value=mock.MagicMock(returncode=0),
+        ) as mock_subproc,
+    ):
+        mock_apps.return_value.get_app_by_display_name.return_value = None
+        mock_evals_cls.return_value.get_evaluations_map.return_value = {
+            "goldens": {"smoke": eval_id},
+            "scenarios": {},
+        }
+        main_cli.ci_test(
+            argparse.Namespace(
+                app_dir=str(tmp_path),
+                project_id="p",
+                location="us",
+                display_name="[CI] PR-9",
+                env_file=None,
+                profile=None,
+                allow_protected=False,
+                lint=False,
+                evals_dir=None,
+                tags=[],
+                evals_from_impact=None,
+                snapshot=True,
+                snapshot_label="pr-9",
+                runs=1,
+                min_run_passes=None,
+                min_pass_rate=None,
+            )
+        )
+
+    mock_subproc.assert_called_once()
+    cmd = mock_subproc.call_args.args[0]
+    assert "--snapshot" in cmd
+    assert "--snapshot-label" in cmd
+    assert "pr-9" in cmd
