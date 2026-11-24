@@ -27,6 +27,7 @@ import numpy as np
 import pytest
 from google.api_core.exceptions import Forbidden, NotFound
 
+from cxas_scrapi.cli.main import get_parser
 from cxas_scrapi.utils import eval_bigquery, reporting
 from cxas_scrapi.utils.eval_bigquery import (
     EvalBigQueryError,
@@ -1213,3 +1214,86 @@ def test_tags_default_to_the_runner_simulation_folder(
     folder.mkdir(parents=True)
     (folder / "a.yaml").write_text(_SIM_YAML.format(name="a", tag="t1"))
     assert reporting._load_sim_tags_by_name(None) == {"a": ["t1"]}
+
+
+def test_tags_resolve_from_app_dir_when_simulation_dir_is_not_explicit(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app_sims = tmp_path / "my_agent" / "evals" / "simulations"
+    app_sims.mkdir(parents=True)
+    (app_sims / "a.yaml").write_text(_SIM_YAML.format(name="a", tag="from_app"))
+
+    # Both None (Python API) and the CLI default resolve under app_dir.
+    assert reporting._load_sim_tags_by_name(None, app_dir="my_agent") == {
+        "a": ["from_app"]
+    }
+    assert reporting._load_sim_tags_by_name(
+        "evals/simulations/", app_dir="my_agent"
+    ) == {"a": ["from_app"]}
+
+    # An explicit non-default simulation_dir is not overridden by app_dir.
+    assert (
+        reporting._load_sim_tags_by_name(
+            str(tmp_path / "missing"), app_dir="my_agent"
+        )
+        == {}
+    )
+
+    # When app_dir has no evals/simulations/, fall back to ./evals/simulations/.
+    cwd_sims = tmp_path / "evals" / "simulations"
+    cwd_sims.mkdir(parents=True)
+    (cwd_sims / "a.yaml").write_text(_SIM_YAML.format(name="a", tag="from_cwd"))
+    assert reporting._load_sim_tags_by_name(
+        "evals/simulations/", app_dir=str(tmp_path / "other_agent")
+    ) == {"a": ["from_cwd"]}
+
+
+def test_cli_report_with_app_dir_and_run_loads_sim_tags_without_simulation_dir(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    app_sims = tmp_path / "my_agent" / "evals" / "simulations"
+    app_sims.mkdir(parents=True)
+    (app_sims / "billing.yaml").write_text(
+        "evals:\n  - name: refund_1\n    tags: [high, billing]\n",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    results = {
+        "simulation": [{"name": "refund_1", "passed": True}],
+        "tool": [],
+        "callback": [],
+        "golden": [],
+    }
+    client = _client()
+
+    args = get_parser().parse_args(
+        [
+            "evals",
+            "report",
+            "--output-dir",
+            str(out_dir),
+            "--app-dir",
+            "my_agent",
+            "--run",
+            "--bq-dataset",
+            "p.d",
+        ]
+    )
+    with (
+        patch.object(reporting, "run_all_evals", return_value=results),
+        patch.object(
+            eval_bigquery, "bigquery_client", autospec=True, return_value=client
+        ),
+    ):
+        args.func(args)
+
+    loaded = {
+        call.args[1].rsplit(".", 1)[-1]: call.args[0]
+        for call in client.load_table_from_json.call_args_list
+    }
+    assert [row["tags"] for row in loaded["eval_results"]] == [
+        ["high", "billing"]
+    ]

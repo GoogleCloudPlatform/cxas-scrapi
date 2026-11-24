@@ -7916,6 +7916,7 @@ def generate_combined_report_from_dir(
                     tool_results=tool_results,
                     callback_results=callback_results,
                     app_name=app_name,
+                    app_dir=app_dir,
                     suite_name=suite_name,
                     modality=modality,
                     runs=runs,
@@ -7936,14 +7937,33 @@ def generate_combined_report_from_dir(
     return actual_path
 
 
-def _load_sim_tags_by_name(simulation_dir: str | None) -> dict[str, list[str]]:
+_DEFAULT_SIMULATION_DIR = "evals/simulations/"
+
+
+def _load_sim_tags_by_name(
+    simulation_dir: str | None,
+    app_dir: str | None = None,
+) -> dict[str, list[str]]:
     """Maps simulation case names to the ``tags`` of their definition.
 
     Reads the same files as the runner: a single ``.yaml`` / ``.yml`` /
-    ``.json`` file, or the files at the top level of the folder (default
+    ``.json`` file, or the files at the top level of the folder (under
+    ``<app_dir>/evals/simulations`` when ``app_dir`` is set and
+    ``simulation_dir`` is omitted or the CLI default, otherwise
     ``evals/simulations/``). Files that can't be read are skipped.
     """
-    path = simulation_dir or "evals/simulations/"
+    candidates: list[str] = []
+    if app_dir and simulation_dir in (
+        None,
+        "",
+        "evals/simulations",
+        _DEFAULT_SIMULATION_DIR,
+    ):
+        candidates.append(os.path.join(app_dir, "evals", "simulations"))
+    candidates.append(simulation_dir or _DEFAULT_SIMULATION_DIR)
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if path is None:
+        return {}
     if os.path.isdir(path):
         files = evals_runner._discover_yaml_and_extra_files(path)
     elif os.path.isfile(path):
@@ -8037,6 +8057,7 @@ def _export_results_to_bigquery(
     tool_results: list[dict[str, Any]],
     callback_results: list[dict[str, Any]],
     app_name: str | None,
+    app_dir: str | None,
     suite_name: str | None,
     modality: str,
     runs: int,
@@ -8075,7 +8096,7 @@ def _export_results_to_bigquery(
         golden_results=golden_results,
         tool_results=tool_results,
         callback_results=callback_results,
-        tags_by_name=_load_sim_tags_by_name(simulation_dir),
+        tags_by_name=_load_sim_tags_by_name(simulation_dir, app_dir=app_dir),
         create_dataset=create_dataset,
         location=location,
     )
