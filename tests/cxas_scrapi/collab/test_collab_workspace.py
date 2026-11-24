@@ -282,3 +282,89 @@ def test_no_merge_engine_exported() -> None:
     assert not hasattr(ws, "merge_workspace")
     assert not hasattr(ws, "MergePlan")
     assert not hasattr(ws, "MergeResult")
+
+
+def test_workspace_up_without_profile_pins_display_name_and_respects_cxas_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With profile=None, staging & ws.local.yml must still pin displayName;
+    with CXAS_PROFILE set, workspace_up must inherit it."""
+    (tmp_path / ".git").mkdir()
+    app_dir = tmp_path / "agent"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json.dumps({"displayName": "Base Tracked Name", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("CXAS_PROFILE", raising=False)
+
+    ws_app_name = "projects/p1/locations/us/apps/ws-999"
+    state: dict[str, Any] = {"metadata": {}, "etag": "e1"}
+    fake_apps = mock.MagicMock()
+    fake_apps.get_app_by_display_name.return_value = None
+    fake_apps.get_app.side_effect = lambda name: types.App(
+        name=name,
+        metadata=dict(state["metadata"]),
+        locked=False,
+        etag=state["etag"],
+    )
+
+    def _update(request: types.UpdateAppRequest) -> types.App:
+        state["metadata"] = dict(request.app.metadata)
+        state["etag"] += "x"
+        return fake_apps.get_app(request.app.name)
+
+    fake_apps.client.update_app.side_effect = _update
+
+    captured_profiles: list[Any] = []
+
+    def _fake_push(**kwargs: Any) -> str:
+        captured_profiles.append(kwargs.get("profile"))
+        return ws_app_name
+
+    with mock.patch("cxas_scrapi.cli.app._app_push", side_effect=_fake_push):
+        res = ws.workspace_up(
+            app_dir=str(app_dir),
+            project_id="p1",
+            location="us",
+            name="ws-custom",
+            profile=None,
+            apps=fake_apps,
+            user="alice@example.com",
+        )
+
+    assert captured_profiles[0] is not None
+    assert captured_profiles[0].app_overrides["displayName"] == "ws-custom"
+    assert res.profile_path is not None
+    written = yaml.safe_load(res.profile_path.read_text(encoding="utf-8"))
+    assert written["overrides"]["app.json"]["displayName"] == "ws-custom"
+
+    # Now set CXAS_PROFILE=envdev and omit profile= arg; project/location come from it
+    pdir = tmp_path / ".cxas" / "profiles"
+    (pdir / "envdev.yml").write_text(
+        yaml.safe_dump(
+            {
+                "target": {
+                    "project_id": "env-proj",
+                    "location": "europe-west2",
+                },
+                "app_dir": "agent",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CXAS_PROFILE", "envdev")
+    with mock.patch("cxas_scrapi.cli.app._app_push", side_effect=_fake_push):
+        res_env = ws.workspace_up(
+            name="ws-from-env",
+            profile=None,
+            apps=fake_apps,
+            user="alice@example.com",
+        )
+    assert res_env.profile_path is not None
+    written_env = yaml.safe_load(
+        res_env.profile_path.read_text(encoding="utf-8")
+    )
+    assert written_env["target"]["project_id"] == "env-proj"
+    assert written_env["target"]["location"] == "europe-west2"

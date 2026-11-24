@@ -469,16 +469,24 @@ def _write_ws_local_profile(
         payload["app_dir"] = app_dir
     if env_file:
         payload["env_file"] = env_file
-    if base_profile is not None and base_profile.overrides:
-        inherited_overrides = copy.deepcopy(base_profile.overrides)
-        # Keep the workspace displayName so subsequent `cxas push --profile
-        # ws.local` does not rename the workspace back to the base profile.
-        for cfg_name in ("app.json", "app.yaml"):
-            if cfg_name in inherited_overrides and isinstance(
-                inherited_overrides[cfg_name], dict
-            ):
-                inherited_overrides[cfg_name]["displayName"] = display_name
-        payload["overrides"] = inherited_overrides
+    inherited_overrides: dict[str, dict[str, Any]] = (
+        copy.deepcopy(base_profile.overrides)
+        if base_profile is not None and base_profile.overrides
+        else {}
+    )
+    # Always keep the workspace displayName so subsequent
+    # `cxas push --profile ws.local` never renames the workspace back to
+    # tracked app.json's displayName.
+    updated_cfg = False
+    for cfg_name in ("app.json", "app.yaml"):
+        if cfg_name in inherited_overrides and isinstance(
+            inherited_overrides[cfg_name], dict
+        ):
+            inherited_overrides[cfg_name]["displayName"] = display_name
+            updated_cfg = True
+    if not updated_cfg:
+        inherited_overrides["app.json"] = {"displayName": display_name}
+    payload["overrides"] = inherited_overrides
 
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     profile_path.write_text(
@@ -507,9 +515,7 @@ def workspace_up(
     from cxas_scrapi.cli.app import _app_push  # noqa: PLC0415
     from cxas_scrapi.core.apps import Apps as AppsClient  # noqa: PLC0415
 
-    resolved_profile: ResolvedProfile | None = (
-        load_profile(profile) if profile else None
-    )
+    resolved_profile: ResolvedProfile | None = load_profile(profile)
     project_root = (
         resolved_profile.project_root
         if resolved_profile is not None
@@ -569,16 +575,33 @@ def workspace_up(
     created = existing is None
     target_app_name = getattr(existing, "name", None) if existing else None
 
-    # Build a profile copy for staging so app_overrides apply while keeping
-    # the workspace's own displayName.
-    staging_profile: ResolvedProfile | None = None
-    if resolved_profile is not None and resolved_profile.app_overrides:
+    # Build a staging profile so app_overrides apply AND displayName is always
+    # pinned to the workspace display_name (preventing import_app from renaming
+    # the workspace back to tracked app.json on idempotent updates).
+    if resolved_profile is not None:
         staging_profile = copy.deepcopy(resolved_profile)
+        updated_cfg = False
         for cfg_name in ("app.json", "app.yaml"):
-            if cfg_name in staging_profile.overrides:
+            if cfg_name in staging_profile.overrides and isinstance(
+                staging_profile.overrides[cfg_name], dict
+            ):
                 staging_profile.overrides[cfg_name]["displayName"] = (
                     display_name
                 )
+                updated_cfg = True
+        if not updated_cfg:
+            staging_profile.overrides["app.json"] = {
+                "displayName": display_name
+            }
+    else:
+        staging_profile = ResolvedProfile(
+            name="ws.local",
+            source_path=project_root
+            / PROFILES_REL_DIR
+            / WS_LOCAL_PROFILE_FILENAME,
+            project_root=project_root,
+            overrides={"app.json": {"displayName": display_name}},
+        )
 
     pushed_app_name = _app_push(
         app_dir=eff_app_dir,
