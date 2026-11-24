@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from cxas_scrapi.cli.arc_cli import register as register_arc_subparser
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
+from cxas_scrapi.cli.lock_cli import register as register_lock_subparsers
 from cxas_scrapi.cli.profile_cli import (
     register as register_profile_subparser,
 )
@@ -563,6 +564,34 @@ def run_eval(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
+    snapshot = bool(getattr(args, "snapshot", False))
+    snapshot_label = getattr(args, "snapshot_label", None)
+    if snapshot_label and not snapshot:
+        from cxas_scrapi.collab.snapshot_testing import (
+            LABEL_WITHOUT_SNAPSHOT_ERROR,
+        )
+
+        print(f"Error: {LABEL_WITHOUT_SNAPSHOT_ERROR}", file=sys.stderr)
+        sys.exit(2)
+
+    if snapshot:
+        from cxas_scrapi.collab.snapshot_testing import (
+            begin_run,
+            pinned_app_version,
+            report_finish,
+        )
+
+        snap_ctx = begin_run(args.app_name, snapshot=True, label=snapshot_label)
+        try:
+            with pinned_app_version(snap_ctx.pinned_version):
+                args.snapshot = False
+                args.snapshot_label = None
+                run_eval(args)
+        finally:
+            with contextlib.suppress(Exception):
+                report_finish(snap_ctx)
+        return
+
     print(f"Triggering evaluation for App: {args.app_name}")
     eval_client = Evaluations(app_name=args.app_name)
     eval_utils = EvalUtils(app_name=args.app_name)
@@ -945,6 +974,19 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         extra_report_kwargs["enriched_report"] = True
     if getattr(args, "recordings_bucket", None):
         extra_report_kwargs["recordings_bucket"] = args.recordings_bucket
+    if getattr(args, "snapshot_label", None) and not getattr(
+        args, "snapshot", False
+    ):
+        from cxas_scrapi.collab.snapshot_testing import (
+            LABEL_WITHOUT_SNAPSHOT_ERROR,
+        )
+
+        print(f"Error: {LABEL_WITHOUT_SNAPSHOT_ERROR}", file=sys.stderr)
+        sys.exit(2)
+    if getattr(args, "snapshot", False):
+        extra_report_kwargs["snapshot"] = True
+    if getattr(args, "snapshot_label", None):
+        extra_report_kwargs["snapshot_label"] = args.snapshot_label
     if any(
         k in extra_report_kwargs
         for k in (
@@ -1242,6 +1284,10 @@ def ci_test(args: argparse.Namespace) -> None:
                     "--wait",
                     "--filter-auto-metrics",
                 ]
+                if getattr(args, "snapshot", False):
+                    cmd.append("--snapshot")
+                    if getattr(args, "snapshot_label", None):
+                        cmd.extend(["--snapshot-label", args.snapshot_label])
                 print(f"Executing: {' '.join(cmd)}")
                 res = subprocess.run(cmd, check=False)
                 if res.returncode != 0:
@@ -1622,7 +1668,16 @@ def deployments_promote(args: argparse.Namespace) -> None:
 
         kwargs = {}
         if getattr(args, "version", None):
-            kwargs["app_version"] = args.version
+            from cxas_scrapi.core.versions import Versions
+
+            try:
+                resolved_ver = Versions(app_name=app_name).resolve_version_name(
+                    args.version
+                )
+            except ValueError as e:
+                print(f"Error resolving version '{args.version}': {e}")
+                sys.exit(1)
+            kwargs["app_version"] = resolved_ver
         if traffic_split:
             kwargs["traffic_split"] = traffic_split
 
@@ -1745,6 +1800,8 @@ def get_parser() -> argparse.ArgumentParser:
         "                  When to run: When authoring prompt engineering,\n"
         "                  before code reviews, or during qualitative QA."
     )
+
+    from cxas_scrapi.collab.snapshot_testing import add_snapshot_args
 
     parser = argparse.ArgumentParser(
         description=description,
@@ -2520,6 +2577,7 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional GCS bucket/URI override for CES call audio recordings used by --enriched-report.",
     )
+    add_snapshot_args(parser_report)
     _add_profile_args(parser_report)
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
@@ -2789,6 +2847,7 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
         help="Minimum fraction of evaluations (0.0-1.0) that must pass; fails closed if 0 run.",
     )
+    add_snapshot_args(parser_run)
     _add_profile_args(parser_run)
 
     parser_run.set_defaults(func=run_eval)
@@ -2842,6 +2901,7 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_project_location_args(parser_ci_test, required=False)
+    add_snapshot_args(parser_ci_test)
     _add_profile_args(parser_ci_test, include_allow_protected=True)
     parser_ci_test.set_defaults(func=ci_test)
 
@@ -2941,6 +3001,14 @@ def get_parser() -> argparse.ArgumentParser:
             "preserving local tracked values."
         ),
     )
+    parser_pull.add_argument(
+        "--branch",
+        default=None,
+        help=(
+            "Create and switch to a new Git branch before pulling remote "
+            "Console edits (requires a clean working tree)."
+        ),
+    )
     _add_project_location_args(parser_pull, required=False)
     _add_profile_args(parser_pull)
     parser_pull.set_defaults(func=app_pull)
@@ -3004,6 +3072,33 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Print resolved target, env file, and unified config diffs "
             "without calling CES."
+        ),
+    )
+    parser_push.add_argument(
+        "--with-lock",
+        action="store_true",
+        default=False,
+        help=(
+            "Atomically unlock -> push -> re-lock the target app (always "
+            "re-locks even if the push fails)."
+        ),
+    )
+    parser_push.add_argument(
+        "--on-drift",
+        choices=["fail", "warn", "overwrite"],
+        default="warn",
+        help=(
+            "How to handle out-of-band CES edits detected since cxas.last_push "
+            "(fail, warn, or overwrite). Defaults to warn."
+        ),
+    )
+    parser_push.add_argument(
+        "--fail-if-version-exists",
+        action="store_true",
+        default=False,
+        help=(
+            "Fail before pushing if --version-name already exists on the app, "
+            "or if CES deduplicates version creation on an unchanged draft."
         ),
     )
     _add_profile_args(parser_push, include_allow_protected=True)
@@ -3619,6 +3714,9 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'profile' — runtime environment profiles.
     register_profile_subparser(subparsers)
+
+    # Subparsers for 'lock', 'unlock', 'lock-status', and 'rollback'.
+    register_lock_subparsers(subparsers)
 
     return parser
 

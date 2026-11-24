@@ -305,7 +305,9 @@ def test_deployments_promote(
     mock_deps_inst = mock_deps_cls.return_value
     mock_deps_inst.get_deployment.return_value = mock.MagicMock()
 
-    main_cli.deployments_promote(args)
+    with mock.patch("cxas_scrapi.core.versions.Versions") as mock_versions_cls:
+        mock_versions_cls.return_value.resolve_version_name.return_value = "v2"
+        main_cli.deployments_promote(args)
 
     mock_app_push.assert_called_once()
     called_args = mock_app_push.call_args[0][0]
@@ -388,7 +390,9 @@ def test_deployments_promote_with_split(mock_deps_cls: typing.Any) -> None:
     mock_deps_inst = mock_deps_cls.return_value
     mock_deps_inst.get_deployment.return_value = mock.MagicMock()
 
-    main_cli.deployments_promote(args)
+    with mock.patch("cxas_scrapi.core.versions.Versions") as mock_versions_cls:
+        mock_versions_cls.return_value.resolve_version_name.return_value = "v2"
+        main_cli.deployments_promote(args)
 
     mock_deps_cls.assert_called_once_with(
         app_name="projects/test-project/locations/global/apps/test-app"

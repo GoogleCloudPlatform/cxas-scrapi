@@ -23,6 +23,9 @@ cxas push [--app-dir DIR] [--to TARGET] [--env-file FILE]
 | `--profile PROFILE` | No | `$CXAS_PROFILE` | Runtime profile name (`.cxas/profiles/<name>.yml`) or file path. Supplies target, `app_dir`, `env_file`, and staged `app.json`/`app.yaml` overrides without modifying tracked files. |
 | `--allow-protected` | No | `false` | Allow pushing to a profile marked `protected: true` from a local workstation (not needed when `CI=true`). |
 | `--dry-run` | No | `false` | Print resolved target, env file, and unified diffs of merged `app.json`/`app.yaml` and `gecx-config.json` without calling CES. |
+| `--with-lock` | No | `false` | Atomically unlock, push, and re-lock the target app (`finally` guarantees re-lock even on failure). |
+| `--on-drift MODE` | No | `warn` | Stateless CES-side drift gate against `cxas.last_push` in `App.metadata`: `fail`, `warn`, or `overwrite`. |
+| `--fail-if-version-exists` | No | `false` | Fail fast if `--version-name` already exists or if CES deduplicates version creation on an unchanged draft. |
 | `--app-name APP` | No | — | Explicit app resource name to push to (v1beta API). Use this when you want to overwrite a specific app and already know its full ID. |
 | `--display-name NAME` | No | `"Pushed Agent"` | Display name for the new app when no target is specified and a new app will be created. |
 | `--create-version` | No | `false` | Automatically create a version snapshot after a successful push. |

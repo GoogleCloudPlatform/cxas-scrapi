@@ -27,6 +27,7 @@ import pandas as pd
 import yaml
 from google.cloud.ces_v1beta.types import RunEvaluationOperationMetadata
 
+from cxas_scrapi.collab import snapshot_testing
 from cxas_scrapi.core.evaluations import Evaluations
 from cxas_scrapi.evals.callback_evals import CallbackEvals
 from cxas_scrapi.evals.shadow_evals import ShadowEvals
@@ -135,15 +136,30 @@ def run_all_evals(
     golden_run_method: str = "STABLE",
     platform_sims: bool = False,
     sim_user_voices: list[str] | None = None,
+    snapshot: bool = False,
+    snapshot_label: str | None = None,
 ) -> typing.Any:
     """Runs all evaluations and returns aggregated results.
 
     This high-level orchestration function decouples execution logic from pure
     HTML report generation.
+
+    With ``snapshot=True`` the app is first frozen into a version + a personal
+    ``cxas-test-snapshot-<user>`` deployment and all session-based tests run
+    against it. Results always carry a ``run_context`` stamp naming the app
+    version used (or "draft (unfrozen)").
     """
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
         _load_sim_test_cases,
     )
+
+    run_ctx = snapshot_testing.begin_run(
+        app_name,
+        snapshot=snapshot,
+        label=snapshot_label,
+        deployment_id=deployment_id,
+    )
+    deployment_id = run_ctx.deployment_id
 
     if audio_analysis:
         if modality == "audio":
@@ -227,6 +243,7 @@ def run_all_evals(
             if progress_callback:
                 progress_callback("callbacks", 0, 1)
             callback_evals = CallbackEvals()
+            run_ctx.mark_ran("callback")
             df = callback_evals.test_all_callbacks_in_app_dir(app_dir=app_dir)
             dfs.append(df)
             if progress_callback:
@@ -350,6 +367,7 @@ def run_all_evals(
                 print(f"Running {len(test_cases)} tool tests")
                 if progress_callback:
                     progress_callback("tools", 0, 1)
+                run_ctx.mark_ran("tool")
                 df = tool_evals.run_tool_tests(test_cases)
                 results["tool"] = df.to_dict(orient="records")
                 if progress_callback:
@@ -432,6 +450,7 @@ def run_all_evals(
                         sim_kwargs["run_on_platform"] = platform_sims
                     if sim_user_voices:
                         sim_kwargs["sim_user_voices"] = sim_user_voices
+                    run_ctx.mark_ran("simulation")
                     sim_results = sim_evals.run_simulations(
                         test_cases,
                         runs=runs,
@@ -524,6 +543,7 @@ def run_all_evals(
                     shadow_modality = (
                         modality if modality != "text" else "audio"
                     )
+                    run_ctx.mark_ran("shadow")
                     shadow_results = shadow_evals.run_shadow_evals(
                         shadow_cases,
                         runs=runs,
@@ -591,7 +611,9 @@ def run_all_evals(
             }
             if golden_run_method != "STABLE":
                 run_eval_kwargs["golden_run_method"] = golden_run_method
-            operation = eval_client.run_evaluation(**run_eval_kwargs)
+            run_ctx.mark_ran("golden")
+            with snapshot_testing.pinned_app_version(run_ctx.pinned_version):
+                operation = eval_client.run_evaluation(**run_eval_kwargs)
 
             # Resolve run name
             batch_run_name = None
@@ -632,5 +654,13 @@ def run_all_evals(
             )
             with open(ces_save_path, "w", encoding="utf-8") as f:
                 json.dump(results["golden"], f, indent=2, default=str)
+
+    try:
+        stamp = snapshot_testing.report_finish(run_ctx)
+        snapshot_testing.stamp_results(results, stamp)
+        if output_dir:
+            snapshot_testing.write_run_context(output_dir, stamp, timestamp)
+    except Exception as e:  # noqa: BLE001
+        print(f"Warning: could not stamp app version on results: {e}")
 
     return results

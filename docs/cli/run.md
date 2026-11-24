@@ -37,6 +37,9 @@ cxas run --app-name APP
 | `--wait` | No | `false` | Block until all triggered evaluations complete and exit with code `0` on pass or `1` on fail. Without this flag the command fires the run and returns immediately. |
 | `--filter-auto-metrics` | No | `false` | When waiting for results, ignore automated LLM metrics (semantic similarity, hallucination) and only assess custom expectations and tool invocation results. Useful when you care about business-logic correctness rather than language quality scores. |
 | `--modality text\|audio` | No | `text` | The modality to use when executing the evaluation. |
+| `--profile PROFILE` | No | `$CXAS_PROFILE` | Runtime profile supplying `--app-name` and default `--modality`. |
+| `--snapshot` | No | `false` | Freeze the app into an immutable version + personal `cxas-test-snapshot-<user>` deployment before running to prevent mixed-version draft flakiness. |
+| `--snapshot-label LABEL` | No | — | Optional label stored in the frozen snapshot version description (requires `--snapshot`). |
 | `--background-noise PRESET` | No | — | Built-in preset name (`cafe`, `call_center`, `traffic`, `cross_talk`, `baby_crying`, `kids_noise`, `dog_barking`, `tv_radio`, `kitchen`, `wind`, `white`, `pink`, `brown`), path to a custom WAV audio file, or shorthand `<preset>:<level>` (e.g., `cafe:HIGH`, `traffic:LOW`). |
 | `--bg-noise-snr SNR_DB\|LEVEL` | No | `15.0` (`MEDIUM`) | Target Signal-to-Noise Ratio (SNR) in dB or categorical level (`LOW` = 20 dB, `MEDIUM` = 12 dB, `HIGH` = 5 dB). Lower dB = louder noise. |
 | `--bg-noise-level LEVEL` | No | — | Categorical background noise level (`LOW`, `MEDIUM`, `HIGH`). Alias for `--bg-noise-snr`. |

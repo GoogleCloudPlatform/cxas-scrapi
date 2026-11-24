@@ -265,6 +265,7 @@ class Apps(Common):
         gcs_uri: str | None = None,
         local_path: str | None = None,
         conflict_strategy: str | None = None,
+        ignore_app_lock: bool = False,
     ) -> Any:
         # Wait for long-running operation to complete.
         """Imports an app, overwriting an existing one.
@@ -279,6 +280,8 @@ class Apps(Common):
             local_path: Optional. The local path to the zip archive of the app.
             conflict_strategy: Optional. The conflict resolution strategy to
                 use ('REPLACE' or 'OVERWRITE').
+            ignore_app_lock: Optional. Import even if the app is locked
+                (``App.locked``); use only when the caller holds the lock.
         """
         # Validate that exactly one source is provided
         sources_provided = sum(
@@ -338,6 +341,9 @@ class Apps(Common):
                     conflict_resolution_strategy=types.ImportAppRequest.ImportOptions.ConflictResolutionStrategy.REPLACE
                 )
             )
+
+        if ignore_app_lock:
+            request_kwargs["ignore_app_lock"] = True
 
         request = types.ImportAppRequest(**request_kwargs)
         return self.client.import_app(request=request)

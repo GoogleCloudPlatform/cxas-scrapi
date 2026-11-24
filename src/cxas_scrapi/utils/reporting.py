@@ -7552,6 +7552,8 @@ def generate_combined_report_from_dir(
     dry_run: bool = False,
     enriched_report: bool = False,
     recordings_bucket: str | None = None,
+    snapshot: bool = False,
+    snapshot_label: str | None = None,
 ) -> str | tuple[str, dict[str, Any]]:
     """Load results from directory and generate a combined report.
 
@@ -7640,6 +7642,10 @@ def generate_combined_report_from_dir(
             extra_run_kwargs["exclude_files"] = exclude_files
         if sim_user_voices:
             extra_run_kwargs["sim_user_voices"] = sim_user_voices
+        if snapshot:
+            extra_run_kwargs["snapshot"] = snapshot
+        if snapshot_label is not None:
+            extra_run_kwargs["snapshot_label"] = snapshot_label
         run_results = run_all_evals(
             app_name=app_name,
             app_dir=app_dir,
@@ -8026,6 +8032,8 @@ def run_all_evals(
     platform_sims: bool = False,
     exclude_files: list[str] | None = None,
     sim_user_voices: list[str] | None = None,
+    snapshot: bool = False,
+    snapshot_label: str | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -8083,6 +8091,10 @@ def run_all_evals(
         extra_kwargs["exclude_files"] = exclude_files
     if sim_user_voices:
         extra_kwargs["sim_user_voices"] = sim_user_voices
+    if snapshot:
+        extra_kwargs["snapshot"] = snapshot
+    if snapshot_label is not None:
+        extra_kwargs["snapshot_label"] = snapshot_label
     return evals_runner.run_all_evals(
         app_name=app_name,
         modality=modality,

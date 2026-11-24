@@ -24,6 +24,9 @@ cxas pull <app> [--target-dir DIR] [--app-dir-name NAME] [--version-id VERSION] 
 | `--project-id PROJECT` | No* | — | GCP project ID. Required when `app` is a display name rather than a full resource name. |
 | `--location LOCATION` | No* | — | GCP location (e.g., `global`, `us-central1`). Required when `app` is a display name. |
 | `--overwrite` | No | `False` | Remove local resource files missing from the export after extraction. |
+| `--profile PROFILE` | No | `$CXAS_PROFILE` | Runtime profile; preserves local tracked values for keys overridden by `overrides.app.json`/`app.yaml` unless `--accept-profile-overrides` is passed. |
+| `--accept-profile-overrides` | No | `False` | Allow remote values to overwrite keys managed by profile `overrides.app.json`/`app.yaml`. |
+| `--branch NAME` | No | — | Create and switch to a clean Git branch before pulling remote Console tweaks (fails if working tree is dirty). |
 
 *Required when `app` is specified as a display name.
 

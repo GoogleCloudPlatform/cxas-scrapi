@@ -15,18 +15,37 @@
 # limitations under the License.
 
 import argparse
+import contextlib
 import io
 import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
 import zipfile
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from cxas_scrapi.collab.drift import (
+    DriftDetectedError,
+    check_drift,
+    record_last_push,
+)
+from cxas_scrapi.collab.metadata import (
+    LOCK_KEY,
+    METADATA_PREFIX,
+    AppMetadataStore,
+    LockHeldError,
+    _decode_cxas,
+    current_user,
+    preserve_cxas_keys,
+)
 from cxas_scrapi.core.apps import Apps
 from cxas_scrapi.core.common import Common
 from cxas_scrapi.core.versions import Versions
@@ -158,6 +177,55 @@ def _handle_import_result(result: Any, success_verb: str) -> str | None:
     return app_name
 
 
+def _prepare_pull_branch(branch_name: str, cwd: str | None = None) -> None:
+    """Create a clean Git branch before pulling Console edits."""
+    work_dir = cwd or os.getcwd()
+    check_git = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=work_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check_git.returncode != 0:
+        print(
+            "Error: --branch requires running inside a Git repository.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=work_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if status.stdout.strip():
+        print(
+            "Error: Working tree has uncommitted changes. Commit or stash "
+            "them before running `cxas pull --branch`.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    checkout = subprocess.run(
+        ["git", "checkout", "-b", branch_name],
+        cwd=work_dir,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if checkout.returncode != 0:
+        err = checkout.stderr.strip() or checkout.stdout.strip()
+        print(
+            f"Error: Failed to create git branch '{branch_name}': {err}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"Switched to new git branch '{branch_name}'.")
+
+
 def app_pull(args: argparse.Namespace) -> None:
     """Handles the 'pull' command."""
     profile: ResolvedProfile | None = None
@@ -188,6 +256,10 @@ def app_pull(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    branch_name = getattr(args, "branch", None)
+    if branch_name:
+        _prepare_pull_branch(branch_name, cwd=args.target_dir)
 
     print(f"Pulling app: {app_identifier}")
 
@@ -552,6 +624,130 @@ def app_push(args: argparse.Namespace) -> str | None:
     )
 
 
+def _safe_existing_app_state(
+    apps_client: Apps | None,
+    target_app_name: str | None,
+) -> tuple[dict[str, str], bool, dict[str, Any] | None]:
+    """Best-effort fetch of ``(metadata, native_locked, active_cxas_lock)``."""
+    if not apps_client or not target_app_name:
+        return {}, False, None
+    try:
+        existing = apps_client.get_app(target_app_name)
+    except Exception:  # noqa: BLE001
+        return {}, False, None
+
+    raw_meta = getattr(existing, "metadata", None)
+    meta = dict(raw_meta) if isinstance(raw_meta, Mapping) else {}
+    # Ensure keys/values are plain strings (guards against unconfigured mocks).
+    clean_meta = {
+        str(k): str(v)
+        for k, v in meta.items()
+        if isinstance(k, str) and isinstance(v, str)
+    }
+    raw_locked = getattr(existing, "locked", False)
+    native_locked = raw_locked if isinstance(raw_locked, bool) else False
+    active_lock = AppMetadataStore._active_lock(
+        _decode_cxas(clean_meta).get(LOCK_KEY)
+    )
+    return clean_meta, native_locked, active_lock
+
+
+def _inject_preserved_cxas_metadata(
+    staged_dir: str,
+    existing_meta: Mapping[str, str],
+) -> None:
+    """Preserve server-side ``cxas.*`` metadata in staged ``app.json``/``app.yaml``."""
+    has_cxas = any(k.startswith(METADATA_PREFIX) for k in existing_meta)
+    if not has_cxas:
+        return
+
+    root = Path(staged_dir)
+    app_cfg = next(
+        (
+            p
+            for name in ("app.json", "app.yaml")
+            if (p := root / name).is_file()
+        ),
+        None,
+    )
+    if app_cfg is None:
+        return
+
+    try:
+        raw_text = app_cfg.read_text(encoding="utf-8")
+        data = (
+            yaml.safe_load(raw_text)
+            if app_cfg.suffix in (".yaml", ".yml")
+            else json.loads(raw_text)
+        )
+    except (OSError, ValueError, yaml.YAMLError):
+        return
+    if not isinstance(data, dict):
+        return
+
+    target_dict = data["app"] if isinstance(data.get("app"), dict) else data
+    current_meta = target_dict.get("metadata")
+    target_dict["metadata"] = preserve_cxas_keys(
+        existing_meta,
+        current_meta if isinstance(current_meta, Mapping) else None,
+    )
+
+    if app_cfg.suffix in (".yaml", ".yml"):
+        app_cfg.write_text(
+            yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
+        )
+    else:
+        app_cfg.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+@contextlib.contextmanager
+def _atomic_push_lock(
+    *,
+    meta_store: AppMetadataStore | None,
+    with_lock: bool,
+    was_natively_locked: bool,
+    active_lock: dict[str, Any] | None,
+    caller: str,
+) -> Iterator[bool]:
+    """Context manager for ``--with-lock``: unlock -> push -> guaranteed re-lock.
+
+    Yields ``ignore_app_lock`` boolean for ``Apps.import_app()``.
+    """
+    if not with_lock or meta_store is None:
+        yield bool(
+            was_natively_locked
+            and active_lock
+            and active_lock.get("by") == caller
+        )
+        return
+
+    # Ensure we hold cxas.lock before unlocking native App.locked so foreign
+    # writers remain blocked during the push window.
+    if not active_lock or active_lock.get("by") != caller:
+        meta_store.acquire_lock(
+            user=caller,
+            reason="cxas push --with-lock",
+            native=True,
+        )
+
+    # Temporarily clear native App.locked while keeping cxas.lock intact, then
+    # ALWAYS re-lock in finally (even if import_app fails!).
+    meta_store.update(lambda _d: None, native_lock=False, check_lock=False)
+    try:
+        yield True
+    finally:
+        try:
+            meta_store.update(
+                lambda _d: None, native_lock=True, check_lock=False
+            )
+        except Exception as relock_err:  # noqa: BLE001
+            logger.warning(
+                "Could not restore native lock after --with-lock push: %s",
+                relock_err,
+            )
+            meta_store._relock_best_effort()
+
+
 def _app_push(
     app_dir: str,
     apps_client: Apps = None,
@@ -563,6 +759,90 @@ def _app_push(
     profile: ResolvedProfile | None = None,
 ) -> str | None:
     """Helper to push an app to CXAS."""
+    with_lock = bool(args and getattr(args, "with_lock", False))
+    on_drift = (getattr(args, "on_drift", None) if args else None) or "warn"
+    fail_if_version_exists = bool(
+        args and getattr(args, "fail_if_version_exists", False)
+    )
+    create_version = bool(args and getattr(args, "create_version", False))
+    requested_version_name = (
+        getattr(args, "version_name", None) if args else None
+    )
+
+    caller = current_user()
+    existing_meta, is_natively_locked, active_lock = _safe_existing_app_state(
+        apps_client, target_app_name
+    )
+    meta_store = (
+        AppMetadataStore(target_app_name, apps=apps_client, user=caller)
+        if target_app_name and apps_client is not None
+        else None
+    )
+
+    # 1. Enforce foreign edit lock (never overridden even by --force).
+    if active_lock and active_lock.get("by") != caller:
+        err = LockHeldError(active_lock)
+        print(f"Error: {err}", file=sys.stderr)
+        sys.exit(1)
+
+    if (
+        target_app_name
+        and is_natively_locked
+        and not with_lock
+        and not (active_lock and active_lock.get("by") == caller)
+    ):
+        print(
+            f"Error: App '{target_app_name}' is natively locked. "
+            "Pass --with-lock to atomically unlock/push/re-lock, or run "
+            "`cxas unlock` first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # 2. Stateless CES-side drift gate against cxas.last_push.
+    if (
+        target_app_name
+        and meta_store is not None
+        and on_drift != "overwrite"
+        and f"{METADATA_PREFIX}last_push" in existing_meta
+    ):
+        try:
+            drift_report = check_drift(target_app_name, store=meta_store)
+        except Exception as drift_err:  # noqa: BLE001
+            logger.debug("Drift check skipped: %s", drift_err)
+            drift_report = None
+        if drift_report is not None and drift_report.has_drift:
+            if on_drift == "fail":
+                print(
+                    f"Error: {DriftDetectedError(drift_report)}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            print(f"Warning: {drift_report.format_summary()}", file=sys.stderr)
+
+    # 3. Pre-check --fail-if-version-exists before mutating CES.
+    if (
+        target_app_name
+        and create_version
+        and requested_version_name
+        and fail_if_version_exists
+    ):
+        pre_versions = Versions(
+            app_name=target_app_name,
+            creds=apps_client.creds,
+        )
+        existing_versions = pre_versions.list_versions()
+        if any(
+            getattr(v, "display_name", None) == requested_version_name
+            for v in existing_versions
+        ):
+            print(
+                f"Error: App version '{requested_version_name}' already exists "
+                f"on {target_app_name} (--fail-if-version-exists).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     temp_dir = tempfile.mkdtemp()
     temp_zip = tempfile.mktemp(suffix=".zip")
     inner_dir = os.path.join(temp_dir, "agent")
@@ -650,6 +930,11 @@ def _app_push(
         # overrides in the staged inner_dir before creating the zip archive.
         resolve_env_booleans_in_dir(inner_dir)
 
+        # Preserve server-side cxas.* metadata keys so import_app never wipes
+        # lock, last_push, workspace, or expiry state.
+        if existing_meta:
+            _inject_preserved_cxas_metadata(inner_dir, existing_meta)
+
         # ZIP does not support timestamps before 1980.
         # Touch files and directories in temp_dir with timestamps before 1980.
         limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
@@ -673,46 +958,94 @@ def _app_push(
         # provided display_name.
         print("Uploading to CES...")
 
-        if target_app_name:
-            conflict_strategy = (
-                "OVERWRITE"
-                if args and getattr(args, "overwrite", False)
-                else None
+        with _atomic_push_lock(
+            meta_store=meta_store,
+            with_lock=with_lock,
+            was_natively_locked=is_natively_locked,
+            active_lock=active_lock,
+            caller=caller,
+        ) as ignore_app_lock:
+            if target_app_name:
+                conflict_strategy = (
+                    "OVERWRITE"
+                    if args and getattr(args, "overwrite", False)
+                    else None
+                )
+                import_kwargs: dict[str, Any] = {
+                    "app_name": target_app_name,
+                    "app_content": app_content,
+                    "conflict_strategy": conflict_strategy,
+                }
+                if ignore_app_lock:
+                    import_kwargs["ignore_app_lock"] = True
+                result = apps_client.import_app(**import_kwargs)
+            else:
+                result = apps_client.import_as_new_app(
+                    display_name=display_name, app_content=app_content
+                )
+            app_name = _handle_import_result(
+                result, "pushed to" if identifier else "pushed"
             )
-            result = apps_client.import_app(
-                app_name=target_app_name,
-                app_content=app_content,
-                conflict_strategy=conflict_strategy,
-            )
-        else:
-            result = apps_client.import_as_new_app(
-                display_name=display_name, app_content=app_content
-            )
-        app_name = _handle_import_result(
-            result, "pushed to" if identifier else "pushed"
-        )
 
-        if args and getattr(args, "create_version", False) and app_name:
-            print(f"Creating version for {app_name}...")
-            versions_client = Versions(
-                app_name=app_name,
-                creds=apps_client.creds,
-            )
-            version_display_name = (
-                getattr(args, "version_name", None)
-                or f"import-{time.strftime('%Y%m%d%H%M%S')}"
-            )
-            description = getattr(args, "version_description", None)
-            version = versions_client.create_version(
-                display_name=version_display_name,
-                description=description,
-            )
-            version_name = version.name
-            print(
-                f"Created app version: {version_name} "
-                f"with display name {version_display_name}"
-            )
-            args.created_version_name = version_name
+            # Record stateless CES-side drift baseline (cxas.last_push).
+            if app_name and apps_client is not None:
+                try:
+                    post_store = (
+                        meta_store
+                        if meta_store is not None
+                        and app_name == target_app_name
+                        else AppMetadataStore(
+                            app_name, apps=apps_client, user=caller
+                        )
+                    )
+                    record_last_push(
+                        app_name,
+                        store=post_store,
+                        user=caller,
+                        app_dir=app_dir,
+                    )
+                except Exception as rec_err:  # noqa: BLE001
+                    logger.debug(
+                        "Could not record cxas.last_push baseline: %s", rec_err
+                    )
+
+            if create_version and app_name:
+                print(f"Creating version for {app_name}...")
+                versions_client = Versions(
+                    app_name=app_name,
+                    creds=apps_client.creds,
+                )
+                version_display_name = (
+                    requested_version_name
+                    or f"import-{time.strftime('%Y%m%d%H%M%S')}"
+                )
+                description = getattr(args, "version_description", None)
+                version = versions_client.create_version(
+                    display_name=version_display_name,
+                    description=description,
+                )
+                version_name = version.name
+                actual_display = getattr(version, "display_name", None)
+                if (
+                    isinstance(actual_display, str)
+                    and actual_display
+                    and actual_display != version_display_name
+                ):
+                    msg = (
+                        "CES deduplicated version creation because the draft "
+                        f"is unchanged since existing version "
+                        f"'{actual_display}' ({version_name}); requested "
+                        f"version name '{version_display_name}' was not applied."
+                    )
+                    if fail_if_version_exists:
+                        print(f"Error: {msg}", file=sys.stderr)
+                        sys.exit(1)
+                    print(f"Warning: {msg}", file=sys.stderr)
+                print(
+                    f"Created app version: {version_name} "
+                    f"with display name {actual_display or version_display_name}"
+                )
+                args.created_version_name = version_name
 
         return app_name
 
