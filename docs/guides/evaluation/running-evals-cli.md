@@ -225,6 +225,9 @@ The `cxas evals report` command runs evaluations across multiple types (simulati
 | `--recordings-bucket` | `None` | Explicit GCS bucket/URI override for CES call audio recordings used by `--enriched-report` |
 | `--gcs-bundle-uri` | `None` | GCS prefix (`gs://bucket/path`) to upload `report.html`, raw JSON/YAML/XML artifacts, `EVAL_STAMP-<suite>.txt`, `latest-<suite>.html`, rolling `runs_manifest.json`, and `index.html` |
 | `--suite-name` | `None` | Suite identifier used for `EVAL_STAMP-<suite>.txt`, `latest-<suite>.html`, JUnit XML, and step summaries |
+| `--bq-dataset` | `None` | BigQuery dataset (`project.dataset`) to export every result to, to follow results over time. See [Eval Results in BigQuery](bigquery-export.md) |
+| `--bq-create-dataset` | `False` | Create `--bq-dataset` if it doesn't exist (requires `--bq-location`) |
+| `--bq-location` | `None` | BigQuery location used with `--bq-create-dataset`, or checked against the existing dataset |
 | `--github-step-summary` | `False` | Append a Markdown pass/fail table and report links to `$GITHUB_STEP_SUMMARY` |
 
 ---

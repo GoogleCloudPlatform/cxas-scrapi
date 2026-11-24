@@ -746,6 +746,17 @@ def run_eval(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _bq_dataset(value: str) -> str:
+    """argparse type for a BigQuery dataset given as project.dataset."""
+    from cxas_scrapi.utils.eval_bigquery import parse_dataset
+
+    try:
+        parse_dataset(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+    return value
+
+
 def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     """Handles the 'evals report' command."""
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
@@ -872,6 +883,26 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         extra_report_kwargs["enriched_report"] = True
     if getattr(args, "recordings_bucket", None):
         extra_report_kwargs["recordings_bucket"] = args.recordings_bucket
+    bq_create_dataset = getattr(args, "bq_create_dataset", False)
+    bq_location = getattr(args, "bq_location", None)
+    if getattr(args, "bq_dataset", None):
+        if bq_create_dataset and not bq_location:
+            # Checked before the evals run, not after.
+            print(
+                "Error: --bq-create-dataset requires --bq-location: the "
+                "dataset location can't be changed after creation."
+            )
+            sys.exit(1)
+        extra_report_kwargs["bq_dataset"] = args.bq_dataset
+        if bq_create_dataset:
+            extra_report_kwargs["bq_create_dataset"] = True
+        if bq_location:
+            extra_report_kwargs["bq_location"] = bq_location
+    elif bq_create_dataset or bq_location:
+        print(
+            "Warning: --bq-create-dataset and --bq-location are ignored "
+            "without --bq-dataset."
+        )
     if any(
         k in extra_report_kwargs
         for k in (
@@ -2340,6 +2371,30 @@ def get_parser() -> argparse.ArgumentParser:
         "--recordings-bucket",
         default=None,
         help="Optional GCS bucket/URI override for CES call audio recordings used by --enriched-report.",
+    )
+    parser_report.add_argument(
+        "--bq-dataset",
+        type=_bq_dataset,
+        default=None,
+        help=(
+            "Optional BigQuery dataset (project.dataset) to export results "
+            "to (eval_runs / eval_results tables, created if missing). "
+            "An export failure never changes the gate result."
+        ),
+    )
+    parser_report.add_argument(
+        "--bq-create-dataset",
+        action="store_true",
+        default=False,
+        help="Create --bq-dataset if it doesn't exist (needs --bq-location).",
+    )
+    parser_report.add_argument(
+        "--bq-location",
+        default=None,
+        help=(
+            "BigQuery location (e.g. EU) used with --bq-create-dataset, or "
+            "checked against the existing dataset."
+        ),
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 

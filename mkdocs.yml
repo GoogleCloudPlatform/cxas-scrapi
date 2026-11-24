@@ -186,6 +186,7 @@ nav:
       - Callback Tests: guides/evaluation/callback-tests.md
       - Turn Evals: guides/evaluation/turn-evals.md
       - Running Evaluations: guides/evaluation/running-evals-cli.md
+      - Eval Results in BigQuery: guides/evaluation/bigquery-export.md
       - Mock Tool Responses: guides/evaluation/mock-tool-responses.md
     - Linting:
       - guides/linting/index.md

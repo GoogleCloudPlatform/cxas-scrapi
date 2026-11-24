@@ -139,6 +139,12 @@ cxas evals report \
   --output-dir <project>/eval-reports/
 ```
 
+**To keep a history of results (pass rate over time, regressions, flaky evals):** add `--bq-dataset` to the combined report command to export every result to BigQuery. Ask the user which BigQuery dataset to use; don't create one without their agreement.
+```bash
+cxas evals report --output-dir <project>/eval-reports/ \
+  --suite-name <suite> --bq-dataset <gcp-project>.<dataset>
+```
+
 **For an interactive diagnostic dashboard (dynamic parameter filters & LLM failure clustering):**
 ```bash
 python .agents/skills/cxas-agent-foundry/scripts/generate_interactive_report.py \
