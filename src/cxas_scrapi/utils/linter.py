@@ -382,7 +382,7 @@ def is_voice_app(context: LintContext) -> bool:
         for dep_file in dep_files:
             try:
                 data = yaml.safe_load(dep_file.read_text("utf-8"))
-            except (yaml.YAMLError, OSError):
+            except (yaml.YAMLError, OSError, UnicodeDecodeError):
                 continue
             if not isinstance(data, dict):
                 continue
@@ -414,7 +414,7 @@ def is_voice_app(context: LintContext) -> bool:
                     or data.get("audio_processing_config")
                 ):
                     return True
-            except (json.JSONDecodeError, OSError):
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
                 pass
         else:
             for yaml_name in ("app.yaml", "app.yml"):
@@ -427,7 +427,7 @@ def is_voice_app(context: LintContext) -> bool:
                             or data.get("audio_processing_config")
                         ):
                             return True
-                    except (yaml.YAMLError, OSError):
+                    except (yaml.YAMLError, OSError, UnicodeDecodeError):
                         pass
                     break
 

@@ -259,3 +259,30 @@ def test_is_voice_app_falls_back_to_app_audio_config_without_deployments(
         encoding="utf-8",
     )
     assert is_voice_app(_context(yml_app)) is True
+
+
+def test_is_voice_app_ignores_non_utf8_deployment_and_app_files(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.json").write_text('{"displayName": "app"}')
+    deps = tmp_path / "deployments"
+    deps.mkdir()
+    (deps / "00_corrupt.yaml").write_bytes(b"\xff\xfe\x00invalid")
+    assert is_voice_app(_context(tmp_path)) is False
+
+    # A valid voice deployment next to a corrupt non-UTF-8 file is still detected.
+    (deps / "01_voice.yaml").write_text(
+        "channel: VOICE_TELEPHONY\n", encoding="utf-8"
+    )
+    assert is_voice_app(_context(tmp_path)) is True
+
+    # Non-UTF-8 app.json / app.yaml files do not crash is_voice_app.
+    bad_json_app = tmp_path / "bad_json_app"
+    bad_json_app.mkdir()
+    (bad_json_app / "app.json").write_bytes(b"\xff\xfe\x00invalid")
+    assert is_voice_app(_context(bad_json_app)) is False
+
+    bad_yaml_app = tmp_path / "bad_yaml_app"
+    bad_yaml_app.mkdir()
+    (bad_yaml_app / "app.yaml").write_bytes(b"\xff\xfe\x00invalid")
+    assert is_voice_app(_context(bad_yaml_app)) is False
