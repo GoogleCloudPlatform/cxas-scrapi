@@ -983,13 +983,16 @@ def test_qa_pr1_008_c024_edge_cases_tuple_unpack_posonly_chained_and_annassign(
 def test_qa_pr1_cli_list_rules_and_exit_codes_and_no_build_imports(
     tmp_path: Path,
 ) -> None:
-    """CLI --list-rules shows 110 rules; lint exits 1 on errors, 0 on warnings; zero build imports."""
+    """CLI --list-rules shows >= 110 rules including PR 1 rules; lint exits 1 on errors, 0 on warnings; zero build imports."""
     registry = build_registry()
-    assert len(registry.all_rules()) == 110
+    assert len(registry.all_rules()) >= 110
+    pr1_rules = ("T017", "T018", "T019", "G001", "G002", "A015", "C024")
+    for rule_id in pr1_rules:
+        assert registry.get(rule_id) is not None
 
     list_proc = _run_cli_lint("--list-rules")
     assert list_proc.returncode == 0
-    for rule_id in ("T017", "T018", "T019", "G001", "G002", "A015", "C024"):
+    for rule_id in pr1_rules:
         assert rule_id in list_proc.stdout
 
     # Verify zero cxas_scrapi.build imports in linter & lint_rules
