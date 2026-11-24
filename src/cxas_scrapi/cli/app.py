@@ -785,6 +785,13 @@ def app_lint(args: argparse.Namespace) -> None:
     report.print_and_exit(json_output, show_fixes)
 
 
+def _has_app_manifest(directory: Path) -> bool:
+    """Return True if `directory` directly contains `app.json` or `app.yaml`."""
+    return (directory / "app.json").is_file() or (
+        directory / "app.yaml"
+    ).is_file()
+
+
 def _lint_app_dir(
     target_dir: Path,
     *,
@@ -810,9 +817,8 @@ def _lint_app_dir(
         run_rules,
     )
 
-    has_manifest = (target_dir / "app.json").is_file() or (
-        target_dir / "app.yaml"
-    ).is_file()
+    target_dir = target_dir.resolve()
+    has_manifest = _has_app_manifest(target_dir)
     if direct_app_only and not has_manifest:
         print(f"ERROR: No app.json or app.yaml found in {target_dir}")
         print(
@@ -824,6 +830,28 @@ def _lint_app_dir(
     if has_manifest:
         project_root = LintConfig.find_project_root(target_dir)
         config = LintConfig.load(project_root)
+        if project_root != target_dir:
+            configured_app = (project_root / config.app_dir).resolve()
+            configured_has_manifest = _has_app_manifest(configured_app)
+            has_root_manifest = _has_app_manifest(project_root)
+            is_sole_nested_app = (
+                configured_app == target_dir.parent
+                and not configured_has_manifest
+                and not any(
+                    d != target_dir
+                    and d.is_dir()
+                    and not d.name.startswith(".")
+                    and _has_app_manifest(d)
+                    for d in configured_app.iterdir()
+                )
+            )
+            if not (
+                configured_app == target_dir
+                or is_sole_nested_app
+                or (configured_app == project_root and not has_root_manifest)
+            ):
+                project_root = target_dir
+                config = LintConfig.load(target_dir)
         app_dir = target_dir
         if project_root != target_dir:
             evals_candidate = project_root / config.evals_dir

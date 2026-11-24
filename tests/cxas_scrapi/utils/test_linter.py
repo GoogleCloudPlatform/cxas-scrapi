@@ -357,6 +357,36 @@ def test_lint_config_find_project_root_resolves_relative_cwd(
     assert LintConfig.find_project_root(Path(".")) == tmp_path.resolve()
 
 
+def test_lint_config_find_project_root_matches_gecx_config_json(
+    tmp_path: typing.Any,
+) -> None:
+    """find_project_root matches ancestor gecx-config.json without cxaslint."""
+    (tmp_path / "gecx-config.json").write_text(
+        json.dumps({"app_dir": "cxas_app/Cymbal"}), encoding="utf-8"
+    )
+    nested_app = tmp_path / "cxas_app" / "Cymbal"
+    nested_app.mkdir(parents=True)
+
+    assert LintConfig.find_project_root(nested_app) == tmp_path.resolve()
+
+
+def test_lint_config_find_project_root_handles_missing_home(
+    tmp_path: typing.Any,
+    monkeypatch: typing.Any,
+) -> None:
+    """find_project_root succeeds when Path.home() raises RuntimeError."""
+    (tmp_path / "cxaslint.yaml").write_text("app_dir: cxas_app/Cymbal\n")
+    nested_app = tmp_path / "cxas_app" / "Cymbal"
+    nested_app.mkdir(parents=True)
+
+    def _raise_no_home(cls: typing.Any) -> Path:
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(Path, "home", classmethod(_raise_no_home))
+
+    assert LintConfig.find_project_root(nested_app) == tmp_path.resolve()
+
+
 # ── Discovery ────────────────────────────────────────────────────────────
 
 

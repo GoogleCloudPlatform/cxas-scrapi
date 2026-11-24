@@ -441,18 +441,23 @@ class LintConfig:
 
     @classmethod
     def find_project_root(cls, app_dir: Path, max_parents: int = 3) -> Path:
-        """Find nearest ancestor `cxaslint.yaml` within repo/home bounds."""
+        """Find nearest ancestor lint/project config within repo/home bounds."""
         app_dir = app_dir.resolve()
-        if (app_dir / "cxaslint.yaml").is_file() or (app_dir / ".git").exists():
+        markers = ("cxaslint.yaml", "gecx-config.json")
+        if (
+            any((app_dir / m).is_file() for m in markers)
+            or (app_dir / ".git").exists()
+        ):
             return app_dir
-        stop_dirs = {
-            Path(tempfile.gettempdir()).resolve(),
-            Path.home().resolve(),
-        }
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        try:
+            stop_dirs = {temp_root, Path.home().resolve()}
+        except RuntimeError:
+            stop_dirs = {temp_root}
         for parent in app_dir.parents[:max_parents]:
             if parent in stop_dirs:
                 break
-            if (parent / "cxaslint.yaml").is_file():
+            if any((parent / m).is_file() for m in markers):
                 return parent
             if (parent / ".git").exists():
                 break
