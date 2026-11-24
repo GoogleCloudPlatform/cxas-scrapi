@@ -959,43 +959,87 @@ class ToolsetFileReferences(Rule):
         return results
 
 
+class _LocaleYamlLoader(yaml.SafeLoader):
+    """YAML SafeLoader that keeps unquoted ISO codes (e.g. NO/no) as strings."""
+
+
+_LocaleYamlLoader.yaml_implicit_resolvers = {
+    ch: [
+        (tag, regex)
+        for tag, regex in resolvers
+        if tag != "tag:yaml.org,2002:bool"
+    ]
+    for ch, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
+
+def _extract_guardrail_prompts(data: dict) -> list[str]:
+    """Return prompt strings from llmPolicy and llmPromptSecurity blocks."""
+    prompts: list[str] = []
+    for key in ("llm_policy", "llmPolicy", "custom_policy", "customPolicy"):
+        policy = data.get(key)
+        if isinstance(policy, dict):
+            prompt = policy.get("prompt")
+            if isinstance(prompt, str):
+                prompts.append(prompt)
+
+    for sec_key in ("llm_prompt_security", "llmPromptSecurity"):
+        sec = data.get(sec_key)
+        if not isinstance(sec, dict):
+            continue
+        for cp_key in ("custom_policy", "customPolicy"):
+            custom_policy = sec.get(cp_key)
+            if isinstance(custom_policy, dict):
+                prompt = custom_policy.get("prompt")
+                if isinstance(prompt, str):
+                    prompts.append(prompt)
+
+    return prompts
+
+
 @rule("structure")
 class GuardrailJinjaSyntax(Rule):
     id = "G001"
     target = "guardrail_config"
     name = "guardrail-jinja-syntax"
-    description = "Detects Jinja tokens inside llm_policy.prompt in guardrails."
+    description = "Detects Jinja tokens inside guardrail policy prompts."
     default_severity = Severity.ERROR
+
+    _GUARDRAIL_SUFFIXES = frozenset({".json", ".yaml", ".yml"})
 
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        jsons_to_check: list[Path] = []
+        config_paths: list[Path] = []
         if file_path.is_dir():
-            jsons_to_check.extend(sorted(file_path.glob("*.json")))
-        elif file_path.name.endswith(".json"):
-            jsons_to_check.append(file_path)
+            for ext in ("*.json", "*.yaml", "*.yml"):
+                config_paths.extend(sorted(file_path.glob(ext)))
+        elif file_path.suffix.lower() in self._GUARDRAIL_SUFFIXES:
+            config_paths.append(file_path)
 
         results: list[LintResult] = []
-        for j_path in jsons_to_check:
-            rel = str(j_path.relative_to(context.project_root))
+        for cfg_path in config_paths:
+            rel = str(cfg_path.relative_to(context.project_root))
             try:
-                data = json.loads(j_path.read_text("utf-8"))
-            except (ValueError, OSError):
+                raw_text = cfg_path.read_text("utf-8")
+                data = (
+                    json.loads(raw_text)
+                    if cfg_path.suffix.lower() == ".json"
+                    else yaml.safe_load(raw_text)
+                )
+            except (ValueError, OSError, yaml.YAMLError):
                 continue
             if not isinstance(data, dict):
                 continue
 
-            policy = data.get("llm_policy") or data.get("llmPolicy")
-            prompt = policy.get("prompt") if isinstance(policy, dict) else None
-
-            if isinstance(prompt, str) and ("{{" in prompt or "{%" in prompt):
+            prompts = _extract_guardrail_prompts(data)
+            if any("{{" in p or "{%" in p or "{#" in p for p in prompts):
                 results.append(
                     self.make_result(
                         file=rel,
                         message=(
-                            "Jinja tokens {{...}} or {% ... %} found"
-                            " inside llmPolicy.prompt."
+                            "Jinja tokens {{...}}, {% ... %}, or {# ... #}"
+                            " found inside guardrail policy prompt."
                         ),
                         fix=(
                             "Use flat {variable} placeholders or pre-rendered"
@@ -1022,7 +1066,7 @@ class CrosscheckLocalesContentBlocks(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
         content_blocks_path: Path | None = None
-        for root in (context.app_root, context.project_root):
+        for root in (context.app_root, context.app_dir, context.project_root):
             if root is None:
                 continue
             candidate = root / "manifests" / "locales" / "content_blocks.yaml"
@@ -1034,7 +1078,10 @@ class CrosscheckLocalesContentBlocks(Rule):
             return []
 
         try:
-            blocks = yaml.safe_load(content_blocks_path.read_text("utf-8"))
+            blocks = yaml.load(
+                content_blocks_path.read_text("utf-8"),
+                Loader=_LocaleYamlLoader,
+            )
         except (ValueError, OSError, yaml.YAMLError):
             return []
         blocks_data = blocks.get("blocks") if isinstance(blocks, dict) else None
@@ -1042,15 +1089,23 @@ class CrosscheckLocalesContentBlocks(Rule):
             return []
 
         try:
-            dep = yaml.safe_load(content)
+            dep = yaml.load(content, Loader=_LocaleYamlLoader)
         except (ValueError, OSError, yaml.YAMLError):
             return []
         if not isinstance(dep, dict):
             return []
 
-        brand = dep.get("brandId")
-        countries = dep.get("supportedCountries", [])
-        langs = dep.get("supportedLanguages", [])
+        brand = dep.get("brandId") or dep.get("brand_id")
+        countries = (
+            dep["supportedCountries"]
+            if "supportedCountries" in dep
+            else dep.get("supported_countries", [])
+        )
+        langs = (
+            dep["supportedLanguages"]
+            if "supportedLanguages" in dep
+            else dep.get("supported_languages", [])
+        )
         if not isinstance(countries, list) or not isinstance(langs, list):
             return []
 

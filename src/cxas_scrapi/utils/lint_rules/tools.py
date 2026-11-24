@@ -33,6 +33,7 @@ from cxas_scrapi.utils.linter import (
     LintResult,
     Rule,
     Severity,
+    is_voice_app,
     rule,
 )
 
@@ -1001,6 +1002,27 @@ class CompositeToolConversationalPacing(Rule):
         return []
 
 
+def _load_data_store_tool_config(
+    file_path: Path, content: str
+) -> dict[str, typing.Any] | None:
+    """Parse a JSON or YAML tool config file under tools/, else return None."""
+    suffix = file_path.suffix.lower()
+    if (
+        suffix not in {".json", ".yaml", ".yml"}
+        or "tools" not in file_path.parts
+    ):
+        return None
+    try:
+        data = (
+            json.loads(content)
+            if suffix == ".json"
+            else yaml.safe_load(content)
+        )
+    except (ValueError, OSError, yaml.YAMLError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _extract_data_store_filters(data: dict[str, typing.Any]) -> list[str]:
     """Collect non-empty filter strings from a dataStoreTool config dict."""
     filters: list[str] = []
@@ -1012,7 +1034,17 @@ def _extract_data_store_filters(data: dict[str, typing.Any]) -> list[str]:
         if isinstance(top_filter, str) and top_filter:
             filters.append(top_filter)
 
+    def _collect_source(source: typing.Any) -> None:
+        if isinstance(source, dict):
+            s_filter = source.get("filter")
+            if isinstance(s_filter, str) and s_filter:
+                filters.append(s_filter)
+
     for container in containers:
+        _collect_source(
+            container.get("dataStoreSource")
+            or container.get("data_store_source")
+        )
         sources = (
             container.get("dataStoreSources")
             or container.get("data_store_sources")
@@ -1020,17 +1052,20 @@ def _extract_data_store_filters(data: dict[str, typing.Any]) -> list[str]:
         )
         if isinstance(sources, list):
             for source in sources:
-                if isinstance(source, dict):
-                    s_filter = source.get("filter")
-                    if isinstance(s_filter, str) and s_filter:
-                        filters.append(s_filter)
+                _collect_source(source)
         engine_source = container.get("engineSource") or container.get(
             "engine_source"
         )
         if isinstance(engine_source, dict):
-            e_filter = engine_source.get("filter")
-            if isinstance(e_filter, str) and e_filter:
-                filters.append(e_filter)
+            _collect_source(engine_source)
+            engine_sources = (
+                engine_source.get("dataStoreSources")
+                or engine_source.get("data_store_sources")
+                or []
+            )
+            if isinstance(engine_sources, list):
+                for source in engine_sources:
+                    _collect_source(source)
 
     return filters
 
@@ -1045,17 +1080,8 @@ class DataStoreFilterTemplateSyntax(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if (
-            not file_path.name.endswith(".json")
-            or "tools" not in file_path.parts
-        ):
-            return []
-
-        try:
-            data = json.loads(content)
-        except (ValueError, OSError):
-            return []
-        if not isinstance(data, dict):
+        data = _load_data_store_tool_config(file_path, content)
+        if data is None:
             return []
 
         rel = str(file_path.relative_to(context.project_root))
@@ -1089,17 +1115,8 @@ class DataStoreFilterParameterBehavior(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if (
-            not file_path.name.endswith(".json")
-            or "tools" not in file_path.parts
-        ):
-            return []
-
-        try:
-            data = json.loads(content)
-        except (ValueError, OSError):
-            return []
-        if not isinstance(data, dict):
+        data = _load_data_store_tool_config(file_path, content)
+        if data is None:
             return []
 
         raw_ds = data.get("dataStoreTool") or data.get("data_store_tool")
@@ -1125,11 +1142,14 @@ class DataStoreFilterParameterBehavior(Rule):
                 behavior = ds_tool.get("filter_parameter_behavior")
             if behavior not in ("NEVER_INCLUDE", 3):
                 rel = str(file_path.relative_to(context.project_root))
+                reason = (
+                    "with static filter" if has_filter else "with ds_ prefix"
+                )
                 return [
                     self.make_result(
                         file=rel,
                         message=(
-                            "Brand-scoped dataStoreTool (with static filter)"
+                            f"Brand-scoped dataStoreTool ({reason})"
                             " must use NEVER_INCLUDE (or 3)."
                         ),
                         fix=(
@@ -1151,24 +1171,11 @@ class DataStoreVoiceModality(Rule):
     )
     default_severity = Severity.WARNING
 
-    _VOICE_CHANNEL_TYPES = frozenset(
-        {"GOOGLE_TELEPHONY_PLATFORM", "CONTACT_CENTER_AS_A_SERVICE"}
-    )
-
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if (
-            not file_path.name.endswith(".json")
-            or "tools" not in file_path.parts
-        ):
-            return []
-
-        try:
-            data = json.loads(content)
-        except (ValueError, OSError):
-            return []
-        if not isinstance(data, dict):
+        data = _load_data_store_tool_config(file_path, content)
+        if data is None:
             return []
 
         tool_name = file_path.parent.name
@@ -1182,57 +1189,44 @@ class DataStoreVoiceModality(Rule):
         ):
             return []
 
-        has_voice = False
-        if context.app_root:
-            for dep_file in sorted(context.app_root.glob("deployments/*.yaml")):
-                try:
-                    dep = yaml.safe_load(dep_file.read_text("utf-8"))
-                except (ValueError, OSError, yaml.YAMLError):
-                    continue
-                if not isinstance(dep, dict):
-                    continue
-                cp = dep.get("channelProfile") or dep.get("channel_profile")
-                if not isinstance(cp, dict):
-                    continue
-                ct = cp.get("channelType") or cp.get("channel_type") or ""
-                if isinstance(ct, str) and ct in self._VOICE_CHANNEL_TYPES:
-                    has_voice = True
-                    break
-
-        if not has_voice:
+        if not is_voice_app(context):
             return []
 
-        ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
+        ds_tool = data.get("dataStoreTool")
+        if ds_tool is None:
+            ds_tool = data.get("data_store_tool")
         if not isinstance(ds_tool, dict):
             return []
 
         rel = str(file_path.relative_to(context.project_root))
         results: list[LintResult] = []
-        mod_configs = (
-            ds_tool.get("modalityConfigs")
-            or ds_tool.get("modality_configs")
-            or []
-        )
+        mod_configs = ds_tool.get("modalityConfigs")
+        if mod_configs is None:
+            mod_configs = ds_tool.get("modality_configs")
+        if mod_configs is None:
+            mod_configs = []
 
         audio_conf: dict[str, typing.Any] | None = None
         if isinstance(mod_configs, dict):
             candidate = mod_configs.get("AUDIO")
+            if candidate is None:
+                candidate = mod_configs.get(2)
             if isinstance(candidate, dict):
                 audio_conf = candidate
         elif isinstance(mod_configs, list):
             for mc in mod_configs:
                 if not isinstance(mc, dict):
                     continue
-                mt = (
-                    mc.get("modalityType")
-                    or mc.get("modality_type")
-                    or mc.get("modality")
-                )
-                if mt == "AUDIO":
+                mt = mc.get("modalityType")
+                if mt is None:
+                    mt = mc.get("modality_type")
+                if mt is None:
+                    mt = mc.get("modality")
+                if mt in ("AUDIO", 2):
                     audio_conf = mc
                     break
 
-        if not audio_conf:
+        if audio_conf is None:
             results.append(
                 self.make_result(
                     file=rel,

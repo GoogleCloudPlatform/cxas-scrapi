@@ -352,7 +352,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **T019 — data-store-voice-modality**
 
-    *Triggers:* When a data store tool lacks an `AUDIO` configuration block in `modalityConfigs`, does not disable `rewriterConfig`/`summarizationConfig` inside that block, or lacks a `snippetsConfig` while operating under a voice deployment (`GOOGLE_TELEPHONY_PLATFORM` or `CONTACT_CENTER_AS_A_SERVICE`).
+    *Triggers:* When a data store tool lacks an `AUDIO` (or protobuf enum `2`) configuration block in `modalityConfigs`, does not disable `rewriterConfig`/`summarizationConfig` inside that block, or lacks a `snippetsConfig` in an app with `audioProcessingConfig` or a voice/telephony deployment YAML.
 
     *Fix:* Add an `AUDIO` configuration to `modalityConfigs`, ensure `rewriterConfig.disabled` and `summarizationConfig.disabled` are both `true`, and provide a valid `snippetsConfig`.
 
@@ -490,7 +490,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S011 | `agent-resource-references` | Error | Agent JSON references guardrails, toolsets, or `instruction` files that don't exist |
     | S012 | `tool-file-references` | Error | Tool JSON references `pythonCode` or `openApiSchema` files that don't exist |
     | S013 | `toolset-file-references` | Error | Toolset JSON references `openApiSchema` files that don't exist |
-    | G001 | `guardrail-jinja-syntax` | Error | Guardrail `llmPolicy.prompt` contains Jinja tokens (`{{...}}` or `{% ... %}`) |
+    | G001 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
     | G002 | `crosscheck-locales-content-blocks` | Error | `(brandId, country, lang)` tuple in `deployments/*.yaml` missing from `content_blocks.yaml` |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
@@ -533,7 +533,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **G001 — guardrail-jinja-syntax**
 
-    *Triggers:* When a guardrail's `llmPolicy.prompt` contains Jinja tokens (`{{...}}` or `{% ... %}`).
+    *Triggers:* When a JSON or YAML guardrail's `llmPolicy.prompt` or `llmPromptSecurity.customPolicy.prompt` contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`).
 
     *Fix:* Use flat `{variable}` placeholders or pre-rendered static text instead of Jinja templates.
 

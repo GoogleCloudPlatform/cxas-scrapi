@@ -344,6 +344,74 @@ class LintContext:
         return self.model
 
 
+VOICE_CHANNEL_TYPES = frozenset(
+    {
+        "GOOGLE_TELEPHONY_PLATFORM",
+        "CONTACT_CENTER_AS_A_SERVICE",
+        "CONTACT_CENTER_INTEGRATION",
+        "TELEPHONY",
+        "VOICE",
+        "AUDIO",
+        "CONTACT_CENTER",
+        "TWILIO",
+        "FIVE9",
+    }
+)
+
+
+def is_voice_app(context: LintContext) -> bool:
+    """Return True if app config or any deployment targets a voice channel."""
+    app_root = context.app_root or context.app_dir
+    if app_root is not None:
+        app_json = app_root / "app.json"
+        app_yaml = app_root / "app.yaml"
+        if app_json.is_file():
+            try:
+                data = json.loads(app_json.read_text("utf-8"))
+                if isinstance(data, dict) and (
+                    data.get("audioProcessingConfig")
+                    or data.get("audio_processing_config")
+                ):
+                    return True
+            except (json.JSONDecodeError, OSError):
+                pass
+        elif app_yaml.is_file():
+            try:
+                data = yaml.safe_load(app_yaml.read_text("utf-8"))
+                if isinstance(data, dict) and (
+                    data.get("audioProcessingConfig")
+                    or data.get("audio_processing_config")
+                ):
+                    return True
+            except (yaml.YAMLError, OSError):
+                pass
+
+    seen_roots: set[Path] = set()
+    for root in (context.app_root, context.app_dir, context.project_root):
+        if root is None or root in seen_roots:
+            continue
+        seen_roots.add(root)
+        deps_dir = root / "deployments"
+        if not deps_dir.is_dir():
+            continue
+        for dep_file in sorted(deps_dir.glob("*.yaml")):
+            try:
+                data = yaml.safe_load(dep_file.read_text("utf-8"))
+            except (yaml.YAMLError, OSError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            ch = data.get("channel")
+            if not isinstance(ch, str) or not ch:
+                cp = data.get("channelProfile") or data.get("channel_profile")
+                if isinstance(cp, dict):
+                    ch = cp.get("channelType") or cp.get("channel_type")
+            if isinstance(ch, str) and ch in VOICE_CHANNEL_TYPES:
+                return True
+
+    return False
+
+
 # ── Rule Registry ────────────────────────────────────────────────────────
 
 
@@ -579,9 +647,13 @@ class Discovery:
                 if code.exists():
                     result[d.name] = code
                 else:
-                    json_files = list(d.glob("*.json"))
-                    if json_files:
-                        result[d.name] = json_files[0]
+                    config_files = (
+                        sorted(d.glob("*.json"))
+                        or sorted(d.glob("*.yaml"))
+                        or sorted(d.glob("*.yml"))
+                    )
+                    if config_files:
+                        result[d.name] = config_files[0]
         return result
 
     def discover_callbacks(self) -> list[tuple[str, str, str, Path]]:
@@ -1005,6 +1077,19 @@ def run_rules(
     # Rules with a ``target`` property get matched to discovered files.
     target_dispatched = _get_rules("structure") + _get_rules("schema")
     if target_dispatched:
+        deployment_configs: dict[str, Path] = {}
+        seen_dep_roots: set[Path] = set()
+        for dep_root in (
+            discovery.app_root,
+            discovery.app_dir,
+            context.project_root,
+        ):
+            if dep_root is None or dep_root in seen_dep_roots:
+                continue
+            seen_dep_roots.add(dep_root)
+            for p in sorted(dep_root.glob("deployments/*.yaml")):
+                deployment_configs.setdefault(p.stem, p)
+
         target_files = {
             "app_config": {},
             "instruction": instruction_files,
@@ -1012,12 +1097,7 @@ def run_rules(
             "tool_config": discovery._discover_resource_dirs("tools"),
             "toolset_config": discovery.discover_toolsets(),
             "guardrail_config": discovery.discover_guardrails(),
-            "deployment_config": {
-                p.stem: p
-                for p in sorted(discovery.app_root.glob("deployments/*.yaml"))
-            }
-            if discovery.app_root
-            else {},
+            "deployment_config": deployment_configs,
             "evaluation_config": discovery.discover_evaluations(),
             "eval_expectation_config": (
                 discovery.discover_evaluation_expectations()

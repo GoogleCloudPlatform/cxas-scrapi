@@ -32,6 +32,7 @@ Catches silent CES platform traps documented in Chapters 3-7 and Appendix A:
 
 import ast
 import json
+import math
 import re
 import warnings
 from pathlib import Path
@@ -1152,7 +1153,8 @@ class VariableCountLimit(Rule):
         if (
             isinstance(custom_limit, (int, float))
             and not isinstance(custom_limit, bool)
-            and custom_limit > 0
+            and math.isfinite(custom_limit)
+            and custom_limit >= 1
         ):
             platform_limit = int(custom_limit)
             warning_limit = int(custom_limit * 0.95)
