@@ -179,7 +179,7 @@ def _handle_import_result(result: Any, success_verb: str) -> str | None:
 
 def _prepare_pull_branch(branch_name: str, cwd: str | None = None) -> None:
     """Create a clean Git branch before pulling Console edits."""
-    work_dir = cwd or os.getcwd()
+    work_dir = cwd if (cwd and os.path.isdir(cwd)) else os.getcwd()
     check_git = subprocess.run(
         ["git", "rev-parse", "--is-inside-work-tree"],
         cwd=work_dir,
@@ -723,23 +723,28 @@ def _atomic_push_lock(
 
     # Ensure we hold cxas.lock before unlocking native App.locked so foreign
     # writers remain blocked during the push window.
-    if not active_lock or active_lock.get("by") != caller:
-        meta_store.acquire_lock(
+    held_lock = active_lock
+    if not held_lock or held_lock.get("by") != caller:
+        held_lock = meta_store.acquire_lock(
             user=caller,
             reason="cxas push --with-lock",
             native=True,
         )
 
     # Temporarily clear native App.locked while keeping cxas.lock intact, then
-    # ALWAYS re-lock in finally (even if import_app fails!).
+    # ALWAYS re-lock (and re-stamp cxas.lock in case import_app replaced
+    # metadata) in finally — even if import_app fails!
     meta_store.update(lambda _d: None, native_lock=False, check_lock=False)
     try:
         yield True
     finally:
+
+        def _restore_lock(d: dict[str, Any]) -> None:
+            if held_lock is not None:
+                d[LOCK_KEY] = held_lock
+
         try:
-            meta_store.update(
-                lambda _d: None, native_lock=True, check_lock=False
-            )
+            meta_store.update(_restore_lock, native_lock=True, check_lock=False)
         except Exception as relock_err:  # noqa: BLE001
             logger.warning(
                 "Could not restore native lock after --with-lock push: %s",

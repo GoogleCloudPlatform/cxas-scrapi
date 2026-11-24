@@ -643,3 +643,93 @@ def test_pull_branch_creates_git_branch_and_rejects_dirty_tree(
         text=True,
     ).stdout.strip()
     assert branch == "fix/console"
+
+    # Non-existent --target-dir falls back to cwd cleanly
+    subprocess.run(
+        ["git", "checkout", "-"], cwd=tmp_path, check=True, capture_output=True
+    )
+    with mock.patch("os.getcwd", return_value=str(tmp_path)):
+        cli_app._prepare_pull_branch(
+            "fix/new-dir", cwd=str(tmp_path / "does-not-exist-yet")
+        )
+    branch2 = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert branch2 == "fix/new-dir"
+
+
+def test_push_with_lock_on_initially_unlocked_app_preserves_cxas_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--with-lock on an unlocked app must keep cxas.lock alongside App.locked=True."""
+    app_dir = tmp_path / "agent"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json.dumps({"displayName": "My App", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CXAS_USER", "alice@example.com")
+    state: dict = {"locked": False, "metadata": {}, "etag": "e1"}
+
+    def _get_app(name: str) -> types.App:
+        return types.App(
+            name=name,
+            locked=state["locked"],
+            metadata=dict(state["metadata"]),
+            etag=state["etag"],
+        )
+
+    def _update_app(request: types.UpdateAppRequest) -> types.App:
+        if "metadata" in request.update_mask.paths:
+            state["metadata"] = dict(request.app.metadata)
+        if "locked" in request.update_mask.paths:
+            state["locked"] = bool(request.app.locked)
+        state["etag"] += "x"
+        return _get_app(request.app.name)
+
+    def _import_app(**_kwargs: object) -> mock.MagicMock:
+        # Simulate CES import_app wiping metadata that wasn't in the zip
+        state["metadata"] = {}
+        lro = mock.MagicMock()
+        lro.result.return_value = SimpleNamespace(name=APP_NAME, warnings=[])
+        return lro
+
+    fake_apps = mock.MagicMock()
+    fake_apps.get_app.side_effect = _get_app
+    fake_apps.client.update_app.side_effect = _update_app
+    fake_apps.import_app.side_effect = _import_app
+
+    with (
+        mock.patch("cxas_scrapi.cli.app.Apps", return_value=fake_apps),
+        mock.patch("cxas_scrapi.cli.app.record_last_push"),
+    ):
+        cli_app.app_push(
+            argparse.Namespace(
+                app_dir=str(app_dir),
+                to=APP_NAME,
+                app_name=None,
+                display_name=None,
+                env_file=None,
+                project_id=None,
+                location=None,
+                overwrite=False,
+                with_lock=True,
+                on_drift="overwrite",
+                fail_if_version_exists=False,
+                create_version=False,
+                profile=None,
+                allow_protected=False,
+                dry_run=False,
+            )
+        )
+
+    assert state["locked"] is True
+    assert "cxas.lock" in state["metadata"]
+    assert (
+        json.loads(state["metadata"]["cxas.lock"])["by"] == "alice@example.com"
+    )
