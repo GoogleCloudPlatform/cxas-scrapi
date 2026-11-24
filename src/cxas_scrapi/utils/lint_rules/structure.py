@@ -957,3 +957,131 @@ class ToolsetFileReferences(Rule):
             )
 
         return results
+
+
+@rule("structure")
+class GuardrailJinjaSyntax(Rule):
+    id = "G001"
+    target = "guardrail_config"
+    name = "guardrail-jinja-syntax"
+    description = "Detects Jinja tokens inside llm_policy.prompt in guardrails."
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        jsons_to_check: list[Path] = []
+        if file_path.is_dir():
+            jsons_to_check.extend(sorted(file_path.glob("*.json")))
+        elif file_path.name.endswith(".json"):
+            jsons_to_check.append(file_path)
+
+        results: list[LintResult] = []
+        for j_path in jsons_to_check:
+            rel = str(j_path.relative_to(context.project_root))
+            try:
+                data = json.loads(j_path.read_text("utf-8"))
+            except (ValueError, OSError):
+                continue
+            if not isinstance(data, dict):
+                continue
+
+            policy = data.get("llm_policy") or data.get("llmPolicy")
+            prompt = policy.get("prompt") if isinstance(policy, dict) else None
+
+            if isinstance(prompt, str) and ("{{" in prompt or "{%" in prompt):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            "Jinja tokens {{...}} or {% ... %} found"
+                            " inside llmPolicy.prompt."
+                        ),
+                        fix=(
+                            "Use flat {variable} placeholders or pre-rendered"
+                            " static text instead of Jinja templates."
+                        ),
+                    )
+                )
+        return results
+
+
+@rule("structure")
+class CrosscheckLocalesContentBlocks(Rule):
+    id = "G002"
+    target = "deployment_config"
+    name = "crosscheck-locales-content-blocks"
+    description = (
+        "Cross-checks (brandId, country, lang) across"
+        " deployments and content_blocks."
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        rel = str(file_path.relative_to(context.project_root))
+        content_blocks_path: Path | None = None
+        for root in (context.app_root, context.project_root):
+            if root is None:
+                continue
+            candidate = root / "manifests" / "locales" / "content_blocks.yaml"
+            if candidate.exists():
+                content_blocks_path = candidate
+                break
+
+        if not content_blocks_path:
+            return []
+
+        try:
+            blocks = yaml.safe_load(content_blocks_path.read_text("utf-8"))
+        except (ValueError, OSError, yaml.YAMLError):
+            return []
+        blocks_data = blocks.get("blocks") if isinstance(blocks, dict) else None
+        if not isinstance(blocks_data, dict):
+            return []
+
+        try:
+            dep = yaml.safe_load(content)
+        except (ValueError, OSError, yaml.YAMLError):
+            return []
+        if not isinstance(dep, dict):
+            return []
+
+        brand = dep.get("brandId")
+        countries = dep.get("supportedCountries", [])
+        langs = dep.get("supportedLanguages", [])
+        if not isinstance(countries, list) or not isinstance(langs, list):
+            return []
+
+        brand_blocks = (
+            blocks_data.get(brand) if isinstance(brand, str) else None
+        )
+        results: list[LintResult] = []
+        for country in countries:
+            country_blocks = (
+                brand_blocks.get(country)
+                if isinstance(brand_blocks, dict) and isinstance(country, str)
+                else None
+            )
+            for lang_code in langs:
+                if (
+                    not isinstance(country_blocks, dict)
+                    or not isinstance(lang_code, str)
+                    or lang_code not in country_blocks
+                ):
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message=(
+                                f"Tuple (brandId={brand}, country={country},"
+                                f" lang={lang_code}) missing from "
+                                "content_blocks.yaml."
+                            ),
+                            fix=(
+                                "Ensure content_blocks.yaml declares this"
+                                " combination or remove it from deployments."
+                            ),
+                        )
+                    )
+        return results

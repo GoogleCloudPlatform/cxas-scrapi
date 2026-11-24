@@ -176,6 +176,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C012 | `after-model-unreturned-response` | Error | `after_model_callback` mutates or constructs `LlmResponse` without returning it |
     | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
     | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
+    | C024 | `voice-before-model-request-mutation` | Warning | Voice apps ignore `before_model` `llm_request` mutations |
 
     ---
 
@@ -251,6 +252,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Fix:* Fix the syntax error. Run `python -m py_compile python_code.py` locally to check.
 
+    ---
+
+    **C024 — voice-before-model-request-mutation**
+
+    Voice streaming runtimes ignore `before_model_callback` mutations to `llm_request`.
+
+    *Triggers:* A `before_model_callbacks` Python file mutates the `llm_request` argument (assignments, deletions, `hide_tool()`, or list/dict mutators such as `append`/`extend`/`insert`/`pop`/`remove`/`clear`/`update`/`setdefault`) in an app with `audioProcessingConfig` or a voice/telephony deployment YAML.
+
+    *Fix:* Configure channel-specific tools and prompts statically or move dynamic gating into `before_tool_callback`.
+
 === "T — Tools"
 
     Rules in the `T` category check tool `python_code.py` files.
@@ -269,6 +280,9 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | T012 | `tool-json-missing-description` | Error | Tool JSON configuration must include description |
     | T015 | `tool-entry-first-def` | Error | Entry tool function must be the first top-level `def` in `python_code.py` |
     | T016 | `tool-return-dict-annotation` | Warning | Python tool entry function should declare a `-> dict` return annotation |
+    | T017 | `data-store-filter-template` | Error | Detects template syntax (`{...}` or `{{...}}`) in data store static filters |
+    | T018 | `data-store-filter-parameter-behavior` | Error | Brand-scoped `dataStoreTool` must use `NEVER_INCLUDE` parameter behavior |
+    | T019 | `data-store-voice-modality` | Warning | Voice deployments require an `AUDIO` modality config on `dataStoreTool` |
 
     ---
 
@@ -317,6 +331,30 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* The description field is missing or empty in the tool's JSON configuration (and, for `pythonFunction` tools, the Python tool function also lacks a docstring).
 
     *Fix:* Add a docstring to the Python tool function or a `'description'` key within the tool type object (`pythonFunction`, `remoteAgentTool`, `widgetTool`, etc.) in the tool's JSON file.
+
+    ---
+
+    **T017 — data-store-filter-template**
+
+    *Triggers:* When a data store tool (or its sources) contains template syntax (`{...}` or `{{...}}`) inside a static `filter`.
+
+    *Fix:* Remove the template syntax. Static filters do not support variable interpolation.
+
+    ---
+
+    **T018 — data-store-filter-parameter-behavior**
+
+    *Triggers:* When a brand-scoped `dataStoreTool` (either explicitly containing a filter, or prefixed with `ds_`) specifies a `filterParameterBehavior` other than `NEVER_INCLUDE` or `3`.
+
+    *Fix:* Set `filterParameterBehavior` to `NEVER_INCLUDE`.
+
+    ---
+
+    **T019 — data-store-voice-modality**
+
+    *Triggers:* When a data store tool lacks an `AUDIO` configuration block in `modalityConfigs`, does not disable `rewriterConfig`/`summarizationConfig` inside that block, or lacks a `snippetsConfig` while operating under a voice deployment (`GOOGLE_TELEPHONY_PLATFORM` or `CONTACT_CENTER_AS_A_SERVICE`).
+
+    *Fix:* Add an `AUDIO` configuration to `modalityConfigs`, ensure `rewriterConfig.disabled` and `summarizationConfig.disabled` are both `true`, and provide a valid `snippetsConfig`.
 
 === "E — Evals"
 
@@ -390,7 +428,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A006 | `config-root-agent` | Error | App config must have a valid `rootAgent` pointing to an existing agent directory |
     | A013 | `composite-v2-speech-instruction` | Warning | Legacy Director's Notes in `synthesizeSpeechConfigs` or missing `voiceInstructionMode: "NO_INSTRUCTION"` on `gemini-composite-v2` |
     | A014 | `async-tool-missing-inactivity-timeout` | Error | Apps with `ASYNCHRONOUS` tools must configure `audioProcessingConfig.inactivityTimeout` |
-    | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100) |
+    | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95% of the configured variable cap (default warning ceiling: 95 of ~100; configurable via `max_variables_per_app`) |
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
     | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
 
@@ -415,6 +453,14 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `root_agent` (snake_case) is used instead of `rootAgent`, `rootAgent` is missing or not a string, or the referenced agent directory/JSON is missing.
 
     *Fix:* Add or fix the `rootAgent` field in `app.json` and ensure the agent directory and config file exist.
+
+    ---
+
+    **A015 — variable-count-limit**
+
+    Warns when `app.json` / `app.yaml` declares more top-level `variableDeclarations` than the 95% warning ceiling (default: `95` for the ~`100` platform cap). Override the platform cap via `options.A015.max_variables_per_app` (or top-level `options.max_variables_per_app`) in `cxaslint.yaml`; the warning threshold automatically scales to `int(max_variables_per_app * 0.95)`.
+
+    *Fix:* Group related scalar variables into typed `OBJECT` declarations in `variableDeclarations`.
 
     ---
 
@@ -444,6 +490,8 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S011 | `agent-resource-references` | Error | Agent JSON references guardrails, toolsets, or `instruction` files that don't exist |
     | S012 | `tool-file-references` | Error | Tool JSON references `pythonCode` or `openApiSchema` files that don't exist |
     | S013 | `toolset-file-references` | Error | Toolset JSON references `openApiSchema` files that don't exist |
+    | G001 | `guardrail-jinja-syntax` | Error | Guardrail `llmPolicy.prompt` contains Jinja tokens (`{{...}}` or `{% ... %}`) |
+    | G002 | `crosscheck-locales-content-blocks` | Error | `(brandId, country, lang)` tuple in `deployments/*.yaml` missing from `content_blocks.yaml` |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 
@@ -480,6 +528,22 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     **S013 — toolset-file-references**
 
     Validates that `openApiToolset.openApiSchema` file paths in `<toolset>.json` exist on disk when non-inline paths are specified.
+
+    ---
+
+    **G001 — guardrail-jinja-syntax**
+
+    *Triggers:* When a guardrail's `llmPolicy.prompt` contains Jinja tokens (`{{...}}` or `{% ... %}`).
+
+    *Fix:* Use flat `{variable}` placeholders or pre-rendered static text instead of Jinja templates.
+
+    ---
+
+    **G002 — crosscheck-locales-content-blocks**
+
+    *Triggers:* When a combination of `brandId`, `supportedCountries`, and `supportedLanguages` defined in `deployments/*.yaml` is missing from `manifests/locales/content_blocks.yaml`.
+
+    *Fix:* Ensure `content_blocks.yaml` declares the missing combination or remove it from the deployment configuration.
 
 === "V — Schema"
 

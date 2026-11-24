@@ -451,3 +451,62 @@ def test_sample_support_agent_passes_all_runtime_trap_rules() -> None:
     }
     run_rules(reg, cfg, ctx, discovery, report, specific_rules=pr3_rules)
     assert report.results == [], [str(r) for r in report.results]
+
+
+def _write_app_with_vars(tmp_path: Path, count: int) -> Path:
+    app_file = tmp_path / "app.json"
+    app_file.write_text(
+        json.dumps(
+            {
+                "displayName": "Demo",
+                "variableDeclarations": [
+                    {"name": f"var{i}"} for i in range(count)
+                ],
+            }
+        )
+    )
+    return app_file
+
+
+def test_a015_default_limit_unchanged_without_options(tmp_path: Path) -> None:
+    app_file = _write_app_with_vars(tmp_path, 85)
+    ctx = _ctx(tmp_path)
+    assert VariableCountLimit().check(app_file, app_file.read_text(), ctx) == []
+
+
+def test_a015_rule_scoped_option_lowers_limit(tmp_path: Path) -> None:
+    app_file = _write_app_with_vars(tmp_path, 85)
+    ctx = _ctx(tmp_path)
+    ctx.options = {"A015": {"max_variables_per_app": 80}}
+    results = VariableCountLimit().check(app_file, app_file.read_text(), ctx)
+    assert len(results) == 1
+    assert "recommended ceiling: 76" in results[0].message
+    assert "platform limit: ~80" in results[0].message
+
+
+def test_a015_exact_95_percent_boundary_passes(tmp_path: Path) -> None:
+    app_file = _write_app_with_vars(tmp_path, 76)
+    ctx = _ctx(tmp_path)
+    ctx.options = {"A015": {"max_variables_per_app": 80}}
+    assert VariableCountLimit().check(app_file, app_file.read_text(), ctx) == []
+
+
+def test_a015_global_option_lowers_limit(tmp_path: Path) -> None:
+    app_file = _write_app_with_vars(tmp_path, 85)
+    ctx = _ctx(tmp_path)
+    ctx.options = {"max_variables_per_app": 80}
+    assert (
+        len(VariableCountLimit().check(app_file, app_file.read_text(), ctx))
+        == 1
+    )
+
+
+def test_a015_invalid_option_falls_back_to_default(tmp_path: Path) -> None:
+    app_file = _write_app_with_vars(tmp_path, 85)
+    for invalid in (True, False, "80", 0, -10):
+        ctx = _ctx(tmp_path)
+        ctx.options = {"A015": {"max_variables_per_app": invalid}}
+        assert (
+            VariableCountLimit().check(app_file, app_file.read_text(), ctx)
+            == []
+        )

@@ -18,9 +18,12 @@ Validates agent callback Python files against CXAS conventions.
 """
 
 import ast
+import json
 import re
 import warnings
 from pathlib import Path
+
+import yaml
 
 from cxas_scrapi.utils.linter import (
     LintContext,
@@ -497,3 +500,193 @@ class InvalidPythonSyntax(Rule):
                 )
             ]
         return []
+
+
+@rule("callbacks")
+class VoiceBeforeModelToolMutation(Rule):
+    id = "C024"
+    name = "voice-before-model-request-mutation"
+    description = "Voice apps ignore before_model llm_request mutations"
+    default_severity = Severity.WARNING
+
+    _VOICE_CHANNELS = frozenset(
+        {
+            "GOOGLE_TELEPHONY_PLATFORM",
+            "CONTACT_CENTER_AS_A_SERVICE",
+            "TELEPHONY",
+            "VOICE",
+            "AUDIO",
+            "CONTACT_CENTER",
+        }
+    )
+    _MUTATING_METHODS = frozenset(
+        {
+            "hide_tool",
+            "append",
+            "extend",
+            "insert",
+            "pop",
+            "remove",
+            "clear",
+            "update",
+            "setdefault",
+        }
+    )
+
+    def _is_voice_app(self, context: LintContext) -> bool:
+        app_json = context.app_root / "app.json" if context.app_root else None
+        app_yaml = context.app_root / "app.yaml" if context.app_root else None
+
+        if app_json and app_json.is_file():
+            try:
+                data = json.loads(app_json.read_text("utf-8"))
+                if isinstance(data, dict) and (
+                    data.get("audioProcessingConfig")
+                    or data.get("audio_processing_config")
+                ):
+                    return True
+            except (json.JSONDecodeError, OSError):
+                pass
+        elif app_yaml and app_yaml.is_file():
+            try:
+                data = yaml.safe_load(app_yaml.read_text("utf-8"))
+                if isinstance(data, dict) and (
+                    data.get("audioProcessingConfig")
+                    or data.get("audio_processing_config")
+                ):
+                    return True
+            except (yaml.YAMLError, OSError):
+                pass
+
+        seen_roots: set[Path] = set()
+        for root in (context.app_root, context.app_dir, context.project_root):
+            if root is None or root in seen_roots:
+                continue
+            seen_roots.add(root)
+            deps_dir = root / "deployments"
+            if not deps_dir.is_dir():
+                continue
+            for dep_file in sorted(deps_dir.glob("*.yaml")):
+                try:
+                    data = yaml.safe_load(dep_file.read_text("utf-8"))
+                except (yaml.YAMLError, OSError):
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                ch = data.get("channel")
+                if not isinstance(ch, str) or not ch:
+                    cp = data.get("channelProfile") or data.get(
+                        "channel_profile"
+                    )
+                    if isinstance(cp, dict):
+                        ch = cp.get("channelType") or cp.get("channel_type")
+                if isinstance(ch, str) and ch in self._VOICE_CHANNELS:
+                    return True
+
+        return False
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if _resolve_cb_type(file_path) != "before_model_callbacks":
+            return []
+
+        if not self._is_voice_app(context):
+            return []
+
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            return []
+
+        mutating_methods = self._MUTATING_METHODS
+
+        class _MutationVisitor(ast.NodeVisitor):
+            def __init__(self) -> None:
+                self.mutations: list[ast.AST] = []
+                self.llm_req_name = "llm_request"
+
+            def _visit_fn(
+                self, node: ast.FunctionDef | ast.AsyncFunctionDef
+            ) -> None:
+                prev_name = self.llm_req_name
+                if (
+                    node.name == "before_model_callback"
+                    and len(node.args.args) >= 2
+                ):
+                    self.llm_req_name = node.args.args[1].arg
+                self.generic_visit(node)
+                self.llm_req_name = prev_name
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+                self._visit_fn(node)
+
+            def visit_AsyncFunctionDef(
+                self, node: ast.AsyncFunctionDef
+            ) -> None:
+                self._visit_fn(node)
+
+            def _is_target(self, target: ast.AST) -> bool:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == self.llm_req_name
+                ):
+                    return True
+                if isinstance(target, ast.Attribute) and self._is_target(
+                    target.value
+                ):
+                    return True
+                return bool(
+                    isinstance(target, ast.Subscript)
+                    and self._is_target(target.value)
+                )
+
+            def visit_Assign(self, node: ast.Assign) -> None:
+                for target in node.targets:
+                    if self._is_target(target):
+                        self.mutations.append(node)
+                self.generic_visit(node)
+
+            def visit_AugAssign(self, node: ast.AugAssign) -> None:
+                if self._is_target(node.target):
+                    self.mutations.append(node)
+                self.generic_visit(node)
+
+            def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+                if self._is_target(node.target):
+                    self.mutations.append(node)
+                self.generic_visit(node)
+
+            def visit_Delete(self, node: ast.Delete) -> None:
+                for target in node.targets:
+                    if self._is_target(target):
+                        self.mutations.append(node)
+                self.generic_visit(node)
+
+            def visit_Call(self, node: ast.Call) -> None:
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr in mutating_methods
+                    and self._is_target(node.func.value)
+                ):
+                    self.mutations.append(node)
+                self.generic_visit(node)
+
+        visitor = _MutationVisitor()
+        visitor.visit(tree)
+
+        rel = str(file_path.relative_to(context.project_root))
+        return [
+            self.make_result(
+                file=rel,
+                line=getattr(mutation, "lineno", None),
+                message=(
+                    "Voice streaming ignores before_model llm_request mutations"
+                ),
+                fix=(
+                    "Configure channel-specific tools/prompts statically or"
+                    " move dynamic gating into before_tool_callback."
+                ),
+            )
+            for mutation in visitor.mutations
+        ]
