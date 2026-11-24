@@ -349,6 +349,7 @@ VOICE_CHANNEL_TYPES = frozenset(
         "GOOGLE_TELEPHONY_PLATFORM",
         "CONTACT_CENTER_AS_A_SERVICE",
         "CONTACT_CENTER_INTEGRATION",
+        "VOICE_TELEPHONY",
         "TELEPHONY",
         "VOICE",
         "AUDIO",
@@ -360,11 +361,51 @@ VOICE_CHANNEL_TYPES = frozenset(
 
 
 def is_voice_app(context: LintContext) -> bool:
-    """Return True if app config or any deployment targets a voice channel."""
+    """Return True if deployment manifests or app config target a voice channel.
+
+    When at least one ``deployments/*.yaml`` or ``deployments/*.yml`` manifest
+    declares a channel (``channel`` or ``channelProfile.channelType``),
+    deployment manifests are authoritative over ``app.json`` / ``app.yaml`` /
+    ``app.yml`` ``audioProcessingConfig`` so digital builds that retain brand
+    TTS settings are not misclassified as voice apps.
+    """
+    saw_deployment_channel = False
+    seen_roots: set[Path] = set()
+    for root in (context.app_root, context.app_dir, context.project_root):
+        if root is None or root in seen_roots:
+            continue
+        seen_roots.add(root)
+        deps_dir = root / "deployments"
+        if not deps_dir.is_dir():
+            continue
+        dep_files = sorted({*deps_dir.glob("*.yaml"), *deps_dir.glob("*.yml")})
+        for dep_file in dep_files:
+            try:
+                data = yaml.safe_load(dep_file.read_text("utf-8"))
+            except (yaml.YAMLError, OSError):
+                continue
+            if not isinstance(data, dict):
+                continue
+
+            candidates: list[object] = [data.get("channel")]
+            for cp_key in ("channelProfile", "channel_profile"):
+                cp = data.get(cp_key)
+                if isinstance(cp, dict):
+                    candidates.append(cp.get("channelType"))
+                    candidates.append(cp.get("channel_type"))
+
+            for raw in candidates:
+                if isinstance(raw, str) and raw.strip():
+                    saw_deployment_channel = True
+                    if raw.strip().upper() in VOICE_CHANNEL_TYPES:
+                        return True
+
+    if saw_deployment_channel:
+        return False
+
     app_root = context.app_root or context.app_dir
     if app_root is not None:
         app_json = app_root / "app.json"
-        app_yaml = app_root / "app.yaml"
         if app_json.is_file():
             try:
                 data = json.loads(app_json.read_text("utf-8"))
@@ -375,39 +416,20 @@ def is_voice_app(context: LintContext) -> bool:
                     return True
             except (json.JSONDecodeError, OSError):
                 pass
-        elif app_yaml.is_file():
-            try:
-                data = yaml.safe_load(app_yaml.read_text("utf-8"))
-                if isinstance(data, dict) and (
-                    data.get("audioProcessingConfig")
-                    or data.get("audio_processing_config")
-                ):
-                    return True
-            except (yaml.YAMLError, OSError):
-                pass
-
-    seen_roots: set[Path] = set()
-    for root in (context.app_root, context.app_dir, context.project_root):
-        if root is None or root in seen_roots:
-            continue
-        seen_roots.add(root)
-        deps_dir = root / "deployments"
-        if not deps_dir.is_dir():
-            continue
-        for dep_file in sorted(deps_dir.glob("*.yaml")):
-            try:
-                data = yaml.safe_load(dep_file.read_text("utf-8"))
-            except (yaml.YAMLError, OSError):
-                continue
-            if not isinstance(data, dict):
-                continue
-            ch = data.get("channel")
-            if not isinstance(ch, str) or not ch:
-                cp = data.get("channelProfile") or data.get("channel_profile")
-                if isinstance(cp, dict):
-                    ch = cp.get("channelType") or cp.get("channel_type")
-            if isinstance(ch, str) and ch in VOICE_CHANNEL_TYPES:
-                return True
+        else:
+            for yaml_name in ("app.yaml", "app.yml"):
+                app_yaml = app_root / yaml_name
+                if app_yaml.is_file():
+                    try:
+                        data = yaml.safe_load(app_yaml.read_text("utf-8"))
+                        if isinstance(data, dict) and (
+                            data.get("audioProcessingConfig")
+                            or data.get("audio_processing_config")
+                        ):
+                            return True
+                    except (yaml.YAMLError, OSError):
+                        pass
+                    break
 
     return False
 

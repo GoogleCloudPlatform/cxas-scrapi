@@ -17,12 +17,14 @@
 from pathlib import Path
 
 from cxas_scrapi.utils.lint_rules.callbacks import VoiceBeforeModelToolMutation
+from cxas_scrapi.utils.lint_rules.tools import DataStoreVoiceModality
 from cxas_scrapi.utils.linter import (
     Discovery,
     LintConfig,
     LintContext,
     LintReport,
     build_registry,
+    is_voice_app,
     run_rules,
 )
 
@@ -168,3 +170,92 @@ def test_c024_dispatched_via_registry(tmp_path: Path) -> None:
         specific_rules={"C024"},
     )
     assert [r.rule_id for r in report.results] == ["C024", "C024"]
+
+
+def test_is_voice_app_voice_telephony_deployment_fires_t019_and_c024(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.json").write_text('{"displayName": "voice_app"}')
+    deps = tmp_path / "deployments"
+    deps.mkdir()
+    (deps / "voice-telephony.yaml").write_text(
+        "channel: VOICE_TELEPHONY\n"
+        "channelProfile:\n"
+        "  channelType: GOOGLE_TELEPHONY_PLATFORM\n",
+        encoding="utf-8",
+    )
+    ctx = _context(tmp_path)
+    assert is_voice_app(ctx) is True
+
+    cb_file = _callback(tmp_path)
+    assert [
+        r.rule_id
+        for r in VoiceBeforeModelToolMutation().check(cb_file, _MUTATING, ctx)
+    ] == ["C024", "C024"]
+
+    tool_file = tmp_path / "tools" / "ds_kb" / "ds_kb.json"
+    tool_file.parent.mkdir(parents=True)
+    tool_json = '{"dataStoreTool": {"filter": "brand = \'a\'"}}'
+    tool_file.write_text(tool_json, encoding="utf-8")
+    assert [
+        r.rule_id
+        for r in DataStoreVoiceModality().check(tool_file, tool_json, ctx)
+    ] == ["T019"]
+
+
+def test_is_voice_app_checks_channel_profile_even_when_channel_is_non_voice(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.json").write_text("{}")
+    deps = tmp_path / "deployments"
+    deps.mkdir()
+    (deps / "custom.yml").write_text(
+        "channel: CUSTOM_IVR\n"
+        "channelProfile:\n"
+        "  channelType: GOOGLE_TELEPHONY_PLATFORM\n",
+        encoding="utf-8",
+    )
+    assert is_voice_app(_context(tmp_path)) is True
+
+
+def test_is_voice_app_web_deployment_overrides_app_audio_processing_config(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.json").write_text(
+        '{"displayName": "web_app", "audioProcessingConfig": '
+        '{"synthesizeSpeechConfigs": {"en-US": {"voice": "v1"}}}}'
+    )
+    deps = tmp_path / "deployments"
+    deps.mkdir()
+    (deps / "web.yaml").write_text(
+        "channel: WEB\nchannelProfile:\n  channelType: WEB_UI\n",
+        encoding="utf-8",
+    )
+    ctx = _context(tmp_path)
+    assert is_voice_app(ctx) is False
+
+    cb_file = _callback(tmp_path)
+    assert VoiceBeforeModelToolMutation().check(cb_file, _MUTATING, ctx) == []
+
+    tool_file = tmp_path / "tools" / "ds_kb" / "ds_kb.json"
+    tool_file.parent.mkdir(parents=True)
+    tool_json = '{"dataStoreTool": {"filter": "brand = \'a\'"}}'
+    tool_file.write_text(tool_json, encoding="utf-8")
+    assert DataStoreVoiceModality().check(tool_file, tool_json, ctx) == []
+
+
+def test_is_voice_app_falls_back_to_app_audio_config_without_deployments(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.json").write_text(
+        '{"audioProcessingConfig": {"inactivityTimeout": "20s"}}'
+    )
+    assert is_voice_app(_context(tmp_path)) is True
+
+    yml_app = tmp_path / "yml_app"
+    yml_app.mkdir()
+    (yml_app / "app.yml").write_text(
+        "audioProcessingConfig:\n  inactivityTimeout: 20s\n",
+        encoding="utf-8",
+    )
+    assert is_voice_app(_context(yml_app)) is True
