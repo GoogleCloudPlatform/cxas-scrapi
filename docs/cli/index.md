@@ -57,6 +57,7 @@ When you pass a display name (e.g., `"My Support Agent"`) instead of a resource 
 | [`cxas test-single-callback`](test-single-callback.md) | Run unit tests for a single, specific callback. |
 | [`cxas ci-test`](ci-test.md) | Run the full CI test lifecycle against a temporary app. |
 | [`cxas local-test`](local-test.md) | Run the CI test lifecycle inside a local Docker container. |
+| [`cxas init-gitops`](init-gitops.md) | Scaffold a GitOps repository with profiles, CODEOWNERS, and SHA-pinned GitHub Actions workflows. |
 | [`cxas init-github-action`](init-github-action.md) | Generate a GitHub Actions workflow file for your agent. |
 | [`cxas lint`](lint.md) | Fast, deterministic structural and configuration linter across 60+ rules. |
 | [`cxas llm-lint`](llm-lint.md) | AI-driven semantic natural language prompt linter for sub-agent instructions using Gemini. |

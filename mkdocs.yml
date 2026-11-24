@@ -173,6 +173,7 @@ nav:
       - Pull & Push Workflow: guides/agent-development/pull-push-workflow.md
       - Branching Apps: guides/agent-development/branching.md
       - Team Collaboration: guides/agent-development/team-collaboration.md
+      - GitOps & Multi-Team Releases: guides/agent-development/gitops.md
     - Agent Migration & Optimization:
       - guides/migration/index.md
       - DFCX to CXAS Migration: guides/migration/dfcx-migration.md
@@ -232,6 +233,7 @@ nav:
     - cxas test-single-callback: cli/test-single-callback.md
     - cxas ci-test: cli/ci-test.md
     - cxas local-test: cli/local-test.md
+    - cxas init-gitops: cli/init-gitops.md
     - cxas init-github-action: cli/init-github-action.md
     - cxas lint: cli/lint.md
     - cxas llm-lint: cli/llm-lint.md

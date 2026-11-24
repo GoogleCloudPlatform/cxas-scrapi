@@ -1002,3 +1002,126 @@ def test_deployments_promote_legacy_works_with_cxas_profile_env(
         deployment_id="live",
         app_version="projects/qa-proj/locations/us/apps/qa-app/versions/v1",
     )
+
+
+def test_ci_test_batch_gating_and_impact_filter(
+    tmp_path: typing.Any,
+) -> None:
+    """Test upgraded ci-test batch --runs / --min-pass-rate gating & --evals-from-impact."""
+    import json as json_mod  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    # Verify new flags parse cleanly
+    parser = get_parser()
+    parsed = parser.parse_args(
+        [
+            "ci-test",
+            "--project-id",
+            "p",
+            "--location",
+            "us",
+            "--lint",
+            "--evals-dir",
+            "evals/",
+            "--tags",
+            "billing,contracts",
+            "--evals-from-impact",
+            "impact.json",
+            "--snapshot",
+            "--runs",
+            "3",
+            "--min-pass-rate",
+            "0.9",
+        ]
+    )
+    assert parsed.lint is True
+    assert parsed.evals_dir == "evals/"
+    assert parsed.runs == 3
+    assert parsed.min_pass_rate == 0.9
+    assert parsed.snapshot is True
+
+    # Test impact resolution + full-suite fallback
+    eval_yaml = tmp_path / "billing.yaml"
+    eval_yaml.write_text(
+        yaml.safe_dump({"conversations": [{"display_name": "Billing Check"}]}),
+        encoding="utf-8",
+    )
+    impact_file = tmp_path / "impact.json"
+    impact_file.write_text(
+        json_mod.dumps({"affected_evaluations": [str(eval_yaml)]}),
+        encoding="utf-8",
+    )
+    assert main_cli._resolve_impact_eval_display_names(str(impact_file)) == {
+        "Billing Check"
+    }
+
+    impact_full = tmp_path / "impact_full.json"
+    impact_full.write_text(
+        json_mod.dumps(
+            {"shared_files_changed": True, "affected_evaluations": []}
+        ),
+        encoding="utf-8",
+    )
+    assert main_cli._resolve_impact_eval_display_names(str(impact_full)) is None
+
+    # Test batch execution + summarize_and_gate_evals failing when below threshold
+    app_name = "projects/p/locations/us/apps/temp-1"
+    fake_eval = mock.MagicMock()
+    fake_eval.name = f"{app_name}/evaluations/e1"
+    fake_eval.display_name = "Billing Check"
+    fake_eval.tags = ["billing"]
+
+    fake_op = mock.MagicMock()
+    fake_op.result.return_value = mock.MagicMock(
+        evaluation_run=f"{app_name}/evaluationRuns/r1"
+    )
+
+    ci_args = argparse.Namespace(
+        app_dir=str(tmp_path),
+        project_id="p",
+        location="us",
+        display_name="[CI] PR-1",
+        env_file=None,
+        profile=None,
+        allow_protected=False,
+        lint=False,
+        evals_dir=None,
+        tags=["billing"],
+        evals_from_impact=str(impact_file),
+        snapshot=False,
+        snapshot_label=None,
+        runs=2,
+        min_run_passes=1,
+        min_pass_rate=0.9,
+    )
+
+    with (
+        mock.patch("cxas_scrapi.core.apps.Apps") as mock_apps,
+        mock.patch("cxas_scrapi.cli.app.app_push", return_value=app_name),
+        mock.patch(
+            "cxas_scrapi.core.evaluations.Evaluations"
+        ) as mock_evals_cls,
+        mock.patch(
+            "cxas_scrapi.utils.reporting.load_golden_results",
+            return_value=[{"case": "Billing Check", "passed": False}],
+        ),
+        mock.patch(
+            "cxas_scrapi.utils.reporting.summarize_and_gate_evals",
+            return_value={
+                "gate_passed": False,
+                "passed_cases": 0,
+                "total_cases": 1,
+            },
+        ) as mock_gate,
+    ):
+        mock_apps.return_value.get_app_by_display_name.return_value = None
+        mock_evals_cls.return_value.list_evaluations.return_value = [fake_eval]
+        mock_evals_cls.return_value.run_evaluation.return_value = fake_op
+
+        with pytest.raises(SystemExit) as excinfo:
+            main_cli.ci_test(ci_args)
+
+    assert excinfo.value.code == 1
+    assert mock_evals_cls.return_value.run_evaluation.call_count == 2
+    mock_gate.assert_called_once()

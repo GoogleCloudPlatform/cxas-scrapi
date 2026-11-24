@@ -9,6 +9,9 @@ When more than one person is editing the same agent, the platform alone isn't en
 
 This page explains a recommended setup for that: how to structure the Git repository, how to handle PRs, and how to wire up a `main → testing → prod` promotion path on top of it.
 
+!!! tip "Ready for full GitOps automation?"
+    See the [GitOps & Multi-Team Releases](gitops.md) guide for `--profile` zero-stash overlays, `cxas workspace up`, native edit locks (`cxas lock` / `--with-lock`), stateless drift detection (`--on-drift=fail`), snapshot evaluations, and `cxas init-gitops`.
+
 ---
 
 ## Why Git, not just the platform

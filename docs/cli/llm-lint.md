@@ -34,7 +34,9 @@ cxas llm-lint --agent-dir DIR
 
 | Option | Required | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--agent-dir DIR` | **Yes** | — | Path to the specific sub-agent directory containing `instruction.txt`. |
+| `--agent-dir DIR` | No* | — | Path to the specific sub-agent directory containing `instruction.txt`. |
+| `--app-dir DIR` | No* | Profile `app_dir` | Path to an app directory; iterates all sub-agents under `<app-dir>/agents/*` containing `instruction.txt`. |
+| `--profile PROFILE` | No | `$CXAS_PROFILE` | Runtime profile supplying `--project-id` and default `--app-dir` (never maps CES `us`/`eu` into Vertex AI `--location`). |
 | `--project-id ID` | No | Auto-detected | GCP Project ID for Vertex AI Gemini queries. If omitted, checks environment variables or `gecx-config.json`. |
 | `--location REGION` | No | `us-central1` | GCP region for Vertex AI endpoints. |
 | `--model MODEL_NAME` | No | `gemini-2.5-flash` | Gemini model name to use for semantic analysis. |

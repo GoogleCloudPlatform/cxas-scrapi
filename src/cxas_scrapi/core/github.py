@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import json
 import os
 import re
 import stat
@@ -502,18 +503,35 @@ def init_github_action(args: argparse.Namespace) -> None:
     except Exception:
         git_root = os.path.abspath(agent_dir)
 
-    app_yaml_path = os.path.join(agent_dir, "app.yaml")
+    app_cfg_path = next(
+        (
+            p
+            for fname in ("app.json", "app.yaml")
+            if os.path.exists(p := os.path.join(agent_dir, fname))
+        ),
+        os.path.join(agent_dir, "app.yaml"),
+    )
 
-    if os.path.exists(app_yaml_path):
+    if os.path.exists(app_cfg_path):
         try:
-            with open(app_yaml_path) as f:
-                app_data = yaml.safe_load(f)
+            with open(app_cfg_path, encoding="utf-8") as f:
+                raw_data = (
+                    json.load(f)
+                    if app_cfg_path.endswith(".json")
+                    else yaml.safe_load(f)
+                )
+            if isinstance(raw_data, dict):
+                app_data = (
+                    raw_data["app"]
+                    if isinstance(raw_data.get("app"), dict)
+                    else raw_data
+                )
                 if not agent_name and "displayName" in app_data:
                     agent_name = app_data["displayName"]
                 if not app_name and "name" in app_data:
                     app_name = app_data["name"]
         except Exception as e:
-            print(f"Warning: Could not parse {app_yaml_path}: {e}")
+            print(f"Warning: Could not parse {app_cfg_path}: {e}")
 
     # Fallback to defaults
     if not agent_name:
@@ -537,7 +555,7 @@ def init_github_action(args: argparse.Namespace) -> None:
         )
         print(
             f"Warning: No --app-name provided and could not retrieve 'name' "
-            f"from {app_yaml_path}."
+            f"from {app_cfg_path}."
         )
         print(f"Synthesizing app identifier from directory name: {app_name}")
 

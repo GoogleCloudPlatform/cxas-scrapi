@@ -21,6 +21,15 @@ cxas ci-test [--app-dir DIR]
 | `--location LOCATION` | Yes | — | GCP location (e.g., `global`, `us-central1`). |
 | `--display-name NAME` | No | `[CI] PR Test <uuid>` | Deterministic display name for the temporary app. If an app with this name already exists it is reused and updated rather than creating a duplicate. Use a name tied to your PR number (e.g., `[CI] PR-123`) to keep things tidy. |
 | `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json`. Useful for passing secrets that shouldn't live in source control. |
+| `--profile PROFILE` | No | `$CXAS_PROFILE` | Runtime profile supplying default `--project-id`, `--location`, `--app-dir`, `--env-file`, and staged `app.json` overrides. |
+| `--lint` | No | `false` | Run `cxas lint` pre-flight against `--app-dir` before pushing. |
+| `--evals-dir DIR` | No | — | Sync evaluation YAML files from this directory (e.g. `evals/`, including `evals/contracts/`) to the temp app before running. |
+| `--tags TAG ...` | No | — | Filter evaluations by tag(s) (comma- or space-separated). |
+| `--evals-from-impact FILE` | No | — | Path to `cxas impact --json` output to run only affected evaluations (falls back to full suite on shared/root edits). |
+| `--snapshot` | No | `false` | Freeze a snapshot version before executing evaluations to prevent mixed-version draft flakiness. |
+| `--runs COUNT` | No | `1` | Number of batch evaluation runs for k-of-N gating. |
+| `--min-run-passes K` | No | — | Minimum passing runs per evaluation case for k-of-N voting. |
+| `--min-pass-rate RATE` | No | — | Minimum fraction of cases (`0.0`–`1.0`) required to pass (enables batch gating via `summarize_and_gate_evals`). |
 
 ## What the Lifecycle Does
 

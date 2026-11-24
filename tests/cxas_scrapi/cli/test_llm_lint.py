@@ -644,3 +644,32 @@ def test_build_agent_config_context_resolves_child_display_name_and_deep_yaml_va
         "Declared App Variables: customer, customer.billing, customer.billing.address"
         in ctx
     )
+
+
+@mock.patch("cxas_scrapi.cli.llm_lint.GeminiGenerate", autospec=True)
+def test_llm_lint_app_dir_iterates_all_sub_agents(
+    mock_gemini_cls: typing.Any, tmp_path: typing.Any
+) -> None:
+    """Verify `cxas llm-lint --app-dir` lints every sub-agent under agents/."""
+    for name in ("agent_a", "agent_b"):
+        sub = tmp_path / "agents" / name
+        sub.mkdir(parents=True)
+        (sub / "instruction.txt").write_text(
+            f"Instructions for {name}.", encoding="utf-8"
+        )
+    mock_gemini_cls.return_value.generate.return_value = "## OK"
+
+    args = argparse.Namespace(
+        agent_dir=None,
+        app_dir=str(tmp_path),
+        project_id="test-proj",
+        location="us-central1",
+        model="gemini-2.5-flash",
+        output=None,
+        profile=None,
+    )
+    llm_lint(args)
+
+    assert mock_gemini_cls.return_value.generate.call_count == 2
+    assert (tmp_path / "agents" / "agent_a" / "llm_lint_report.md").is_file()
+    assert (tmp_path / "agents" / "agent_b" / "llm_lint_report.md").is_file()

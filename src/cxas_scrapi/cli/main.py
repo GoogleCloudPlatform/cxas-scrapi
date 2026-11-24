@@ -70,6 +70,7 @@ if TYPE_CHECKING:
         app_versions_list,
     )
     from cxas_scrapi.core.github import init_github_action
+    from cxas_scrapi.core.gitops import init_gitops
     from cxas_scrapi.utils.eval_utils import EvalUtils
 else:
     from cxas_scrapi.cli.utils import LazyCallable
@@ -99,6 +100,7 @@ else:
     init_github_action = LazyCallable(
         "cxas_scrapi.core.github", "init_github_action"
     )
+    init_gitops = LazyCallable("cxas_scrapi.core.gitops", "init_gitops")
 
 logger = logging.getLogger(__name__)
 
@@ -1166,9 +1168,78 @@ def test_single_callback(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _resolve_impact_eval_display_names(
+    impact_json_path: str,
+) -> set[str] | None:
+    """Parse ``cxas impact --json`` output into affected eval display names.
+
+    Returns ``None`` to signal full-suite fallback when the file is missing,
+    ``full_suite`` / ``shared_files_changed`` is true, or no eval names can be
+    resolved from ``affected_evaluations``.
+    """
+    import yaml
+
+    if not os.path.isfile(impact_json_path):
+        print(
+            f"Warning: Impact JSON '{impact_json_path}' not found; falling "
+            "back to full evaluation suite."
+        )
+        return None
+    try:
+        with open(impact_json_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        print(
+            f"Warning: Could not parse impact JSON '{impact_json_path}': {e}; "
+            "falling back to full evaluation suite."
+        )
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("full_suite") or data.get("shared_files_changed"):
+        print("Impact report indicates shared/root change; running full suite.")
+        return None
+    affected = data.get("affected_evaluations")
+    if not isinstance(affected, list) or not affected:
+        return None
+
+    names: set[str] = set()
+    for rel_path in affected:
+        if not isinstance(rel_path, str) or not os.path.isfile(rel_path):
+            continue
+        try:
+            with open(rel_path, encoding="utf-8") as ef:
+                doc = yaml.safe_load(ef)
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        for key in ("conversations", "evals"):
+            items = doc.get(key)
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        dname = item.get("display_name") or item.get(
+                            "displayName"
+                        )
+                        if isinstance(dname, str) and dname:
+                            names.add(dname)
+        top_name = doc.get("display_name") or doc.get("displayName")
+        if isinstance(top_name, str) and top_name:
+            names.add(top_name)
+    return names or None
+
+
+def _has_yaml_files(directory: str) -> bool:
+    for _, _, files in os.walk(directory):
+        if any(f.endswith((".yaml", ".yml")) for f in files):
+            return True
+    return False
+
+
 def ci_test(args: argparse.Namespace) -> None:
     """Handles the 'ci-test' command."""
-    from cxas_scrapi.cli.app import app_push
+    from cxas_scrapi.cli.app import app_lint, app_push
     from cxas_scrapi.core.apps import Apps
     from cxas_scrapi.core.evaluations import Evaluations
     from cxas_scrapi.utils.profiles import (
@@ -1213,6 +1284,30 @@ def ci_test(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
+    # Pre-flight structural lint gate when --lint is set
+    if getattr(args, "lint", False):
+        print(f"\n--- Running Pre-flight Lint on {args.app_dir} ---")
+        lint_args = argparse.Namespace(
+            app_dir=args.app_dir,
+            env_file=getattr(args, "env_file", None),
+            model=None,
+            model_only=False,
+            fix=False,
+            only=None,
+            rule=None,
+            json_output=False,
+            list_rules=False,
+            validate_only=False,
+            agents=None,
+            tools=None,
+        )
+        try:
+            app_lint(lint_args)
+        except SystemExit as lint_exit:
+            if lint_exit.code not in (None, 0):
+                print("Pre-flight lint failed. Aborting ci-test.")
+                sys.exit(lint_exit.code)
+
     # Resolve cxas binary path relative to the current python interpreter
     cxas_bin = os.path.join(os.path.dirname(sys.executable), "cxas")
     if not os.path.isfile(cxas_bin) or not os.access(cxas_bin, os.X_OK):
@@ -1243,11 +1338,44 @@ def ci_test(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        # Run test-tools
+        # Optional: sync external evals/ (including evals/contracts/) before running
+        evals_dir = getattr(args, "evals_dir", None)
+        if evals_dir and os.path.exists(evals_dir):
+            if os.path.isfile(evals_dir) or _has_yaml_files(evals_dir):
+                print(
+                    f"\n--- Syncing Evaluations from {evals_dir} to "
+                    f"{temp_app_name} ---"
+                )
+                push_eval(
+                    argparse.Namespace(
+                        app_name=temp_app_name,
+                        file=evals_dir,
+                        prune=False,
+                        prune_tag=None,
+                        dry_run=False,
+                    )
+                )
+            else:
+                print(
+                    f"No evaluation YAML files found in '{evals_dir}'; "
+                    "skipping sync."
+                )
 
+        # Optional: freeze snapshot once before running evals
+        snap_ctx = None
+        if getattr(args, "snapshot", False):
+            from cxas_scrapi.collab.snapshot_testing import begin_run
+
+            snap_ctx = begin_run(
+                temp_app_name,
+                snapshot=True,
+                label=getattr(args, "snapshot_label", None),
+            )
+
+        # Run test-tools
         test_file = os.path.join(args.app_dir, "tests", "tool_tests.yaml")
         if os.path.exists(test_file):
-            print(f"\\n--- Running Tool Tests on {temp_app_name} ---")
+            print(f"\n--- Running Tool Tests on {temp_app_name} ---")
             cmd = [
                 cxas_bin,
                 "test-tools",
@@ -1262,43 +1390,155 @@ def ci_test(args: argparse.Namespace) -> None:
                 print("Tool tests failed.")
                 sys.exit(1)
 
-        # We must evaluate using the API or SDK
-        print(f"\\n--- Running Evaluations on {temp_app_name} ---")
+        # Run evaluations
+        print(f"\n--- Running Evaluations on {temp_app_name} ---")
 
         evals_client = Evaluations(app_name=temp_app_name)
-        evals_map = evals_client.get_evaluations_map()
+        raw_tags = getattr(args, "tags", None) or []
+        tag_filters: set[str] = set()
+        for t in raw_tags:
+            for part in str(t).split(","):
+                if part.strip():
+                    tag_filters.add(part.strip())
 
-        if not evals_map or (
-            not evals_map.get("goldens") and not evals_map.get("scenarios")
-        ):
+        impact_path = getattr(args, "evals_from_impact", None)
+        impact_names = (
+            _resolve_impact_eval_display_names(impact_path)
+            if impact_path
+            else None
+        )
+
+        all_eval_ids: list[str] = []
+        if tag_filters or impact_names is not None:
+            listed = evals_client.list_evaluations(app_name=temp_app_name)
+            for ev in listed:
+                ev_tags = set(getattr(ev, "tags", None) or [])
+                ev_dname = getattr(ev, "display_name", "") or ""
+                if tag_filters and not (ev_tags & tag_filters):
+                    continue
+                if impact_names is not None and ev_dname not in impact_names:
+                    continue
+                all_eval_ids.append(ev.name)
+            if (
+                not all_eval_ids
+                and impact_names is not None
+                and not tag_filters
+            ):
+                print(
+                    "No synced evaluations matched impact report; falling "
+                    "back to full suite."
+                )
+                all_eval_ids = [ev.name for ev in listed]
+        else:
+            evals_map = evals_client.get_evaluations_map()
+            if evals_map and (
+                evals_map.get("goldens") or evals_map.get("scenarios")
+            ):
+                all_eval_ids = list(
+                    evals_map.get("goldens", {}).values()
+                ) + list(evals_map.get("scenarios", {}).values())
+
+        if not all_eval_ids:
             print("No evaluations found in the temp app. Skipping run_eval.")
         else:
-            all_eval_ids = list(evals_map.get("goldens", {}).values()) + list(
-                evals_map.get("scenarios", {}).values()
-            )
-            for eval_id in all_eval_ids:
-                cmd = [
-                    cxas_bin,
-                    "run",
-                    "--app-name",
+            runs = int(getattr(args, "runs", 1) or 1)
+            min_pass_rate = getattr(args, "min_pass_rate", None)
+            min_run_passes = getattr(args, "min_run_passes", None)
+
+            if (
+                runs > 1
+                or min_pass_rate is not None
+                or min_run_passes is not None
+            ):
+                from cxas_scrapi.collab.snapshot_testing import (
+                    pinned_app_version,
+                    report_finish,
+                )
+                from cxas_scrapi.utils.reporting import (
+                    load_golden_results,
+                    summarize_and_gate_evals,
+                )
+
+                pinned = snap_ctx.pinned_version if snap_ctx else None
+                run_ids: list[str] = []
+                with pinned_app_version(pinned):
+                    for run_idx in range(runs):
+                        op = evals_client.run_evaluation(
+                            evaluations=all_eval_ids,
+                            app_name=temp_app_name,
+                            modality=runtime.modality or "text",
+                        )
+                        print(
+                            f"Batch evaluation run {run_idx + 1}/{runs} "
+                            "triggered."
+                        )
+                        if op is not None:
+                            res_op = op.result(timeout=600)
+                            run_name = getattr(
+                                res_op, "evaluation_run", ""
+                            ) or getattr(
+                                getattr(op, "metadata", None),
+                                "evaluation_run",
+                                "",
+                            )
+                            if run_name:
+                                run_ids.append(run_name)
+
+                if snap_ctx is not None:
+                    with contextlib.suppress(Exception):
+                        report_finish(snap_ctx)
+
+                golden_results = load_golden_results(
+                    run_ids,
                     temp_app_name,
-                    "--evaluation-id",
-                    eval_id,
-                    "--wait",
-                    "--filter-auto-metrics",
-                ]
-                if getattr(args, "snapshot", False):
-                    cmd.append("--snapshot")
-                    if getattr(args, "snapshot_label", None):
-                        cmd.extend(["--snapshot-label", args.snapshot_label])
-                print(f"Executing: {' '.join(cmd)}")
-                res = subprocess.run(cmd, check=False)
-                if res.returncode != 0:
-                    print(f"Evaluation '{eval_id}' failed.")
+                    min_run_passes=min_run_passes or 1,
+                )
+                gate_summary = summarize_and_gate_evals(
+                    golden_results=golden_results,
+                    min_run_passes=min_run_passes or 1,
+                    min_pass_rate=min_pass_rate,
+                )
+                passed = (
+                    gate_summary["gate_passed"]
+                    if min_pass_rate is not None
+                    else (
+                        gate_summary["passed_cases"]
+                        == gate_summary["total_cases"]
+                        and gate_summary["total_cases"] > 0
+                    )
+                )
+                if not passed:
+                    print("\nFINAL RESULT: FAIL (ci-test batch gate failed)")
                     sys.exit(1)
+            else:
+                for eval_id in all_eval_ids:
+                    cmd = [
+                        cxas_bin,
+                        "run",
+                        "--app-name",
+                        temp_app_name,
+                        "--evaluation-id",
+                        eval_id,
+                        "--wait",
+                        "--filter-auto-metrics",
+                    ]
+                    if getattr(args, "snapshot", False) and snap_ctx is None:
+                        cmd.append("--snapshot")
+                    print(f"Executing: {' '.join(cmd)}")
+                    res = subprocess.run(cmd, check=False)
+                    if res.returncode != 0:
+                        print(f"Evaluation '{eval_id}' failed.")
+                        sys.exit(1)
+                if snap_ctx is not None:
+                    from cxas_scrapi.collab.snapshot_testing import (
+                        report_finish,
+                    )
+
+                    with contextlib.suppress(Exception):
+                        report_finish(snap_ctx)
 
         print(
-            "\\nCI Test Lifecycle Completed Successfully! "
+            "\nCI Test Lifecycle Completed Successfully! "
             "Temp agent persists for review."
         )
 
@@ -2218,6 +2458,48 @@ def get_parser() -> argparse.ArgumentParser:
 
     parser_init_gh.set_defaults(func=init_github_action)
 
+    # Parser for 'init-gitops'
+    parser_init_gitops = subparsers.add_parser(
+        "init-gitops",
+        help=(
+            "Scaffold a developer-first GitOps repository (profiles, "
+            "CODEOWNERS, env examples, and SHA-pinned GitHub Actions)."
+        ),
+    )
+    parser_init_gitops.add_argument(
+        "--target-dir",
+        default=".",
+        help="Target directory to scaffold into (default: current directory).",
+    )
+    parser_init_gitops.add_argument(
+        "--agent-name",
+        default="cxas-agent",
+        help="Logical name for the agent (used in profile app_id defaults).",
+    )
+    parser_init_gitops.add_argument(
+        "--app-dir",
+        default="src/agent",
+        help="Relative path to the agent source directory (default: src/agent).",
+    )
+    parser_init_gitops.add_argument(
+        "--workload-identity-provider",
+        default=None,
+        help="Optional GCP Workload Identity Provider resource name.",
+    )
+    parser_init_gitops.add_argument(
+        "--service-account",
+        default=None,
+        help="Optional GCP Service Account email.",
+    )
+    parser_init_gitops.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Overwrite existing scaffolded files.",
+    )
+    _add_project_location_args(parser_init_gitops, required=False)
+    parser_init_gitops.set_defaults(func=init_gitops)
+
     parser_evals = subparsers.add_parser("evals", help="Manage evaluations.")
     evals_subparsers = parser_evals.add_subparsers(dest="evals_command")
     parser_report = evals_subparsers.add_parser(
@@ -2903,6 +3185,55 @@ def get_parser() -> argparse.ArgumentParser:
             "file to include as environment.json."
         ),
     )
+    parser_ci_test.add_argument(
+        "--lint",
+        action="store_true",
+        default=False,
+        help="Run `cxas lint` pre-flight against --app-dir before pushing.",
+    )
+    parser_ci_test.add_argument(
+        "--evals-dir",
+        default=None,
+        help=(
+            "Optional directory of evaluation YAML files (e.g. evals/ "
+            "including evals/contracts/) to sync before running."
+        ),
+    )
+    parser_ci_test.add_argument(
+        "--tags",
+        nargs="+",
+        default=[],
+        help="Filter evaluations by tag(s) (comma- or space-separated).",
+    )
+    parser_ci_test.add_argument(
+        "--evals-from-impact",
+        default=None,
+        help=(
+            "Optional path to `cxas impact --json` output to run only "
+            "affected evaluations (falls back to full suite on shared edits)."
+        ),
+    )
+    parser_ci_test.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="Number of batch evaluation runs for k-of-N gating (default: 1).",
+    )
+    parser_ci_test.add_argument(
+        "--min-run-passes",
+        type=int,
+        default=None,
+        help="Minimum passing runs per case for k-of-N voting.",
+    )
+    parser_ci_test.add_argument(
+        "--min-pass-rate",
+        type=float,
+        default=None,
+        help=(
+            "Minimum fraction of evaluations (0.0-1.0) that must pass; "
+            "enables batch gating via summarize_and_gate_evals."
+        ),
+    )
     _add_project_location_args(parser_ci_test, required=False)
     add_snapshot_args(parser_ci_test)
     _add_profile_args(parser_ci_test, include_allow_protected=True)
@@ -3228,6 +3559,15 @@ def get_parser() -> argparse.ArgumentParser:
         required=False,
         default=None,
         help="Path to the sub-agent directory containing instruction.txt.",
+    )
+    parser_llm_lint.add_argument(
+        "--app-dir",
+        required=False,
+        default=None,
+        help=(
+            "Path to an app directory; iterates all sub-agents under "
+            "<app-dir>/agents/* containing instruction.txt."
+        ),
     )
     parser_llm_lint.add_argument(
         "--project-id",

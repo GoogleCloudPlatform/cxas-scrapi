@@ -370,8 +370,23 @@ def llm_lint(args: argparse.Namespace) -> None:
                 args.location = vloc
 
     agent_dir_arg = getattr(args, "agent_dir", None)
-    if not agent_dir_arg and profile is not None and profile.app_dir:
-        candidate_dir = profile.app_dir
+    app_dir_arg = getattr(args, "app_dir", None)
+    if (
+        not agent_dir_arg
+        and not app_dir_arg
+        and profile is not None
+        and profile.app_dir
+    ):
+        app_dir_arg = str(profile.app_dir)
+
+    if not agent_dir_arg and app_dir_arg:
+        candidate_dir = Path(app_dir_arg)
+        if not candidate_dir.exists():
+            print(
+                f"Error: App directory '{app_dir_arg}' does not exist.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if (candidate_dir / "instruction.txt").is_file():
             agent_dir_arg = str(candidate_dir)
         elif (candidate_dir / "agents").is_dir():
@@ -380,13 +395,36 @@ def llm_lint(args: argparse.Namespace) -> None:
                 for d in sorted((candidate_dir / "agents").iterdir())
                 if d.is_dir() and (d / "instruction.txt").is_file()
             ]
+            if not subdirs:
+                print(
+                    f"Error: No sub-agents with instruction.txt found under "
+                    f"'{candidate_dir / 'agents'}'.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if len(subdirs) == 1:
                 agent_dir_arg = str(subdirs[0])
+            else:
+                print(
+                    f"Discovered {len(subdirs)} sub-agent(s) under "
+                    f"{candidate_dir / 'agents'}."
+                )
+                for sub_dir in subdirs:
+                    sub_args = argparse.Namespace(
+                        agent_dir=str(sub_dir),
+                        app_dir=None,
+                        project_id=getattr(args, "project_id", None),
+                        location=getattr(args, "location", None),
+                        model=getattr(args, "model", "gemini-2.5-flash"),
+                        output=None,
+                        profile=None,
+                    )
+                    llm_lint(sub_args)
+                return
 
     if not agent_dir_arg:
         print(
-            "Error: --agent-dir is required (could not infer a single agent "
-            "directory from profile).",
+            "Error: --agent-dir or --app-dir is required.",
             file=sys.stderr,
         )
         sys.exit(1)
