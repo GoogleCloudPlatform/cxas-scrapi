@@ -33,13 +33,20 @@ from typing import Any
 import pytest
 import yaml
 
-from cxas_scrapi.utils.lint_rules.callbacks import VoiceBeforeModelToolMutation
+from cxas_scrapi.utils.lint_rules.callbacks import (
+    SharedPythonBundleIntegrity,
+    VoiceBeforeModelToolMutation,
+)
+from cxas_scrapi.utils.lint_rules.config import VoiceLanguageTtsParity
 from cxas_scrapi.utils.lint_rules.runtime_traps import VariableCountLimit
 from cxas_scrapi.utils.lint_rules.structure import (
+    AgentRefSelfOrOrphan,
     AgentTreeCycle,
     CrosscheckLocalesContentBlocks,
+    DeploymentEntryAgentParity,
     GuardrailJinjaSyntax,
     OrphanedAgent,
+    ProdUrlSafety,
     SubAgentSingleParent,
     UnusedGuardrail,
     UnusedToolset,
@@ -49,16 +56,20 @@ from cxas_scrapi.utils.lint_rules.tools import (
     DataStoreFilterParameterBehavior,
     DataStoreFilterTemplateSyntax,
     DataStoreVoiceModality,
+    OpenApiSchemaValidity,
     ToolDisplayNameUnreferenced,
+    ToolToolsetEnvVarParity,
 )
 from cxas_scrapi.utils.linter import (
     Discovery,
     LintConfig,
     LintContext,
     LintReport,
+    Severity,
     _find_elementary_cycles,
     build_context,
     build_registry,
+    is_voice_app,
     resolve_agent_graph,
     run_rules,
 )
@@ -1978,3 +1989,965 @@ def test_qa_pr1_012_t008_orphan_tool_via_ces_name_must_not_rescue_dead_helper(
         "dead_helper was falsely rescued by orphan_caller attached via CES name"
     )
     assert res[0].rule_id == "T008"
+
+
+# ── PR 1 Post-Build Integrity (Commit e12fa23e): T020-T021, C025, A018, S018-S020 ─
+
+
+def test_qa_pr1_post_build_dispatch_categories_severity_overrides_and_yml_deployments(
+    tmp_path: Path,
+) -> None:
+    """Verify multi-category app_config dispatch, mixed severities, cxaslint.yaml overrides, and deployments/*.yml."""
+    app = tmp_path / "dispatch_app"
+    (app / "agents" / "root").mkdir(parents=True)
+    (app / "agents" / "alt").mkdir(parents=True)
+    (app / "deployments").mkdir(parents=True)
+    (app / "tools" / "api" / "open_api_tool").mkdir(parents=True)
+    (app / "manifests" / "locales").mkdir(parents=True)
+
+    (app / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "dispatch_app",
+                "displayName": "dispatch_app",
+                "rootAgent": "root",
+                "languageSettings": {
+                    "defaultLanguageCode": "fr-FR",
+                    "supportedLanguageCodes": ["en-US", "de-DE"],
+                    "enableMultilingualSupport": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_ext_agent(app, "root", child_agents=["alt"], tools=["end_session"])
+    _write_ext_agent(app, "alt")
+    cb = app / "agents" / "root" / "before_model_callbacks" / "cb1"
+    cb.mkdir(parents=True)
+    (cb / "python_code.py").write_text(
+        "import python_lib.missing\n", encoding="utf-8"
+    )
+    (app / "tools" / "api" / "api.json").write_text(
+        json.dumps({"displayName": "api", "openApiTool": {"url": "$env_var"}}),
+        encoding="utf-8",
+    )
+    (
+        app / "tools" / "api" / "open_api_tool" / "open_api_schema.yml"
+    ).write_text("openapi: '3.0.0'\npaths: {}\n", encoding="utf-8")
+    (app / "environment.json").write_text(
+        json.dumps({"tools": {"dangling_tool": {"url": "https://a.example"}}}),
+        encoding="utf-8",
+    )
+    (app / "deployments" / "prod_voice.yml").write_text(
+        yaml.safe_dump(
+            {
+                "environment": "PRODUCTION",
+                "channel": "VOICE_TELEPHONY",
+                "brandId": "brand_alpha",
+                "supportedCountries": ["DE"],
+                "supportedLanguages": ["de"],
+                "entryAgent": "alt",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (app / "manifests" / "locales" / "content_blocks.yaml").write_text(
+        yaml.safe_dump({"blocks": {"brand_alpha": {"US": {"en": "hi"}}}}),
+        encoding="utf-8",
+    )
+
+    disc = Discovery(app, app / "evals")
+    reg = build_registry()
+    default_cfg = LintConfig()
+    ctx = build_context(app, default_cfg, disc)
+
+    # Category-scoped runs execute app_config rules once (never skipped or duplicated)
+    for cat, expected_ids in [
+        ("tools", {"T020", "T021"}),
+        ("callbacks", {"C025"}),
+        ("config", {"A018"}),
+    ]:
+        rep = LintReport()
+        run_rules(reg, default_cfg, ctx, disc, rep, categories=[cat])
+        ids = [
+            r.rule_id
+            for r in rep.results
+            if r.rule_id in {"T020", "T021", "C025", "A018"}
+        ]
+        assert set(ids) == expected_ids
+        if cat == "callbacks":
+            assert ids == ["C025"]
+
+    # Default run preserves mixed ERROR/WARNING severities on T020 and A018
+    rep_mixed = LintReport()
+    run_rules(
+        reg,
+        default_cfg,
+        ctx,
+        disc,
+        rep_mixed,
+        specific_rules={"T020", "A018", "S018", "G002"},
+    )
+    t020_sevs = {r.severity for r in rep_mixed.results if r.rule_id == "T020"}
+    assert t020_sevs == {Severity.ERROR, Severity.WARNING}
+    a018_sevs = {r.severity for r in rep_mixed.results if r.rule_id == "A018"}
+    assert a018_sevs == {Severity.ERROR, Severity.WARNING}
+    assert any(r.rule_id == "G002" for r in rep_mixed.results)
+    assert is_voice_app(ctx) is True
+
+    # Real CLI: S018 divergent entryAgent defaults to WARNING (exit 0), override to error exits 1
+    s18_def = _run_cli_lint("--app-dir", str(app), "--rule", "S018", "--json")
+    assert s18_def.returncode == 0
+    assert json.loads(s18_def.stdout)[0]["severity"] == "warning"
+
+    (app / "cxaslint.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "rules": {
+                    "S018": "error",
+                    "T020": "warning",
+                    "C025": "info",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    s18_err = _run_cli_lint("--app-dir", str(app), "--rule", "S018", "--json")
+    assert s18_err.returncode == 1
+    assert json.loads(s18_err.stdout)[0]["severity"] == "error"
+
+    ovr_cfg = LintConfig.load(app)
+    rep_ovr = LintReport()
+    run_rules(
+        reg,
+        ovr_cfg,
+        build_context(app, ovr_cfg, disc),
+        disc,
+        rep_ovr,
+        specific_rules={"T020", "C025", "S018"},
+    )
+    assert all(
+        r.severity == Severity.WARNING
+        for r in rep_ovr.results
+        if r.rule_id == "T020"
+    )
+    assert all(
+        r.severity == Severity.INFO
+        for r in rep_ovr.results
+        if r.rule_id == "C025"
+    )
+    assert all(
+        r.severity == Severity.ERROR
+        for r in rep_ovr.results
+        if r.rule_id == "S018"
+    )
+
+
+def test_qa_pr1_post_build_t020_t021_edge_cases_quoting_and_path_traversal(
+    tmp_path: Path,
+) -> None:
+    """Verify T020 quoting/matching/non-dict/dangling cases and T021 schema validity + path-traversal blocking."""
+    # T020: unquoted/single-quoted/double-quoted $env_var in .yml, headers, toolsets, displayName/CES ID matching
+    t20 = tmp_path / "t20"
+    (t20 / "tools" / "t_unquoted" / "open_api_tool").mkdir(parents=True)
+    (t20 / "tools" / "t_single" / "open_api_tool").mkdir(parents=True)
+    (t20 / "tools" / "t_double" / "open_api_tool").mkdir(parents=True)
+    (t20 / "tools" / "t_resolved").mkdir(parents=True)
+    (t20 / "toolsets" / "ts_crm").mkdir(parents=True)
+    app20 = t20 / "app.json"
+    app20.write_text(json.dumps({"displayName": "t20"}), encoding="utf-8")
+
+    (
+        t20 / "tools" / "t_unquoted" / "open_api_tool" / "open_api_schema.yml"
+    ).write_text(
+        "openapi: '3.0.0'\nservers:\n  - url: $env_var\npaths:\n  /a: {}\n",
+        encoding="utf-8",
+    )
+    (
+        t20 / "tools" / "t_single" / "open_api_tool" / "open_api_schema.yml"
+    ).write_text(
+        "openapi: '3.0.0'\nservers:\n  - url: '$env_var'\npaths:\n  /a: {}\n",
+        encoding="utf-8",
+    )
+    (
+        t20 / "tools" / "t_double" / "open_api_tool" / "open_api_schema.yml"
+    ).write_text(
+        'openapi: "3.0.0"\nservers:\n  - url: "$env_var"\npaths:\n  /a: {}\n',
+        encoding="utf-8",
+    )
+    (t20 / "tools" / "t_resolved" / "t_resolved.json").write_text(
+        json.dumps(
+            {
+                "name": "projects/p/locations/us/apps/a/tools/ces-tool-42",
+                "displayName": "Resolved API",
+                "openApiTool": {
+                    "url": "$env_var",
+                    "headers": {"X-Api-Key": "$env_var"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (t20 / "toolsets" / "ts_crm" / "ts_crm.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "displayName": "CRM Toolset",
+                "openApiToolset": {"url": "$env_var"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Missing environment.json flags all placeholders as ERROR
+    res_missing = ToolToolsetEnvVarParity().check(app20, "", _ctx(t20))
+    assert len(res_missing) == 6
+    assert all(r.severity == Severity.ERROR for r in res_missing)
+
+    # Non-dict tools: [] does not crash and still flags unresolved placeholders
+    (t20 / "environment.json").write_text(
+        json.dumps(
+            {
+                "tools": [],
+                "toolsets": {
+                    "CRM Toolset": {
+                        "openApiToolset": {"url": "https://crm.example.com"}
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    res_nondict = ToolToolsetEnvVarParity().check(app20, "", _ctx(t20))
+    assert len(res_nondict) == 5
+
+    # Resolve by CES short ID, displayName, and dir name; leave one dangling key
+    (t20 / "environment.json").write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "ces-tool-42": {
+                        "openApiTool": {
+                            "url": "https://api.example.com",
+                            "headers": {"X-Api-Key": "secret-123"},
+                        }
+                    },
+                    "t_unquoted": {
+                        "openApiTool": {"url": "https://u1.example.com"}
+                    },
+                    "t_single": {
+                        "openApiTool": {"url": "https://u2.example.com"}
+                    },
+                    "t_double": {
+                        "openApiTool": {"url": "https://u3.example.com"}
+                    },
+                    "stale_ghost": {"url": "https://old.example.com"},
+                },
+                "toolsets": {
+                    "CRM Toolset": {
+                        "openApiToolset": {"url": "https://crm.example.com"}
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    res_resolved = ToolToolsetEnvVarParity().check(app20, "", _ctx(t20))
+    assert len(res_resolved) == 1
+    assert res_resolved[0].severity == Severity.WARNING
+    assert "stale_ghost" in res_resolved[0].message
+
+    # T021: corrupt/empty/list/non-dict paths/non-list servers/invalid URLs/valid templates + path traversal
+    t21 = tmp_path / "t21"
+    outside_schema = tmp_path / "outside.yaml"
+    outside_schema.write_text("bad: [yaml\n", encoding="utf-8")
+    app21 = t21 / "app.json"
+    t21.mkdir()
+    app21.write_text(json.dumps({"displayName": "t21"}), encoding="utf-8")
+
+    # Path traversal must NOT read outside.yaml
+    (t21 / "tools" / "trav").mkdir(parents=True)
+    (t21 / "tools" / "trav" / "trav.json").write_text(
+        json.dumps(
+            {
+                "displayName": "trav",
+                "openApiTool": {"openApiSchema": "../../outside.yaml"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Valid schema with $env_var, OpenAPI template URL, and relative /v1
+    (t21 / "tools" / "good" / "open_api_tool").mkdir(parents=True)
+    (
+        t21 / "tools" / "good" / "open_api_tool" / "open_api_schema.yaml"
+    ).write_text(
+        yaml.safe_dump(
+            {
+                "openapi": "3.0.0",
+                "servers": [
+                    {"url": "$env_var"},
+                    {"url": "https://{env}.example.com/api"},
+                    {"url": "/v1"},
+                ],
+                "paths": {"/health": {"get": {}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Bad cases: empty, list, non-dict paths, non-list servers, non-dict server item, bad URL, non-UTF-8
+    bad_schemas = {
+        "b_corrupt": "openapi: [unclosed\n",
+        "b_empty": "",
+        "b_list": "- item1\n",
+        "b_paths_list": "openapi: '3.0.0'\npaths: []\n",
+        "b_servers_dict": "openapi: '3.0.0'\npaths:\n  /a: {}\nservers: {}\n",
+        "b_server_str": "openapi: '3.0.0'\npaths:\n  /a: {}\nservers:\n  - https://x.com\n",
+        "b_url_bad": "openapi: '3.0.0'\npaths:\n  /a: {}\nservers:\n  - url: example.com/v1\n  - url: '   '\n",
+    }
+    for name, body in bad_schemas.items():
+        d = t21 / "tools" / name / "open_api_tool"
+        d.mkdir(parents=True)
+        (d / "open_api_schema.yaml").write_text(body, encoding="utf-8")
+    bin_d = t21 / "tools" / "b_utf8" / "open_api_tool"
+    bin_d.mkdir(parents=True)
+    (bin_d / "open_api_schema.yaml").write_bytes(b"\xff\xfe\x00")
+
+    res21 = OpenApiSchemaValidity().check(app21, "", _ctx(t21))
+    flagged_files = {r.file for r in res21}
+    assert "outside.yaml" not in " ".join(flagged_files)
+    assert "tools/good/open_api_tool/open_api_schema.yaml" not in flagged_files
+    for name in (*bad_schemas.keys(), "b_utf8"):
+        assert (
+            f"tools/{name}/open_api_tool/open_api_schema.yaml" in flagged_files
+        )
+
+
+def test_qa_pr1_post_build_c025_syntax_markers_type_checking_and_cli_exits(
+    tmp_path: Path,
+) -> None:
+    """Verify C025 syntax/non-UTF-8, malformed markers, TYPE_CHECKING, native env, symlinks, and CLI exits."""
+    # 1. Unbuilt local python_lib -> WARNING (CLI exit 0); TYPE_CHECKING imports ignored
+    c_warn = tmp_path / "c_warn"
+    (c_warn / "agents" / "root" / "before_model_callbacks" / "cb1").mkdir(
+        parents=True
+    )
+    (c_warn / "python_lib").mkdir(parents=True)
+    (c_warn / "app.json").write_text(
+        json.dumps({"name": "c", "displayName": "c", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(c_warn, "root")
+    (c_warn / "python_lib" / "helpers.py").write_text(
+        "def ok(): return 1\n", encoding="utf-8"
+    )
+    (
+        c_warn
+        / "agents"
+        / "root"
+        / "before_model_callbacks"
+        / "cb1"
+        / "python_code.py"
+    ).write_text(
+        "import typing\n"
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    import python_lib.type_only_a\n"
+        "if typing.TYPE_CHECKING:\n"
+        "    from python_lib.type_only_b import T\n"
+        "import python_lib.helpers\n",
+        encoding="utf-8",
+    )
+    proc_warn = _run_cli_lint(
+        "--app-dir", str(c_warn), "--rule", "C025", "--json"
+    )
+    assert proc_warn.returncode == 0
+    payload_w = json.loads(proc_warn.stdout)
+    assert len(payload_w) == 1
+    assert payload_w[0]["severity"] == "warning"
+    assert payload_w[0]["line"] == 7
+
+    # 2. Missing everywhere -> ERROR (CLI exit 1)
+    c_err = tmp_path / "c_err"
+    (c_err / "agents" / "root" / "before_model_callbacks" / "cb1").mkdir(
+        parents=True
+    )
+    (c_err / "app.json").write_text(
+        json.dumps({"name": "c", "displayName": "c", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(c_err, "root")
+    (
+        c_err
+        / "agents"
+        / "root"
+        / "before_model_callbacks"
+        / "cb1"
+        / "python_code.py"
+    ).write_text("from python_lib.sub.mod import fn\n", encoding="utf-8")
+    proc_err = _run_cli_lint(
+        "--app-dir", str(c_err), "--rule", "C025", "--json"
+    )
+    assert proc_err.returncode == 1
+    assert json.loads(proc_err.stdout)[0]["severity"] == "error"
+
+    # 3. Native pythonEnvFiles + inline bundle + malformed markers + syntax/non-UTF-8 + symlinks
+    c_nat = tmp_path / "c_nat"
+    outside_py = tmp_path / "outside_bad.py"
+    outside_py.write_text("def broken(:\n", encoding="utf-8")
+    (c_nat / "pythonEnvFiles" / "content" / "python_lib" / "sub").mkdir(
+        parents=True
+    )
+    (c_nat / "python_lib").mkdir(parents=True)
+    app_nat = c_nat / "app.json"
+    app_nat.write_text(
+        json.dumps({"displayName": "c_nat", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(c_nat, "root")
+    (c_nat / "pythonEnvFiles" / "pythonEnvFiles.yaml").write_text(
+        "files: []\n", encoding="utf-8"
+    )
+    (
+        c_nat / "pythonEnvFiles" / "content" / "python_lib" / "sub" / "mod.py"
+    ).write_text("def fn(): return 1\n", encoding="utf-8")
+    (
+        c_nat / "pythonEnvFiles" / "content" / "python_lib" / "bad_syntax.py"
+    ).write_text("def broken(:\n", encoding="utf-8")
+    (c_nat / "python_lib" / "non_utf8.py").write_bytes(b"\xff\xfe\x00")
+    os.symlink(outside_py, c_nat / "python_lib" / "sym_bad.py")
+
+    cbs = c_nat / "agents" / "root" / "before_model_callbacks"
+    for name, code in [
+        ("cb_ok_native", "from python_lib.sub.mod import fn\n"),
+        ("cb_missing_native", "from python_lib.sub.absent import fn\n"),
+        (
+            "cb_inline_ok",
+            "# === BEGIN CXAS_SHARED_BUNDLE ===\n"
+            "# === END CXAS_SHARED_BUNDLE ===\n"
+            "import python_lib.bundled_mod\n",
+        ),
+        ("cb_trunc", "# === BEGIN CXAS_SHARED_BUNDLE ===\nx = 1\n"),
+        (
+            "cb_reversed",
+            "# === END CXAS_SHARED_BUNDLE ===\n# === BEGIN CXAS_SHARED_BUNDLE ===\n",
+        ),
+        (
+            "cb_type_else",
+            "from typing import TYPE_CHECKING\n"
+            "if TYPE_CHECKING:\n"
+            "    import python_lib.ok_only\n"
+            "else:\n"
+            "    import python_lib.missing_else\n",
+        ),
+    ]:
+        d = cbs / name
+        d.mkdir(parents=True)
+        (d / "python_code.py").write_text(code, encoding="utf-8")
+
+    res_nat = SharedPythonBundleIntegrity().check(app_nat, "", _ctx(c_nat))
+    files_nat = {r.file for r in res_nat}
+    assert "python_lib/sym_bad.py" not in files_nat
+    assert (
+        "agents/root/before_model_callbacks/cb_ok_native/python_code.py"
+        not in files_nat
+    )
+    assert (
+        "agents/root/before_model_callbacks/cb_inline_ok/python_code.py"
+        not in files_nat
+    )
+    assert {
+        "pythonEnvFiles/content/python_lib/bad_syntax.py",
+        "python_lib/non_utf8.py",
+        "agents/root/before_model_callbacks/cb_missing_native/python_code.py",
+        "agents/root/before_model_callbacks/cb_trunc/python_code.py",
+        "agents/root/before_model_callbacks/cb_reversed/python_code.py",
+        "agents/root/before_model_callbacks/cb_type_else/python_code.py",
+    }.issubset(files_nat)
+
+
+def test_qa_pr1_post_build_a018_s018_s019_s020_edge_cases_and_cli_hygiene(
+    tmp_path: Path,
+) -> None:
+    """Verify A018, S018, S019, S020 edge cases, CLI 121+ rules, Sample_Support_Agent clean, and zero build imports."""
+    # A018: app.yml snake_case + case-insensitive BCP-47 + non-voice WEB no FP + malformed no crash
+    a18_web = tmp_path / "a18_web"
+    (a18_web / "deployments").mkdir(parents=True)
+    app_web = a18_web / "app.yml"
+    app_web.write_text(
+        yaml.safe_dump(
+            {
+                "displayName": "web",
+                "language_settings": {
+                    "default_language_code": "en-US",
+                    "supported_language_codes": ["en-US", "de-DE"],
+                    "enable_multilingual_support": True,
+                },
+                "audio_processing_config": {
+                    "synthesize_speech_configs": {"en-us": {"voice": "v1"}}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (a18_web / "deployments" / "web.yml").write_text(
+        yaml.safe_dump({"channel": "WEB_UI"}), encoding="utf-8"
+    )
+    assert (
+        VoiceLanguageTtsParity().check(
+            app_web, app_web.read_text(encoding="utf-8"), _ctx(a18_web)
+        )
+        == []
+    )
+
+    a18_mal = tmp_path / "a18_mal"
+    a18_mal.mkdir()
+    app_mal = a18_mal / "app.yaml"
+    app_mal.write_text(
+        yaml.safe_dump(
+            {
+                "displayName": "mal",
+                "languageSettings": {
+                    "defaultLanguageCode": 123,
+                    "supportedLanguageCodes": "en-US",
+                },
+                "audioProcessingConfig": "not-a-dict",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert (
+        VoiceLanguageTtsParity().check(
+            app_mal, app_mal.read_text(encoding="utf-8"), _ctx(a18_mal)
+        )
+        == []
+    )
+
+    # S018: displayName & CES path match rootAgent cleanly; corrupt/non-string no crash
+    s18 = tmp_path / "s18"
+    (s18 / "deployments").mkdir(parents=True)
+    app18 = s18 / "app.json"
+    app18.write_text(
+        json.dumps({"displayName": "s18", "rootAgent": "Main Concierge"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(
+        s18,
+        "root_agent",
+        display_name="Main Concierge",
+        cfg_name="projects/p/locations/us/apps/a/agents/root-id",
+    )
+    (s18 / "deployments" / "ok_disp.yml").write_text(
+        yaml.safe_dump({"entryAgent": "Main Concierge"}), encoding="utf-8"
+    )
+    (s18 / "deployments" / "ok_ces.yaml").write_text(
+        yaml.safe_dump(
+            {"entry_agent": "projects/p/locations/us/apps/a/agents/root-id"}
+        ),
+        encoding="utf-8",
+    )
+    (s18 / "deployments" / "bad_val.yaml").write_text(
+        yaml.safe_dump({"entryAgent": 123}), encoding="utf-8"
+    )
+    (s18 / "deployments" / "corrupt.yaml").write_text(
+        "entryAgent: [unclosed\n", encoding="utf-8"
+    )
+    assert DeploymentEntryAgentParity().check(app18, "", _ctx(s18)) == []
+
+    # S019: silent on dev/staging; on prod catches http, loopback, .local, custom patterns; skips $env_var & $schema
+    s19_dev = tmp_path / "s19_dev"
+    (s19_dev / "deployments").mkdir(parents=True)
+    app19d = s19_dev / "app.json"
+    app19d.write_text(json.dumps({"displayName": "d"}), encoding="utf-8")
+    (s19_dev / "deployments" / "dev.yaml").write_text(
+        yaml.safe_dump({"environment": "staging"}), encoding="utf-8"
+    )
+    (s19_dev / "environment.json").write_text(
+        json.dumps({"tools": {"a": {"url": "http://localhost:8000"}}}),
+        encoding="utf-8",
+    )
+    assert ProdUrlSafety().check(app19d, "", _ctx(s19_dev)) == []
+
+    s19_prod = tmp_path / "s19_prod"
+    (s19_prod / "deployments").mkdir(parents=True)
+    (s19_prod / "tools" / "api" / "open_api_tool").mkdir(parents=True)
+    (s19_prod / "toolsets" / "ts1").mkdir(parents=True)
+    app19p = s19_prod / "app.json"
+    app19p.write_text(json.dumps({"displayName": "p"}), encoding="utf-8")
+    (s19_prod / "deployments" / "prod.yml").write_text(
+        yaml.safe_dump({"environment": "PRODUCTION"}), encoding="utf-8"
+    )
+    (s19_prod / "environment.json").write_text(
+        json.dumps(
+            {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "tools": {
+                    "ok": {"url": "https://api.example.com/v1"},
+                    "env_only": {"url": "$env_var"},
+                    "bad_http": {"url": "http://api.example.com/v1"},
+                    "bad_v6": {"url": "https://[::1]:8443/v1"},
+                    "bad_zero": {"url": "https://0.0.0.0:9000/v1"},
+                    "bad_local": {"url": "https://svc.local/v1"},
+                    "bad_pat": {"url": "https://uat.example.com/v1"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (s19_prod / "tools" / "api" / "api.json").write_text(
+        json.dumps(
+            {
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "displayName": "api",
+                "openApiTool": {"url": "https://127.0.0.1:8080/v1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (
+        s19_prod / "tools" / "api" / "open_api_tool" / "open_api_schema.yml"
+    ).write_text(
+        yaml.safe_dump(
+            {
+                "openapi": "3.0.0",
+                "servers": [
+                    {"url": "$env_var"},
+                    {"url": "https://localhost:8443/v1"},
+                ],
+                "paths": {"/p": {"get": {}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (s19_prod / "toolsets" / "ts1" / "ts1.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "displayName": "ts1",
+                "openApiToolset": {"url": "https://staging.example.com/v1"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    res19 = ProdUrlSafety().check(
+        app19p,
+        "",
+        _ctx(
+            s19_prod,
+            options={
+                "S019": {
+                    "forbidden_url_patterns": [
+                        "staging.example.com",
+                        r"^https://uat\.",
+                        "[unclosed-regex",
+                        123,
+                    ]
+                }
+            },
+        ),
+    )
+    msgs19 = "\n".join(r.message for r in res19)
+    assert "json-schema.org" not in msgs19
+    assert "https://api.example.com/v1" not in msgs19
+    for expected in (
+        "http://api.example.com/v1",
+        "[::1]:8443",
+        "0.0.0.0:9000",
+        "svc.local",
+        "127.0.0.1:8080",
+        "localhost:8443",
+        "uat.example.com",
+        "staging.example.com",
+    ):
+        assert expected in msgs19
+
+    # S020: self (dir, displayName, case-insensitive, space-delimited), orphan, child->parent clean, path traversal blocked
+    s20 = tmp_path / "s20"
+    (tmp_path / "outside_inst.txt").write_text(
+        "Self {@AGENT: root_agent}\n", encoding="utf-8"
+    )
+    app20 = s20 / "app.json"
+    s20.mkdir()
+    app20.write_text(
+        json.dumps({"displayName": "s20", "rootAgent": "root_agent"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(
+        s20,
+        "root_agent",
+        display_name="Main Desk",
+        child_agents=["child_agent"],
+        with_instruction=False,
+        extra={"instruction": "../../outside_inst.txt"},
+    )
+    _write_ext_agent(s20, "child_agent", display_name="Child Desk")
+    (s20 / "agents" / "child_agent" / "instruction.txt").write_text(
+        "Return to {@AGENT: Main Desk}\n"
+        "Self space {@AGENT Child Desk}\n"
+        "Self lower {@agent: child_agent}\n"
+        "Orphan {@AGENT: orphan_agent}\n",
+        encoding="utf-8",
+    )
+    _write_ext_agent(s20, "orphan_agent", display_name="Orphan")
+    res20 = AgentRefSelfOrOrphan().check(app20, "", _ctx(s20))
+    assert len(res20) == 3
+    assert all(r.file == "agents/child_agent/instruction.txt" for r in res20)
+    assert [r.line for r in res20] == [2, 3, 4]
+
+    # Real CLI --list-rules (121+ rules) + Sample_Support_Agent clean + zero build imports
+    reg = build_registry()
+    assert len(reg.all_rules()) >= 121
+    new_ids = ("T020", "T021", "C025", "A018", "S018", "S019", "S020")
+    for rid in new_ids:
+        assert reg.get(rid) is not None
+    list_proc = _run_cli_lint("--list-rules")
+    assert list_proc.returncode == 0
+    for rid in new_ids:
+        assert rid in list_proc.stdout
+
+    sample_dir = (
+        _WORKTREE_ROOT
+        / ".agents"
+        / "skills"
+        / "cxas-agent-foundry"
+        / "assets"
+        / "project-template"
+        / "cxas_app"
+    )
+    sample_proc = _run_cli_lint("--app-dir", str(sample_dir))
+    assert sample_proc.returncode == 0
+    assert "0 error(s), 0 warning(s)" in sample_proc.stdout
+
+    utils_dir = _SRC_ROOT / "cxas_scrapi" / "utils"
+    for py_file in [
+        utils_dir / "linter.py",
+        utils_dir / "lint_rules" / "config.py",
+        utils_dir / "lint_rules" / "tools.py",
+        utils_dir / "lint_rules" / "callbacks.py",
+        utils_dir / "lint_rules" / "structure.py",
+    ]:
+        assert "cxas_scrapi.build" not in py_file.read_text(encoding="utf-8")
+
+
+# ── Open Defect Reproductions (Commit e12fa23e: QA-PR1-013..016) ────────
+
+
+def test_qa_pr1_013_t020_nested_empty_env_var_must_not_be_masked_by_sibling_key(
+    tmp_path: Path,
+) -> None:
+    """QA-PR1-013 [HIGH]: T020 must NOT let sibling/top-level keys mask an explicitly empty or missing nested $env_var override."""
+    app = tmp_path / "t020_mask"
+    (app / "tools" / "api_tool").mkdir(parents=True)
+    (app / "tools" / "ds_faq").mkdir(parents=True)
+    app_json = app / "app.json"
+    app_json.write_text(
+        json.dumps({"displayName": "t020_mask", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    # Case A: openApiTool.auth.url explicitly set to "" must NOT be masked by openApiTool.url
+    (app / "tools" / "api_tool" / "api_tool.json").write_text(
+        json.dumps(
+            {
+                "displayName": "api_tool",
+                "openApiTool": {
+                    "url": "$env_var",
+                    "auth": {"url": "$env_var"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Case B: dataStoreSource.dataStore.name omitted/empty must NOT be masked by top-level "name"
+    (app / "tools" / "ds_faq" / "ds_faq.json").write_text(
+        json.dumps(
+            {
+                "displayName": "ds_faq",
+                "dataStoreTool": {
+                    "name": "ds_faq",
+                    "dataStoreSource": {"dataStore": {"name": "$env_var"}},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (app / "environment.json").write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "api_tool": {
+                        "openApiTool": {
+                            "url": "https://api.example.com",
+                            "auth": {"url": ""},
+                        }
+                    },
+                    "ds_faq": {
+                        "name": "ds_faq",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    res = ToolToolsetEnvVarParity().check(app_json, "", _ctx(app))
+    error_files = {r.file for r in res if r.severity == Severity.ERROR}
+    assert error_files == {
+        "tools/api_tool/api_tool.json",
+        "tools/ds_faq/ds_faq.json",
+    }, f"Unresolved nested $env_var was masked by sibling/top-level key: {res}"
+
+
+def test_qa_pr1_014_a018_voice_app_missing_audio_config_or_empty_tts_must_warn(
+    tmp_path: Path,
+) -> None:
+    """QA-PR1-014 [MEDIUM]: A018 must warn when a voice deployment omits audioProcessingConfig or has null/empty synthesizeSpeechConfigs entries."""
+    # Case A: voice deployment with NO audioProcessingConfig in app.json
+    app_no_audio = tmp_path / "voice_no_audio"
+    (app_no_audio / "deployments").mkdir(parents=True)
+    cfg_a = app_no_audio / "app.json"
+    cfg_a.write_text(
+        json.dumps(
+            {
+                "displayName": "voice_no_audio",
+                "languageSettings": {
+                    "defaultLanguageCode": "en-US",
+                    "supportedLanguageCodes": ["en-US", "de-DE"],
+                    "enableMultilingualSupport": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (app_no_audio / "deployments" / "voice.yaml").write_text(
+        yaml.safe_dump({"channel": "VOICE_TELEPHONY"}), encoding="utf-8"
+    )
+    res_a = VoiceLanguageTtsParity().check(
+        cfg_a, cfg_a.read_text(encoding="utf-8"), _ctx(app_no_audio)
+    )
+    assert len(res_a) == 2, (
+        f"Expected 2 TTS warnings when voice app omits audioProcessingConfig, got {res_a}"
+    )
+
+    # Case B: voice deployment with null and empty {} TTS entries
+    app_empty_tts = tmp_path / "voice_empty_tts"
+    (app_empty_tts / "deployments").mkdir(parents=True)
+    cfg_b = app_empty_tts / "app.json"
+    cfg_b.write_text(
+        json.dumps(
+            {
+                "displayName": "voice_empty_tts",
+                "languageSettings": {
+                    "defaultLanguageCode": "en-US",
+                    "supportedLanguageCodes": ["en-US", "de-DE"],
+                    "enableMultilingualSupport": True,
+                },
+                "audioProcessingConfig": {
+                    "synthesizeSpeechConfigs": {"en-US": None, "de-DE": {}}
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (app_empty_tts / "deployments" / "voice.yml").write_text(
+        yaml.safe_dump({"channel": "VOICE_TELEPHONY"}), encoding="utf-8"
+    )
+    res_b = VoiceLanguageTtsParity().check(
+        cfg_b, cfg_b.read_text(encoding="utf-8"), _ctx(app_empty_tts)
+    )
+    assert len(res_b) == 2, (
+        f"Expected 2 TTS warnings for null/empty synthesizeSpeechConfigs entries, got {res_b}"
+    )
+
+
+def test_qa_pr1_015_s019_prod_url_safety_must_catch_schemeless_loopback(
+    tmp_path: Path,
+) -> None:
+    """QA-PR1-015 [MEDIUM]: S019 must catch scheme-less loopback hosts like localhost:8080/api and 127.0.0.1:5000 in prod builds."""
+    app = tmp_path / "s019_schemeless"
+    (app / "deployments").mkdir(parents=True)
+    app_json = app / "app.json"
+    app_json.write_text(json.dumps({"displayName": "p"}), encoding="utf-8")
+    (app / "deployments" / "prod.yml").write_text(
+        yaml.safe_dump({"environment": "PRODUCTION"}), encoding="utf-8"
+    )
+    (app / "environment.json").write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "api": {
+                        "url": "localhost:8080/api",
+                        "endpoint": "127.0.0.1:5000/v1",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    res = ProdUrlSafety().check(app_json, "", _ctx(app))
+    msgs = "\n".join(r.message for r in res)
+    assert "localhost:8080/api" in msgs
+    assert "127.0.0.1:5000/v1" in msgs
+
+
+def test_qa_pr1_016_t021_uppercase_scheme_and_is_voice_app_symlink_safety(
+    tmp_path: Path,
+) -> None:
+    """QA-PR1-016 [LOW]: T021 must accept case-insensitive HTTPS:// URLs (RFC 3986) and is_voice_app must skip symlinked deployments/."""
+    # Case A: T021 uppercase HTTPS:// scheme
+    app_t21 = tmp_path / "t21_upper"
+    (app_t21 / "tools" / "api" / "open_api_tool").mkdir(parents=True)
+    cfg_t21 = app_t21 / "app.json"
+    cfg_t21.write_text(json.dumps({"displayName": "p"}), encoding="utf-8")
+    (
+        app_t21 / "tools" / "api" / "open_api_tool" / "open_api_schema.yaml"
+    ).write_text(
+        yaml.safe_dump(
+            {
+                "openapi": "3.0.0",
+                "servers": [{"url": "HTTPS://api.example.com/v1"}],
+                "paths": {"/ping": {"get": {}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert OpenApiSchemaValidity().check(cfg_t21, "", _ctx(app_t21)) == []
+
+    # Case B: is_voice_app must NOT follow symlinked deployments/ outside app_root
+    app_sym = tmp_path / "sym_voice"
+    outside_deps = tmp_path / "outside_deps"
+    outside_deps.mkdir()
+    (outside_deps / "voice.yaml").write_text(
+        yaml.safe_dump({"channel": "VOICE_TELEPHONY"}), encoding="utf-8"
+    )
+    app_sym.mkdir()
+    (app_sym / "app.json").write_text(
+        json.dumps({"displayName": "web_only"}), encoding="utf-8"
+    )
+    os.symlink(outside_deps, app_sym / "deployments")
+    assert is_voice_app(_ctx(app_sym)) is False
+
+
+def test_qa_pr1_017_s019_malformed_ipv6_or_bracketed_url_must_not_crash(
+    tmp_path: Path,
+) -> None:
+    """QA-PR1-017 [MEDIUM]: S019 must not crash with unhandled ValueError on malformed IPv6 or bracketed placeholder URLs."""
+    app = tmp_path / "s019_ipv6_crash"
+    (app / "deployments").mkdir(parents=True)
+    app_json = app / "app.json"
+    app_json.write_text(json.dumps({"displayName": "p"}), encoding="utf-8")
+    (app / "deployments" / "prod.yaml").write_text(
+        yaml.safe_dump({"environment": "prod"}), encoding="utf-8"
+    )
+    (app / "environment.json").write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "bad_ipv6": {"url": "http://[::1/bad"},
+                    "bracket_placeholder": {"url": "[your-host]:8080/v1"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Must not raise ValueError: Invalid IPv6 URL; cleartext http:// must still be flagged
+    res = ProdUrlSafety().check(app_json, "", _ctx(app))
+    assert any("http://[::1/bad" in r.message for r in res)
