@@ -557,10 +557,10 @@ def test_v003_valid_ces_data_store_tool_catches_t017_t018_without_schema_error(
     assert {"T017", "T018"} <= ids
 
 
-def test_qa_009_t018_top_level_filter_parameter_behavior(
+def test_t018_top_level_filter_parameter_behavior(
     tmp_path: Path,
 ) -> None:
-    """QA-009: T018 must honor top-level filterParameterBehavior when dataStoreSource is top-level."""
+    """T018 honors top-level filterParameterBehavior with top-level dataStoreSource."""
     path = _write_tool(
         tmp_path,
         "ds_top",
