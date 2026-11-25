@@ -16,7 +16,8 @@
 """Copies each Python tool's docstring into the description of its tool JSON.
 
 The model reads the tool description, so keep the JSON in step with the code
-after editing a docstring.
+after editing a docstring. If a Python tool's `<tool>.json` wrapper does not
+exist yet, running without `--check` creates it automatically.
 
 Example:
   python3 sync_tool_descriptions.py cxas_app/my-agent           # update files
@@ -30,6 +31,81 @@ import pathlib
 import sys
 
 
+def sync(
+    app_dir: pathlib.Path | str,
+    write: bool = True,
+    *,
+    check: bool = False,
+) -> list[str]:
+    """Syncs or checks tool JSON descriptions against Python docstrings.
+
+    Args:
+      app_dir: Path to the CXAS app directory.
+      write: Whether to write updated or missing tool JSON files.
+      check: Keyword alias for `write=False`.
+
+    Returns:
+      List of tool names that were updated/created (when `write=True`) or out
+      of date / missing (when `write=False`).
+    """
+    if check:
+        write = False
+    stale, _ = _sync_with_details(pathlib.Path(app_dir), write=write)
+    return stale
+
+
+def _sync_with_details(
+    app_path: pathlib.Path, write: bool = True
+) -> tuple[list[str], list[str]]:
+    """Returns `(stale_or_updated, skipped)` for `app_path`."""
+    stale, skipped = [], []
+    for code in sorted(app_path.glob("tools/*/python_function/python_code.py")):
+        tool = code.parent.parent.name
+        spec_path = code.parent.parent / f"{tool}.json"
+        fn = next(
+            (
+                n
+                for n in ast.parse(code.read_text(encoding="utf-8")).body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and n.name == tool
+            ),
+            None,
+        )
+        if fn is None:
+            skipped.append(f"{tool} (no function named {tool})")
+            continue
+        docstring = ast.get_docstring(fn) or ""
+        if not spec_path.exists():
+            stale.append(tool)
+            if write:
+                spec = {
+                    "name": tool,
+                    "pythonFunction": {
+                        "name": tool,
+                        "pythonCode": (
+                            f"tools/{tool}/python_function/python_code.py"
+                        ),
+                        "description": docstring,
+                    },
+                    "executionType": "SYNCHRONOUS",
+                    "displayName": tool,
+                }
+                spec_path.write_text(
+                    json.dumps(spec, indent=2) + "\n", encoding="utf-8"
+                )
+            continue
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+        if spec.get("pythonFunction", {}).get("description") == docstring:
+            continue
+        stale.append(tool)
+        if write:
+            spec.setdefault("pythonFunction", {})["description"] = docstring
+            spec_path.write_text(
+                json.dumps(spec, indent=2) + "\n", encoding="utf-8"
+            )
+    return stale, skipped
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("app_dir")
@@ -40,39 +116,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    stale, skipped = [], []
-    for code in sorted(
-        pathlib.Path(args.app_dir).glob(
-            "tools/*/python_function/python_code.py"
-        )
-    ):
-        tool = code.parent.parent.name
-        spec_path = code.parent.parent / f"{tool}.json"
-        if not spec_path.exists():
-            skipped.append(f"{tool} (no {tool}.json)")
-            continue
-        fn = next(
-            (
-                n
-                for n in ast.parse(code.read_text(encoding="utf-8")).body
-                if isinstance(n, ast.FunctionDef) and n.name == tool
-            ),
-            None,
-        )
-        if fn is None:
-            skipped.append(f"{tool} (no function named {tool})")
-            continue
-        docstring = ast.get_docstring(fn) or ""
-        spec = json.loads(spec_path.read_text(encoding="utf-8"))
-        if spec.get("pythonFunction", {}).get("description") == docstring:
-            continue
-        stale.append(tool)
-        if not args.check:
-            spec.setdefault("pythonFunction", {})["description"] = docstring
-            spec_path.write_text(
-                json.dumps(spec, indent=2) + "\n", encoding="utf-8"
-            )
-
+    stale, skipped = _sync_with_details(
+        pathlib.Path(args.app_dir), write=not args.check
+    )
     verb = "out of date" if args.check else "updated"
     print(
         f"{verb}: {', '.join(stale)}"
