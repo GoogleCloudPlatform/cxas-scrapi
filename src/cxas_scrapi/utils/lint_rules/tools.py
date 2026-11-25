@@ -359,7 +359,7 @@ def _extract_py_referenced_tools_cached(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntaxWarning)
             tree = ast.parse(text)
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         return frozenset(_TOOL_ATTR_RE.findall(text))
 
     found: set[str] = set()
