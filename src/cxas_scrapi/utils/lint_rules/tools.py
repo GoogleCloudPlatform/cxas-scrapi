@@ -25,6 +25,7 @@ import re
 import typing
 import warnings
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -1771,9 +1772,14 @@ def _is_valid_openapi_server_url(url: typing.Any) -> bool:
     if stripped.startswith("/"):
         return True
     if stripped.lower().startswith(("http://", "https://")):
-        rest = stripped.split("://", 1)[1]
-        authority = rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
-        return bool(authority) and not authority.startswith((".", ":"))
+        try:
+            parsed = urlparse(stripped)
+            host = parsed.hostname
+        except ValueError:
+            return False
+        if parsed.scheme.lower() not in ("http", "https") or not host:
+            return False
+        return not host.startswith(".")
     return False
 
 

@@ -1468,18 +1468,20 @@ class ProdUrlSafety(Rule):
 
         for src_path, url in url_sources:
             rel = _rel_path(src_path, context)
-            if "://" in url:
-                parsed = urlparse(url)
-                scheme = (parsed.scheme or "").lower()
-            elif not url.startswith("/"):
-                parsed = urlparse(f"//{url}")
-                scheme = ""
-            else:
-                parsed = None
-                scheme = ""
             try:
-                host = (parsed.hostname or "").lower() if parsed else ""
+                if "://" in url:
+                    parsed = urlparse(url)
+                    scheme = (parsed.scheme or "").lower()
+                    host = (parsed.hostname or "").lower()
+                elif not url.startswith("/"):
+                    parsed = urlparse(f"//{url}")
+                    scheme = ""
+                    host = (parsed.hostname or "").lower()
+                else:
+                    scheme = ""
+                    host = ""
             except ValueError:
+                scheme = url.split("://", 1)[0].lower() if "://" in url else ""
                 host = ""
 
             if scheme == "http":
