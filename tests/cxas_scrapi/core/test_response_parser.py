@@ -347,3 +347,46 @@ def test_parser_self_terminating_transfer_ends_session() -> None:
     assert parsed.session_ended is True
     assert len(parsed.custom_payloads) == 1
     assert "transferToNga" in parsed.custom_payloads[0]
+
+
+def test_parser_detailed_trace_keeps_diag_text_in_order() -> None:
+    reply = "Your order arrives Friday."
+    response = types.RunSessionResponse(
+        outputs=[
+            types.SessionOutput(
+                text=reply,
+                diagnostic_info={
+                    "messages": [
+                        {
+                            "role": "agent",
+                            "chunks": [
+                                {
+                                    "tool_call": {
+                                        "tool": "lookup_order",
+                                        "args": {"id": "A1"},
+                                    }
+                                },
+                                {
+                                    "tool_response": {
+                                        "tool": "lookup_order",
+                                        "response": {"eta": "Friday"},
+                                    }
+                                },
+                                {"text": reply},
+                            ],
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+
+    parsed = ParsedSessionResponse(response)
+
+    assert parsed.detailed_trace == [
+        f"Agent Text: {reply}",
+        "Tool Call: lookup_order with args {'id': 'A1'}",
+        "Tool Response: lookup_order with result {'eta': 'Friday'}",
+        f"Agent Text (Diag): {reply}",
+    ]
+    assert parsed.agent_texts == [reply]
