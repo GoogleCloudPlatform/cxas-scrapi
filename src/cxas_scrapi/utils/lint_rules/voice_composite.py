@@ -32,20 +32,14 @@ from pathlib import Path
 import yaml
 
 from cxas_scrapi.utils.linter import (
+    COMPOSITE_V2_MODELS,
+    LIVE_AUDIO_MODELS,
     LintContext,
     LintResult,
     Rule,
     Severity,
     rule,
 )
-
-COMPOSITE_V2_MODELS = ["gemini-composite-v2"]
-LIVE_AUDIO_MODELS = [
-    "gemini-3.1-flash-live",
-    "gemini-3-flash-native-audio",
-    "gemini-3.0-flash-native-audio-preview",
-    "gemini-2.5-flash-native-audio-preview",
-]
 
 SPEAKING_STYLE_WORD_LIMIT = 25
 

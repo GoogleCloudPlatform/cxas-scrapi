@@ -176,7 +176,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C012 | `after-model-unreturned-response` | Error | `after_model_callback` mutates or constructs `LlmResponse` without returning it |
     | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
     | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
-    | C024 | `voice-before-model-request-mutation` | Warning | Voice apps ignore `before_model` `llm_request` mutations |
+    | C024 | `voice-before-model-request-mutation` | Warning | Live native-audio voice models ignore `before_model` `llm_request` mutations |
 
     ---
 
@@ -256,9 +256,9 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **C024 — voice-before-model-request-mutation**
 
-    Voice streaming runtimes ignore `before_model_callback` mutations to `llm_request`.
+    Live native-audio voice streaming models (`gemini-2.5-flash-native-audio-preview`, `gemini-3-flash-native-audio`, `gemini-3.0-flash-native-audio-preview`, `gemini-3.1-flash-live`) ignore `before_model_callback` mutations to `llm_request`. Cascaded models (such as `gemini-composite-v1`) are unaffected.
 
-    *Triggers:* A `before_model_callbacks` Python file mutates the `llm_request` argument (assignments, deletions, `hide_tool()`, or list/dict mutators such as `append`/`extend`/`insert`/`pop`/`remove`/`clear`/`update`/`setdefault`) in an app with `audioProcessingConfig` or a voice/telephony deployment YAML.
+    *Triggers:* A `before_model_callbacks` Python file mutates the `llm_request` argument (assignments, deletions, `hide_tool()`, or list/dict mutators such as `append`/`extend`/`insert`/`pop`/`remove`/`clear`/`update`/`setdefault`) on a live native-audio model.
 
     *Fix:* Configure channel-specific tools and prompts statically or move dynamic gating into `before_tool_callback`.
 
@@ -364,7 +364,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **T019 — data-store-voice-modality**
 
-    *Triggers:* When a data store tool lacks an `AUDIO` (or protobuf enum `2`) configuration block in `modalityConfigs`, does not disable `rewriterConfig`/`summarizationConfig` inside that block, or lacks a `snippetsConfig` in an app with `audioProcessingConfig` or a voice/telephony deployment YAML.
+    *Triggers:* When a data store tool lacks an `AUDIO` (or protobuf enum `2`) configuration block in `modalityConfigs`, does not disable `rewriterConfig`/`summarizationConfig` inside that block, or lacks a `snippetsConfig` in a voice app (declared via `deployments/*.{yaml,yml}`, `defaultChannelProfile.channelType`, or a voice `modelSettings.model`).
 
     *Fix:* Add an `AUDIO` configuration to `modalityConfigs`, ensure `rewriterConfig.disabled` and `summarizationConfig.disabled` are both `true`, and provide a valid `snippetsConfig`.
 
@@ -527,9 +527,8 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S015 | `orphaned-agent` | Warning | Agent directory under `agents/` is not reachable from `rootAgent` via `childAgents` |
     | S016 | `unused-toolset` | Warning | Toolset under `toolsets/` is not attached to any reachable agent |
     | S017 | `unused-guardrail` | Warning | Guardrail under `guardrails/` is not attached to the app or any reachable agent |
-    | S018 | `deployment-entry-agent` | Error | Deployment `entryAgent` must exist under `agents/` (`Warning` if it diverges from `app.rootAgent`) |
-    | S019 | `agent-ref-self-or-orphan` | Warning | Instruction `{@AGENT:}` targets the current agent (self-transfer) or an orphaned/unreachable agent |
-    | S020 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
+    | S018 | `agent-ref-self-or-orphan` | Warning | Instruction `{@AGENT:}` targets the current agent (self-transfer) or an orphaned/unreachable agent |
+    | S019 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 
@@ -609,17 +608,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **S018 — deployment-entry-agent**
-
-    Validates `entryAgent` / `entry_agent` in `deployments/*.{yaml,yml}` against discovered agents and `app.rootAgent`.
-
-    *Triggers:* `entryAgent` does not resolve to any agent under `agents/` (`Error`), or resolves to a different agent than `app.rootAgent` (`Warning`).
-
-    *Fix:* Point `entryAgent` to an existing agent (and align with `rootAgent` unless an alternate entry agent is intended).
-
-    ---
-
-    **S019 — agent-ref-self-or-orphan**
+    **S018 — agent-ref-self-or-orphan**
 
     Scans agent instructions (custom `instruction` path or `instruction.txt`) for `{@AGENT: ...}` references targeting either the current agent itself (self-transfer) or an orphaned/unreachable agent.
 
@@ -629,7 +618,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **S020 — guardrail-jinja-syntax**
+    **S019 — guardrail-jinja-syntax**
 
     *Triggers:* When a JSON or YAML guardrail's `llmPolicy.prompt` or `llmPromptSecurity.customPolicy.prompt` contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`).
 

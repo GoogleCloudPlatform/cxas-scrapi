@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the S020 guardrail Jinja syntax lint rule."""
+"""Unit tests for the S019 guardrail Jinja syntax lint rule."""
 
 import json
 from pathlib import Path
@@ -54,7 +54,7 @@ def _write_guardrail(app_root: Path, policy_key: str, prompt: str) -> Path:
     "prompt", ["Hello {user_name}!", "Hello @@brand.name@@!"]
 )
 @pytest.mark.parametrize("policy_key", ["llmPolicy", "llm_policy"])
-def test_s020_non_jinja_placeholders_pass(
+def test_s019_non_jinja_placeholders_pass(
     tmp_path: Path, policy_key: str, prompt: str
 ) -> None:
     gr_dir = _write_guardrail(tmp_path, policy_key, prompt)
@@ -65,16 +65,16 @@ def test_s020_non_jinja_placeholders_pass(
     "prompt", ["Hello {{ name }}!", "{% if vip %}VIP{% endif %}"]
 )
 @pytest.mark.parametrize("policy_key", ["llmPolicy", "llm_policy"])
-def test_s020_jinja_tokens_flagged(
+def test_s019_jinja_tokens_flagged(
     tmp_path: Path, policy_key: str, prompt: str
 ) -> None:
     gr_dir = _write_guardrail(tmp_path, policy_key, prompt)
     results = GuardrailJinjaSyntax().check(gr_dir, "", _context(tmp_path))
-    assert [r.rule_id for r in results] == ["S020"]
+    assert [r.rule_id for r in results] == ["S019"]
     assert results[0].file == "guardrails/safety/safety.json"
 
 
-def test_s020_guardrail_without_llm_policy_ignored(tmp_path: Path) -> None:
+def test_s019_guardrail_without_llm_policy_ignored(tmp_path: Path) -> None:
     gr_dir = tmp_path / "guardrails" / "filter"
     gr_dir.mkdir(parents=True)
     (gr_dir / "filter.json").write_text(
@@ -83,7 +83,7 @@ def test_s020_guardrail_without_llm_policy_ignored(tmp_path: Path) -> None:
     assert GuardrailJinjaSyntax().check(gr_dir, "", _context(tmp_path)) == []
 
 
-def test_s020_null_policy_or_non_dict_json_does_not_crash(
+def test_s019_null_policy_or_non_dict_json_does_not_crash(
     tmp_path: Path,
 ) -> None:
     gr_dir = tmp_path / "guardrails" / "broken"
@@ -96,7 +96,7 @@ def test_s020_null_policy_or_non_dict_json_does_not_crash(
         )
 
 
-def test_s020_dispatched_via_registry(tmp_path: Path) -> None:
+def test_s019_dispatched_via_registry(tmp_path: Path) -> None:
     (tmp_path / "app.json").write_text(json.dumps({"displayName": "app"}))
     _write_guardrail(tmp_path, "llmPolicy", "Hello {{ name }}!")
     report = LintReport()
@@ -106,21 +106,21 @@ def test_s020_dispatched_via_registry(tmp_path: Path) -> None:
         _context(tmp_path),
         Discovery(tmp_path, tmp_path / "evals"),
         report,
-        specific_rules={"S020"},
+        specific_rules={"S019"},
     )
-    assert [r.rule_id for r in report.results] == ["S020"]
+    assert [r.rule_id for r in report.results] == ["S019"]
 
 
 @pytest.mark.parametrize(
     "prompt",
     ["{% for x in items %}{{ x }}{% endfor %}", "{# internal note #}"],
 )
-def test_s020_flags_for_loops_and_jinja_comments(
+def test_s019_flags_for_loops_and_jinja_comments(
     tmp_path: Path, prompt: str
 ) -> None:
     gr_dir = _write_guardrail(tmp_path, "llmPolicy", prompt)
     res = GuardrailJinjaSyntax().check(gr_dir, "", _context(tmp_path))
-    assert [r.rule_id for r in res] == ["S020"]
+    assert [r.rule_id for r in res] == ["S019"]
 
 
 @pytest.mark.parametrize(
@@ -136,7 +136,7 @@ def test_s020_flags_for_loops_and_jinja_comments(
     ],
 )
 @pytest.mark.parametrize("ext", [".json", ".yaml", ".yml"])
-def test_s020_detects_jinja_in_custom_policy_and_yaml_guardrails(
+def test_s019_detects_jinja_in_custom_policy_and_yaml_guardrails(
     tmp_path: Path, payload: dict[str, Any], ext: str
 ) -> None:
     gr_dir = tmp_path / "guardrails" / "sec"
@@ -149,5 +149,5 @@ def test_s020_detects_jinja_in_custom_policy_and_yaml_guardrails(
     )
     cfg.write_text(text, encoding="utf-8")
     res = GuardrailJinjaSyntax().check(gr_dir, "", _context(tmp_path))
-    assert [r.rule_id for r in res] == ["S020"]
+    assert [r.rule_id for r in res] == ["S019"]
     assert res[0].file == f"guardrails/sec/sec{ext}"

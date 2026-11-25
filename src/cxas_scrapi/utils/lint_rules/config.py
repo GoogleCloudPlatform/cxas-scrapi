@@ -31,7 +31,6 @@ from cxas_scrapi.utils.env_vars import (
 )
 from cxas_scrapi.utils.linter import (
     APP_CONFIG_NAMES,
-    CONFIG_EXTENSIONS,
     LintContext,
     LintResult,
     Rule,
@@ -69,14 +68,9 @@ def _find_agent_config_file(
     agent_dir: Path, root_agent_name: str
 ) -> Path | None:
     """Return ``<dir>.{json,yaml,yml}`` or ``<root>.{json,yaml,yml}``."""
-    cfg = _find_dir_config(agent_dir)
-    if cfg is not None:
-        return cfg
-    for ext in CONFIG_EXTENSIONS:
-        candidate = agent_dir / f"{root_agent_name}{ext}"
-        if candidate.is_file() and not candidate.is_symlink():
-            return candidate
-    return None
+    return _find_dir_config(agent_dir) or _find_dir_config(
+        agent_dir, root_agent_name
+    )
 
 
 @rule("config")

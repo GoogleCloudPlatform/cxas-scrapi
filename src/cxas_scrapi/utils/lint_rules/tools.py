@@ -371,7 +371,7 @@ def _extract_py_referenced_tools_cached(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", SyntaxWarning)
             tree = ast.parse(text)
-    except SyntaxError:
+    except (SyntaxError, ValueError):
         return frozenset(_TOOL_ATTR_RE.findall(text))
 
     found: set[str] = set()
@@ -415,13 +415,13 @@ def _load_tool_config_any(
     file_path: Path,
 ) -> tuple[dict | None, Path | None, Path | None]:
     """Load tool JSON/YAML config and return ``(cfg, cfg_path, app_root)``."""
-    if file_path.suffix.lower() in (".json", ".yaml", ".yml"):
+    if file_path.suffix.lower() in CONFIG_EXTENSIONS:
         tool_dir = file_path.parent
         return _load_config_dict(file_path), file_path, tool_dir.parent.parent
 
     tool_dir = file_path.parent.parent
     app_root = tool_dir.parent.parent
-    for ext in (".json", ".yaml", ".yml"):
+    for ext in CONFIG_EXTENSIONS:
         candidate = tool_dir / f"{tool_dir.name}{ext}"
         if candidate.is_file() and not candidate.is_symlink():
             return _load_config_dict(candidate), candidate, app_root

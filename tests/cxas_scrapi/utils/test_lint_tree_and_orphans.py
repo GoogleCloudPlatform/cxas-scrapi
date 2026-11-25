@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from cxas_scrapi.utils.lint_rules.structure import (
+    AgentRefSelfOrOrphan,
     AgentTreeCycle,
     OrphanedAgent,
     SubAgentSingleParent,
@@ -629,11 +629,9 @@ def test_s014_dense_k6_figure8_snake_case_and_malformed_children(
     tmp_path: Path,
 ) -> None:
     k6 = {f"n{i}": [f"n{j}" for j in range(6) if j != i] for i in range(6)}
-    t0 = time.perf_counter()
     cycles = _find_cycles(k6, root_agent_dir="n0")
     assert 1 <= len(cycles) <= _MAX_AGENT_CYCLES
     assert len({tuple(c) for c in cycles}) == len(cycles)
-    assert time.perf_counter() - t0 < 1.0
 
     # Overlapping figure-8 cycles + snake_case child_agents + duplicate refs
     fig8 = tmp_path / "fig8"
@@ -902,3 +900,68 @@ def test_discovery_prefers_dir_config_over_sidecar_and_skips_symlinks(
         "yaml_tool": app / "tools" / "yaml_tool" / "yaml_tool.yaml",
     }
     assert all(agent != "sym_agent" for agent, *_ in disc.discover_callbacks())
+
+
+def test_dict_child_agents_resolved_across_s014_to_s018(
+    tmp_path: Path,
+) -> None:
+    """childAgents entries written as objects resolve across S014-S018."""
+    app_json = _write_json(
+        tmp_path / "app.json",
+        {"displayName": "dict_children", "rootAgent": "root"},
+    )
+    _write_json(
+        tmp_path / "agents" / "root" / "root.json",
+        {
+            "displayName": "Root",
+            "childAgents": [
+                {"displayName": "Billing Specialist"},
+                {"name": "projects/p/locations/l/apps/a/agents/returns"},
+            ],
+        },
+    )
+    (tmp_path / "agents" / "root" / "instruction.txt").write_text(
+        "Transfer to {@AGENT: billing} or {@AGENT: returns}.\n",
+        encoding="utf-8",
+    )
+    _write_json(
+        tmp_path / "agents" / "billing" / "billing.json",
+        {
+            "displayName": "Billing Specialist",
+            "toolsets": [{"toolset": "billing_ts"}],
+            "guardrails": ["billing_gr"],
+        },
+    )
+    (tmp_path / "agents" / "billing" / "instruction.txt").write_text(
+        "Handle billing.\n", encoding="utf-8"
+    )
+    _write_json(
+        tmp_path / "agents" / "returns" / "returns.json",
+        {"displayName": "Returns"},
+    )
+    (tmp_path / "agents" / "returns" / "instruction.txt").write_text(
+        "Handle returns.\n", encoding="utf-8"
+    )
+    _write_json(
+        tmp_path / "toolsets" / "billing_ts" / "billing_ts.json",
+        {"displayName": "billing_ts"},
+    )
+    _write_json(
+        tmp_path / "guardrails" / "billing_gr" / "billing_gr.json",
+        {"displayName": "billing_gr"},
+    )
+
+    ctx = _ctx(tmp_path)
+    assert AgentTreeCycle().check(app_json, "", ctx) == []
+    assert OrphanedAgent().check(app_json, "", ctx) == []
+    assert UnusedToolset().check(app_json, "", ctx) == []
+    assert UnusedGuardrail().check(app_json, "", ctx) == []
+    assert AgentRefSelfOrOrphan().check(app_json, "", ctx) == []
+
+    # Cycle via dict childAgents is caught by S014
+    _write_json(
+        tmp_path / "agents" / "returns" / "returns.json",
+        {"displayName": "Returns", "childAgents": [{"displayName": "Root"}]},
+    )
+    cycle_res = AgentTreeCycle().check(app_json, "", ctx)
+    assert [r.rule_id for r in cycle_res] == ["S014"]

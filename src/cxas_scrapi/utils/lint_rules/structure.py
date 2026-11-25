@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Structure validation rules (S002-S020).
+"""Structure validation rules (S002-S019).
 
 Validates app structure and cross-references using the existing
 ``cxas_scrapi.utils.validator.Validator`` for structural checks, plus
@@ -40,11 +40,12 @@ from cxas_scrapi.utils.linter import (
     Severity,
     ToolsetValidationBehavior,
     _build_agent_ref_resolver,
+    _extract_dict_agent_refs,
     _find_dir_config,
     _load_config_dict,
     collect_attached_guardrails,
-    discover_deployment_files,
     discover_local_resources,
+    extract_resource_ref_candidates,
     get_toolset_tools,
     match_local_resources,
     parse_config_content,
@@ -223,9 +224,29 @@ class CallbackFileReferences(Rule):
         return results
 
 
+def _extract_child_agent_candidates(
+    child_entry: object,
+) -> tuple[set[str], str]:
+    """Return ``(lookup_candidates, display_label)`` for a childAgents entry."""
+    if isinstance(child_entry, dict):
+        raws = _extract_dict_agent_refs(child_entry)
+        cands = {
+            c
+            for raw in raws
+            for c in extract_resource_ref_candidates(raw, "agents")
+        }
+        return cands, (raws[0] if raws else str(child_entry))
+    if isinstance(child_entry, str):
+        return (
+            extract_resource_ref_candidates(child_entry, "agents"),
+            child_entry,
+        )
+    return set(), str(child_entry)
+
+
 @rule("structure")
 class ChildAgentReferences(Rule):
-    """Agent JSON references child agents that don't exist."""
+    """Agent config references child agents that don't exist."""
 
     id = "S004"
     name = "child-agent-references"
@@ -247,14 +268,17 @@ class ChildAgentReferences(Rule):
         if not isinstance(child_agents, list):
             return []
         valid_agents = context.all_agent_names | context.all_agent_display_names
-        for child_name in child_agents:
-            if child_name not in valid_agents:
+        for child_entry in child_agents:
+            candidates, child_label = _extract_child_agent_candidates(
+                child_entry
+            )
+            if not (candidates & valid_agents):
                 results.append(
                     self.make_result(
                         str(file_path),
                         (
                             "References child agent"
-                            f" '{child_name}' but no"
+                            f" '{child_label}' but no"
                             " agent directory found."
                             " Available agents:"
                             f" {sorted(valid_agents)}"
@@ -1165,87 +1189,6 @@ class UnusedGuardrail(Rule):
         )
 
 
-@rule("structure")
-class DeploymentEntryAgentParity(Rule):
-    """Deployment ``entryAgent`` must exist under ``agents/`` and match root."""
-
-    id = "S018"
-    name = "deployment-entry-agent"
-    description = (
-        "Deployment entryAgent must exist under agents/ and match app rootAgent"
-    )
-    default_severity = Severity.ERROR
-    target = "app_config"
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        app_root = resolve_app_root(file_path, context)
-        dep_files = discover_deployment_files(app_root, context)
-        if not dep_files:
-            return []
-
-        graph = resolve_agent_graph(app_root)
-        resolve_ref = _build_agent_ref_resolver(
-            set(graph.agent_dirs.keys()), graph.agent_configs
-        )
-
-        results: list[LintResult] = []
-        for dep_path in dep_files:
-            dep = _load_config_dict(dep_path)
-            if dep is None:
-                continue
-            raw_entry = (
-                dep.get("entryAgent")
-                if "entryAgent" in dep
-                else dep.get("entry_agent")
-            )
-            if not isinstance(raw_entry, str) or not raw_entry.strip():
-                continue
-
-            entry_ref = raw_entry.strip()
-            resolved = resolve_ref(entry_ref)
-            dep_rel = rel_to_project(dep_path, context)
-
-            if resolved is None:
-                results.append(
-                    self.make_result(
-                        file=dep_rel,
-                        severity=Severity.ERROR,
-                        message=(
-                            f"Deployment entryAgent '{entry_ref}' does not "
-                            "resolve to any agent under agents/."
-                        ),
-                        fix=(
-                            "Set entryAgent to an existing agent under "
-                            "agents/ or create the missing agent."
-                        ),
-                    )
-                )
-            elif (
-                graph.root_agent_dir is not None
-                and resolved != graph.root_agent_dir
-            ):
-                root_label = graph.root_agent_ref or graph.root_agent_dir
-                results.append(
-                    self.make_result(
-                        file=dep_rel,
-                        severity=Severity.WARNING,
-                        message=(
-                            f"Deployment entryAgent '{entry_ref}' (resolved "
-                            f"to '{resolved}') diverges from app rootAgent "
-                            f"'{root_label}'."
-                        ),
-                        fix=(
-                            "Align deployment entryAgent with app rootAgent, "
-                            "or confirm the alternate entry agent is "
-                            "intentional."
-                        ),
-                    )
-                )
-        return results
-
-
 _AGENT_REF_PATTERN = re.compile(r"\{@AGENT[:\s]+([^}]+)\}", re.IGNORECASE)
 
 
@@ -1287,7 +1230,7 @@ def _read_agent_instruction(
 class AgentRefSelfOrOrphan(Rule):
     """Instructions should not target self or orphans via {@AGENT:}."""
 
-    id = "S019"
+    id = "S018"
     name = "agent-ref-self-or-orphan"
     description = (
         "Instructions should not reference the current agent (self-transfer) "
@@ -1402,7 +1345,7 @@ def _extract_guardrail_prompts(data: dict) -> list[str]:
 
 @rule("structure")
 class GuardrailJinjaSyntax(Rule):
-    id = "S020"
+    id = "S019"
     target = "guardrail_config"
     name = "guardrail-jinja-syntax"
     description = "Detects Jinja tokens inside guardrail policy prompts."

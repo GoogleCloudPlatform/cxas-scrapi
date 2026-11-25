@@ -482,14 +482,30 @@ def test_t019_detects_voice_channels_and_app_audio_config(
     assert [r.rule_id for r in res] == ["T019"]
 
 
-def test_t019_detects_voice_via_app_audio_processing_config(
+def test_t019_ignores_bare_audio_config_and_detects_voice_model(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "app.json").write_text(
-        json.dumps({"audioProcessingConfig": {"inactivityTimeout": "20s"}}),
+        json.dumps(
+            {
+                "modelSettings": {"model": "gemini-2.5-flash"},
+                "audioProcessingConfig": {"inactivityTimeout": "20s"},
+            }
+        ),
         encoding="utf-8",
     )
     tool = _write_tool(tmp_path, "ds_kb", {"dataStoreTool": {}})
+    assert (
+        DataStoreVoiceModality().check(
+            tool, tool.read_text(), _context(tmp_path)
+        )
+        == []
+    )
+
+    (tmp_path / "app.json").write_text(
+        json.dumps({"modelSettings": {"model": "gemini-composite-v1"}}),
+        encoding="utf-8",
+    )
     res = DataStoreVoiceModality().check(
         tool, tool.read_text(), _context(tmp_path)
     )

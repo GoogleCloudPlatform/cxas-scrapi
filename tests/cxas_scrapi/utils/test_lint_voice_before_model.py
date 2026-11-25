@@ -20,12 +20,15 @@ from pathlib import Path
 import pytest
 
 from cxas_scrapi.utils.lint_rules.callbacks import VoiceBeforeModelToolMutation
+from cxas_scrapi.utils.lint_rules.config import VoiceLanguageTtsParity
 from cxas_scrapi.utils.lint_rules.tools import DataStoreVoiceModality
 from cxas_scrapi.utils.linter import (
+    LIVE_AUDIO_MODELS,
     Discovery,
     LintConfig,
     LintContext,
     LintReport,
+    build_context,
     build_registry,
     is_voice_app,
     run_rules,
@@ -38,12 +41,13 @@ _MUTATING = (
 )
 
 
-def _context(app_root: Path) -> LintContext:
+def _context(app_root: Path, *, model: str | None = None) -> LintContext:
     return LintContext(
         project_root=app_root,
         app_dir=app_root,
         evals_dir=app_root / "evals",
         app_root=app_root,
+        model=model,
     )
 
 
@@ -58,18 +62,23 @@ def _callback(
     return cb_file
 
 
-def test_c024_flags_each_mutation_in_voice_app(tmp_path: Path) -> None:
-    (tmp_path / "app.json").write_text('{"audioProcessingConfig": {"x": 1}}')
+def test_c024_flags_each_mutation_in_before_model_callback(
+    tmp_path: Path,
+) -> None:
+    rule = VoiceBeforeModelToolMutation()
+    assert rule.models == LIVE_AUDIO_MODELS
+    assert rule.is_applicable_for_model("gemini-2.5-flash-native-audio-preview")
+    assert rule.is_applicable_for_model("gemini-3.1-flash-live")
+    assert not rule.is_applicable_for_model("gemini-composite-v1")
+    assert not rule.is_applicable_for_model("gemini-2.5-flash")
+
     cb_file = _callback(tmp_path)
-    res = VoiceBeforeModelToolMutation().check(
-        cb_file, _MUTATING, _context(tmp_path)
-    )
+    res = rule.check(cb_file, _MUTATING, _context(tmp_path))
     assert [r.rule_id for r in res] == ["C024", "C024"]
     assert [r.line for r in res] == [2, 3]
 
 
 def test_c024_flags_async_and_collection_mutators(tmp_path: Path) -> None:
-    (tmp_path / "app.yaml").write_text("audioProcessingConfig:\n  x: 1\n")
     code = (
         "async def before_model_callback(cb, llm_req):\n"
         "    llm_req.tools.extend(['a'])\n"
@@ -83,46 +92,50 @@ def test_c024_flags_async_and_collection_mutators(tmp_path: Path) -> None:
     assert [r.line for r in res] == [2, 3]
 
 
-def test_c024_detects_voice_via_deployment_yaml(tmp_path: Path) -> None:
-    (tmp_path / "app.json").write_text("{}")
-    (tmp_path / "deployments").mkdir()
-    (tmp_path / "deployments" / "empty.yaml").write_text("")
-    (tmp_path / "deployments" / "phone.yaml").write_text(
-        "channel: GOOGLE_TELEPHONY_PLATFORM\n"
+@pytest.mark.parametrize(
+    ("model_name", "expected_ids"),
+    [
+        ("gemini-2.5-flash-native-audio-preview", ["C024", "C024"]),
+        ("gemini-3.1-flash-live", ["C024", "C024"]),
+        ("gemini-composite-v1", []),
+        ("gemini-2.5-flash", []),
+    ],
+)
+def test_c024_dispatched_only_for_live_audio_models(
+    tmp_path: Path, model_name: str, expected_ids: list[str]
+) -> None:
+    """C024 fires on LIVE_AUDIO_MODELS and stays silent on composite-v1/text."""
+    (tmp_path / "app.json").write_text(
+        f'{{"displayName": "app", "modelSettings": {{"model": "{model_name}"}},'
+        ' "audioProcessingConfig": {"inactivityTimeout": "20s"}}',
+        encoding="utf-8",
     )
-    cb_file = _callback(tmp_path)
-    res = VoiceBeforeModelToolMutation().check(
-        cb_file, _MUTATING, _context(tmp_path)
+    cb_file = (
+        tmp_path
+        / "agents"
+        / "root_agent"
+        / "before_model_callbacks"
+        / "cb_01"
+        / "python_code.py"
     )
-    assert len(res) == 2
-
-
-def test_c024_detects_voice_via_channel_profile_yaml(tmp_path: Path) -> None:
-    (tmp_path / "app.json").write_text("{}")
-    (tmp_path / "deployments").mkdir()
-    (tmp_path / "deployments" / "ccaa.yaml").write_text(
-        "channelProfile:\n  channelType: CONTACT_CENTER_AS_A_SERVICE\n"
+    cb_file.parent.mkdir(parents=True)
+    cb_file.write_text(_MUTATING, encoding="utf-8")
+    disc = Discovery(tmp_path, tmp_path / "evals")
+    cfg = LintConfig()
+    ctx = build_context(tmp_path, cfg, disc)
+    report = LintReport()
+    run_rules(
+        build_registry(),
+        cfg,
+        ctx,
+        disc,
+        report,
+        specific_rules={"C024"},
     )
-    cb_file = _callback(tmp_path)
-    res = VoiceBeforeModelToolMutation().check(
-        cb_file, _MUTATING, _context(tmp_path)
-    )
-    assert len(res) == 2
-
-
-def test_c024_ignores_text_only_app(tmp_path: Path) -> None:
-    (tmp_path / "app.json").write_text("{}")
-    cb_file = _callback(tmp_path)
-    assert (
-        VoiceBeforeModelToolMutation().check(
-            cb_file, _MUTATING, _context(tmp_path)
-        )
-        == []
-    )
+    assert [r.rule_id for r in report.results] == expected_ids
 
 
 def test_c024_ignores_other_callback_types(tmp_path: Path) -> None:
-    (tmp_path / "app.json").write_text('{"audioProcessingConfig": {"x": 1}}')
     cb_file = _callback(tmp_path, folder="before_tool_callbacks")
     assert (
         VoiceBeforeModelToolMutation().check(
@@ -133,7 +146,6 @@ def test_c024_ignores_other_callback_types(tmp_path: Path) -> None:
 
 
 def test_c024_flags_flat_ces_before_model_callback_dir(tmp_path: Path) -> None:
-    (tmp_path / "app.json").write_text('{"audioProcessingConfig": {"x": 1}}')
     cb_file = (
         tmp_path
         / "agents"
@@ -149,33 +161,7 @@ def test_c024_flags_flat_ces_before_model_callback_dir(tmp_path: Path) -> None:
     assert [r.rule_id for r in res] == ["C024", "C024"]
 
 
-def test_c024_dispatched_via_registry(tmp_path: Path) -> None:
-    (tmp_path / "app.json").write_text(
-        '{"displayName": "app", "audioProcessingConfig": {"x": 1}}'
-    )
-    cb_file = (
-        tmp_path
-        / "agents"
-        / "root_agent"
-        / "before_model_callbacks"
-        / "cb_01"
-        / "python_code.py"
-    )
-    cb_file.parent.mkdir(parents=True)
-    cb_file.write_text(_MUTATING)
-    report = LintReport()
-    run_rules(
-        build_registry(),
-        LintConfig(),
-        _context(tmp_path),
-        Discovery(tmp_path, tmp_path / "evals"),
-        report,
-        specific_rules={"C024"},
-    )
-    assert [r.rule_id for r in report.results] == ["C024", "C024"]
-
-
-def test_is_voice_app_voice_telephony_deployment_fires_t019_and_c024(
+def test_is_voice_app_voice_telephony_deployment_fires_t019(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "app.json").write_text('{"displayName": "voice_app"}')
@@ -189,12 +175,6 @@ def test_is_voice_app_voice_telephony_deployment_fires_t019_and_c024(
     )
     ctx = _context(tmp_path)
     assert is_voice_app(ctx) is True
-
-    cb_file = _callback(tmp_path)
-    assert [
-        r.rule_id
-        for r in VoiceBeforeModelToolMutation().check(cb_file, _MUTATING, ctx)
-    ] == ["C024", "C024"]
 
     tool_file = tmp_path / "tools" / "ds_kb" / "ds_kb.json"
     tool_file.parent.mkdir(parents=True)
@@ -221,12 +201,14 @@ def test_is_voice_app_checks_channel_profile_even_when_channel_is_non_voice(
     assert is_voice_app(_context(tmp_path)) is True
 
 
-def test_is_voice_app_web_deployment_overrides_app_audio_processing_config(
+def test_is_voice_app_web_deployment_overrides_voice_model(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "app.json").write_text(
-        '{"displayName": "web_app", "audioProcessingConfig": '
-        '{"synthesizeSpeechConfigs": {"en-US": {"voice": "v1"}}}}'
+        '{"displayName": "web_app",'
+        ' "modelSettings": {"model": "gemini-composite-v1"},'
+        ' "audioProcessingConfig":'
+        ' {"synthesizeSpeechConfigs": {"en-US": {"voice": "v1"}}}}'
     )
     deps = tmp_path / "deployments"
     deps.mkdir()
@@ -234,11 +216,8 @@ def test_is_voice_app_web_deployment_overrides_app_audio_processing_config(
         "channel: WEB\nchannelProfile:\n  channelType: WEB_UI\n",
         encoding="utf-8",
     )
-    ctx = _context(tmp_path)
+    ctx = _context(tmp_path, model="gemini-composite-v1")
     assert is_voice_app(ctx) is False
-
-    cb_file = _callback(tmp_path)
-    assert VoiceBeforeModelToolMutation().check(cb_file, _MUTATING, ctx) == []
 
     tool_file = tmp_path / "tools" / "ds_kb" / "ds_kb.json"
     tool_file.parent.mkdir(parents=True)
@@ -247,18 +226,81 @@ def test_is_voice_app_web_deployment_overrides_app_audio_processing_config(
     assert DataStoreVoiceModality().check(tool_file, tool_json, ctx) == []
 
 
-def test_is_voice_app_falls_back_to_app_audio_config_without_deployments(
+def test_is_voice_app_bare_audio_config_on_text_model_is_false(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "app.json").write_text(
-        '{"audioProcessingConfig": {"inactivityTimeout": "20s"}}'
+    """Bare audioProcessingConfig + gemini-2.5-flash + empty channel is not voice."""
+    app_json = tmp_path / "app.json"
+    app_text = (
+        '{"displayName": "sample",'
+        ' "modelSettings": {"model": "gemini-2.5-flash"},'
+        ' "defaultChannelProfile": {},'
+        ' "languageSettings": {"defaultLanguageCode": "en-US",'
+        ' "supportedLanguageCodes": ["en-US"]},'
+        ' "audioProcessingConfig": {"inactivityTimeout": "20s"}}'
     )
-    assert is_voice_app(_context(tmp_path)) is True
+    app_json.write_text(app_text, encoding="utf-8")
+    tool_file = tmp_path / "tools" / "ds_kb" / "ds_kb.json"
+    tool_file.parent.mkdir(parents=True)
+    tool_text = '{"dataStoreTool": {"filter": "brand = \'a\'"}}'
+    tool_file.write_text(tool_text, encoding="utf-8")
+    cb_file = (
+        tmp_path
+        / "agents"
+        / "root"
+        / "before_model_callbacks"
+        / "cb"
+        / "python_code.py"
+    )
+    cb_file.parent.mkdir(parents=True)
+    cb_file.write_text(_MUTATING, encoding="utf-8")
 
+    disc = Discovery(tmp_path, tmp_path / "evals")
+    ctx = build_context(tmp_path, LintConfig(), disc)
+    assert is_voice_app(ctx) is False
+    assert DataStoreVoiceModality().check(tool_file, tool_text, ctx) == []
+    assert VoiceLanguageTtsParity().check(app_json, app_text, ctx) == []
+    report = LintReport()
+    run_rules(
+        build_registry(),
+        LintConfig(),
+        ctx,
+        disc,
+        report,
+        specific_rules={"T019", "A018", "C024"},
+    )
+    assert report.results == []
+
+
+def test_is_voice_app_channel_profile_and_voice_model_precedence(
+    tmp_path: Path,
+) -> None:
+    """defaultChannelProfile.channelType and VOICE_MODELS determine voice."""
+    # Voice defaultChannelProfile overrides text model
+    ch_voice = tmp_path / "ch_voice"
+    ch_voice.mkdir()
+    (ch_voice / "app.json").write_text(
+        '{"modelSettings": {"model": "gemini-2.5-flash"},'
+        ' "defaultChannelProfile": {"channelType": "TELEPHONY"}}',
+        encoding="utf-8",
+    )
+    assert is_voice_app(_context(ch_voice, model="gemini-2.5-flash")) is True
+
+    # Non-voice defaultChannelProfile overrides voice model
+    ch_web = tmp_path / "ch_web"
+    ch_web.mkdir()
+    (ch_web / "app.json").write_text(
+        '{"modelSettings": {"model": "gemini-composite-v1"},'
+        ' "defaultChannelProfile": {"channelType": "WEB_UI"}}',
+        encoding="utf-8",
+    )
+    assert is_voice_app(_context(ch_web, model="gemini-composite-v1")) is False
+
+    # Voice model in app.yml triggers is_voice_app even without deployments
     yml_app = tmp_path / "yml_app"
     yml_app.mkdir()
     (yml_app / "app.yml").write_text(
-        "audioProcessingConfig:\n  inactivityTimeout: 20s\n",
+        "modelSettings:\n  model: gemini-composite-v1\n",
         encoding="utf-8",
     )
     assert is_voice_app(_context(yml_app)) is True

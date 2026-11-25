@@ -285,6 +285,44 @@ def _validate_legacy_remote_agent_tool(tool_data: dict) -> str | None:
     return None
 
 
+def _strip_tool_config_v1main_fields(data: dict[str, typing.Any]) -> None:
+    """Strip v1main-only fields inside a tool_config payload."""
+    ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
+    if isinstance(ds_tool, dict):
+        mod_configs = ds_tool.get("modalityConfigs") or ds_tool.get(
+            "modality_configs"
+        )
+        if isinstance(mod_configs, list):
+            for mc in mod_configs:
+                _pop_missing_descriptor_fields(
+                    mc,
+                    types.DataStoreTool.ModalityConfig,
+                    ("snippetsConfig", "snippets_config"),
+                )
+    if getattr(types, "RemoteAgentTool", None) is None:
+        if _validate_legacy_remote_agent_tool(data) is None:
+            data.pop("remoteAgentTool", None)
+            data.pop("remote_agent_tool", None)
+    else:
+        remote_tool = data.get("remoteAgentTool") or data.get(
+            "remote_agent_tool"
+        )
+        _pop_missing_descriptor_fields(
+            remote_tool,
+            types.RemoteAgentTool,
+            (
+                "apiAuthentication",
+                "api_authentication",
+                "statefulAgent",
+                "stateful_agent",
+                "inputVariableMapping",
+                "input_variable_mapping",
+                "outputVariableMapping",
+                "output_variable_mapping",
+            ),
+        )
+
+
 def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
     """Strip CES v1main fields that lag in the google-cloud-ces v1beta wheel."""
     if not isinstance(data, dict):
@@ -297,48 +335,13 @@ def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
             ("thinkingLevel", "thinking_level"),
         )
         if target == "agent_config":
-            for guided_key in ("guidedAgent", "guided_agent"):
-                if isinstance(data.get(guided_key), dict):
-                    _pop_missing_descriptor_fields(
-                        data,
-                        types.Agent,
-                        (guided_key,),
-                    )
-    elif target == "tool_config":
-        ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
-        if isinstance(ds_tool, dict):
-            mod_configs = ds_tool.get("modalityConfigs") or ds_tool.get(
-                "modality_configs"
-            )
-            if isinstance(mod_configs, list):
-                for mc in mod_configs:
-                    _pop_missing_descriptor_fields(
-                        mc,
-                        types.DataStoreTool.ModalityConfig,
-                        ("snippetsConfig", "snippets_config"),
-                    )
-        if getattr(types, "RemoteAgentTool", None) is None:
-            if _validate_legacy_remote_agent_tool(data) is None:
-                data.pop("remoteAgentTool", None)
-                data.pop("remote_agent_tool", None)
-        else:
-            remote_tool = data.get("remoteAgentTool") or data.get(
-                "remote_agent_tool"
-            )
             _pop_missing_descriptor_fields(
-                remote_tool,
-                types.RemoteAgentTool,
-                (
-                    "apiAuthentication",
-                    "api_authentication",
-                    "statefulAgent",
-                    "stateful_agent",
-                    "inputVariableMapping",
-                    "input_variable_mapping",
-                    "outputVariableMapping",
-                    "output_variable_mapping",
-                ),
+                data,
+                types.Agent,
+                ("guidedAgent", "guided_agent"),
             )
+    elif target == "tool_config":
+        _strip_tool_config_v1main_fields(data)
     elif target == "guardrail_config":
         action = data.get("action")
         _pop_missing_descriptor_fields(

@@ -23,11 +23,11 @@ import warnings
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (
+    LIVE_AUDIO_MODELS,
     LintContext,
     LintResult,
     Rule,
     Severity,
-    is_voice_app,
     rule,
 )
 
@@ -607,11 +607,14 @@ class _VoiceRequestMutationVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-@rule("callbacks")
+@rule("callbacks", models=LIVE_AUDIO_MODELS)
 class VoiceBeforeModelToolMutation(Rule):
     id = "C024"
     name = "voice-before-model-request-mutation"
-    description = "Voice apps ignore before_model llm_request mutations"
+    description = (
+        "Live native-audio voice models ignore before_model llm_request "
+        "mutations"
+    )
     default_severity = Severity.WARNING
 
     _MUTATING_METHODS = _VOICE_MUTATING_METHODS
@@ -621,11 +624,9 @@ class VoiceBeforeModelToolMutation(Rule):
     ) -> list[LintResult]:
         if _resolve_cb_type(file_path) != "before_model_callbacks":
             return []
-        if not is_voice_app(context):
-            return []
         try:
             tree = ast.parse(content)
-        except SyntaxError:
+        except (SyntaxError, ValueError):
             return []
 
         visitor = _VoiceRequestMutationVisitor()
@@ -637,7 +638,8 @@ class VoiceBeforeModelToolMutation(Rule):
                 file=rel,
                 line=getattr(mutation, "lineno", None),
                 message=(
-                    "Voice streaming ignores before_model llm_request mutations"
+                    "Live native-audio voice streaming ignores before_model "
+                    "llm_request mutations"
                 ),
                 fix=(
                     "Configure channel-specific tools/prompts statically or"

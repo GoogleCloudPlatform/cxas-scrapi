@@ -344,6 +344,18 @@ class LintContext:
         return self.model
 
 
+COMPOSITE_V2_MODELS: list[str] = ["gemini-composite-v2"]
+LIVE_AUDIO_MODELS: list[str] = [
+    "gemini-3.1-flash-live",
+    "gemini-3-flash-native-audio",
+    "gemini-3.0-flash-native-audio-preview",
+    "gemini-2.5-flash-native-audio-preview",
+]
+VOICE_MODELS: frozenset[str] = frozenset(
+    {"gemini-composite-v1", *COMPOSITE_V2_MODELS, *LIVE_AUDIO_MODELS}
+)
+_VOICE_MODELS_LOWER: frozenset[str] = frozenset(m.lower() for m in VOICE_MODELS)
+
 VOICE_CHANNEL_TYPES = frozenset(
     {
         "GOOGLE_TELEPHONY_PLATFORM",
@@ -386,33 +398,66 @@ def _check_deployment_voice_channels(context: LintContext) -> bool | None:
     return False if saw_channel else None
 
 
-def is_voice_app(context: LintContext) -> bool:
-    """Return True if deployment manifests or app config target a voice channel.
+def _app_channel_is_voice(app_cfg: dict[str, typing.Any] | None) -> bool | None:
+    """Return True/False if ``defaultChannelProfile.channelType`` is set."""
+    if not isinstance(app_cfg, dict):
+        return None
+    cp = app_cfg.get("defaultChannelProfile") or app_cfg.get(
+        "default_channel_profile"
+    )
+    if not isinstance(cp, dict):
+        return None
+    ch = cp.get("channelType") or cp.get("channel_type")
+    if isinstance(ch, str) and ch.strip():
+        return ch.strip().upper() in VOICE_CHANNEL_TYPES
+    return None
 
-    When at least one ``deployments/*.yaml`` or ``deployments/*.yml`` manifest
-    declares a channel (``channel`` or ``channelProfile.channelType``),
-    deployment manifests are authoritative over ``app.json`` / ``app.yaml`` /
-    ``app.yml`` ``audioProcessingConfig`` so digital builds that retain brand
-    TTS settings are not misclassified as voice apps.
+
+def _app_model_is_voice(
+    context: LintContext, app_cfg: dict[str, typing.Any] | None
+) -> bool:
+    """Return True if the app's configured model is a known voice model."""
+    model = context.model
+    if not model and isinstance(app_cfg, dict):
+        ms = app_cfg.get("modelSettings") or app_cfg.get("model_settings")
+        if isinstance(ms, dict):
+            raw = ms.get("model")
+            if isinstance(raw, str):
+                model = raw
+    return (
+        isinstance(model, str) and model.strip().lower() in _VOICE_MODELS_LOWER
+    )
+
+
+def is_voice_app(context: LintContext) -> bool:
+    """Return True if deployment manifests, channel profile, or model is voice.
+
+    Precedence:
+    1. ``deployments/*.{yaml,yml}`` channel declarations (authoritative when
+       any deployment declares a channel).
+    2. ``app.{json,yaml,yml}`` ``defaultChannelProfile.channelType`` when
+       present and non-empty.
+    3. App model (``context.model`` or ``modelSettings.model``) matching a
+       known voice model (``VOICE_MODELS``).
+    4. ``False`` otherwise (bare ``audioProcessingConfig`` is not treated as
+       a voice signal because CES defaults include it on text/web apps).
     """
     dep_voice = _check_deployment_voice_channels(context)
     if dep_voice is not None:
         return dep_voice
 
     app_root = context.app_root or context.app_dir
-    if app_root is None:
-        return False
-    _, app_cfg = _load_app_config(app_root)
-    return bool(
-        app_cfg
-        and (
-            app_cfg.get("audioProcessingConfig")
-            or app_cfg.get("audio_processing_config")
-        )
+    _, app_cfg = (
+        _load_app_config(app_root) if app_root is not None else (None, None)
     )
+    channel_voice = _app_channel_is_voice(app_cfg)
+    if channel_voice is not None:
+        return channel_voice
+
+    return _app_model_is_voice(context, app_cfg)
 
 
-# ── Shared Config Loading, Local Resources & Agent Graph ────────────────
+# ── Shared Config Loading & Agent Ref Resolution ────────────────────────
 
 CONFIG_EXTENSIONS: tuple[str, ...] = (".json", ".yaml", ".yml")
 APP_CONFIG_NAMES: tuple[str, ...] = ("app.json", "app.yaml", "app.yml")
@@ -449,6 +494,18 @@ def _load_config_dict(path: Path) -> dict[str, typing.Any] | None:
     except (OSError, UnicodeDecodeError):
         return None
     return parse_config_content(path, raw)
+
+
+def _find_dir_config(
+    resource_dir: Path, stem: str | None = None
+) -> Path | None:
+    """Return ``<stem>.json``, ``<stem>.yaml``, or ``<stem>.yml`` if present."""
+    name = stem if stem is not None else resource_dir.name
+    for ext in CONFIG_EXTENSIONS:
+        candidate = resource_dir / f"{name}{ext}"
+        if candidate.is_file() and not candidate.is_symlink():
+            return candidate
+    return None
 
 
 def _load_app_config(
@@ -505,88 +562,6 @@ def _iter_subdirs(parent: Path) -> list[Path]:
     ]
 
 
-@dataclass(frozen=True)
-class LocalResource:
-    """A locally defined resource under ``toolsets/`` or ``guardrails/``."""
-
-    key: str
-    report_path: Path
-    identifiers: frozenset[str]
-    normalized_identifiers: frozenset[str]
-
-
-def _find_dir_config(resource_dir: Path) -> Path | None:
-    """Return ``<dir>.json``, ``<dir>.yaml``, or ``<dir>.yml`` if present."""
-    for ext in CONFIG_EXTENSIONS:
-        candidate = resource_dir / f"{resource_dir.name}{ext}"
-        if candidate.is_file() and not candidate.is_symlink():
-            return candidate
-    return None
-
-
-def _extract_resource_identifiers(
-    key: str, cfg: dict[str, typing.Any] | None
-) -> tuple[frozenset[str], frozenset[str]]:
-    """Build exact and normalized lookup identifier sets for a resource."""
-    ids: set[str] = {key, key.replace("_", " ")}
-    if isinstance(cfg, dict):
-        disp = cfg.get("displayName") or cfg.get("display_name")
-        if isinstance(disp, str) and disp.strip():
-            ids.add(disp.strip())
-        cfg_name = cfg.get("name")
-        if isinstance(cfg_name, str) and cfg_name.strip():
-            clean_name = cfg_name.strip()
-            ids.add(clean_name)
-            ids.add(clean_name.rsplit("/", 1)[-1])
-    norm_ids = {i.replace(" ", "_").lower() for i in ids}
-    return frozenset(ids), frozenset(norm_ids)
-
-
-def _load_resource_entry(
-    entry: Path,
-) -> tuple[str, Path, dict[str, typing.Any] | None] | None:
-    """Return ``(key, report_path, cfg)`` for a directory or flat config."""
-    if entry.is_dir():
-        cfg_path = _find_dir_config(entry)
-        cfg = _load_config_dict(cfg_path) if cfg_path is not None else None
-        return entry.name, cfg_path or entry, cfg
-    if entry.is_file() and entry.suffix.lower() in CONFIG_EXTENSIONS:
-        return entry.stem, entry, _load_config_dict(entry)
-    return None
-
-
-def discover_local_resources(
-    app_root: Path, subdir: str
-) -> list[LocalResource]:
-    """Discover directory and flat configs under ``app_root/<subdir>``."""
-    parent = app_root / subdir
-    if parent.is_symlink() or not parent.is_dir():
-        return []
-
-    resources: list[LocalResource] = []
-    for entry in sorted(parent.iterdir()):
-        if (
-            entry.is_symlink()
-            or entry.name.startswith(".")
-            or entry.name == "__pycache__"
-        ):
-            continue
-        loaded = _load_resource_entry(entry)
-        if loaded is None:
-            continue
-        key, report_path, cfg = loaded
-        ids, norm_ids = _extract_resource_identifiers(key, cfg)
-        resources.append(
-            LocalResource(
-                key=key,
-                report_path=report_path,
-                identifiers=ids,
-                normalized_identifiers=norm_ids,
-            )
-        )
-    return resources
-
-
 def extract_resource_ref_candidates(ref: str, subdir: str) -> set[str]:
     """Return raw and short-ID lookup candidates for a CES resource ref."""
     raw = ref.strip()
@@ -600,46 +575,6 @@ def extract_resource_ref_candidates(ref: str, subdir: str) -> set[str]:
     if m:
         cands.add(m.group(1))
     return cands
-
-
-def match_local_resources(
-    ref: str,
-    subdir: str,
-    resources: list[LocalResource],
-) -> list[LocalResource]:
-    """Match a reference string against discovered ``LocalResource`` entries."""
-    cands = extract_resource_ref_candidates(ref, subdir)
-    if not cands:
-        return []
-    spaced_cands = {c.replace(" ", "_") for c in cands}
-    exact = [
-        res
-        for res in resources
-        if (cands & res.identifiers) or (spaced_cands & res.identifiers)
-    ]
-    if exact:
-        return exact
-    norm_cands = {c.replace(" ", "_").lower() for c in cands}
-    return [res for res in resources if norm_cands & res.normalized_identifiers]
-
-
-@dataclass
-class AgentGraph:
-    """Resolved agent hierarchy graph for a CES app."""
-
-    app_config: dict[str, typing.Any] | None = None
-    app_config_path: Path | None = None
-    root_agent_ref: str | None = None
-    root_agent_dir: str | None = None
-    agent_dirs: dict[str, Path] = field(default_factory=dict)
-    agent_configs: dict[str, dict[str, typing.Any]] = field(
-        default_factory=dict
-    )
-    agent_config_paths: dict[str, Path] = field(default_factory=dict)
-    agent_display_names: dict[str, str] = field(default_factory=dict)
-    adjacency: dict[str, list[str]] = field(default_factory=dict)
-    reachable: set[str] = field(default_factory=set)
-    cycles: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -706,11 +641,42 @@ def _match_normalized_agent_ref(
     return None
 
 
+def _extract_dict_agent_refs(ref: dict[str, typing.Any]) -> list[str]:
+    """Extract candidate string references from a dict childAgents entry."""
+    return [
+        val.strip()
+        for key in ("name", "displayName", "display_name")
+        if isinstance((val := ref.get(key)), str) and val.strip()
+    ]
+
+
+def _resolve_agent_ref_str(raw: str, index: _AgentRefIndex) -> str | None:
+    """Resolve a stripped non-empty agent reference string to a dir name."""
+    direct = _match_exact_agent_ref(raw, index)
+    if direct is not None:
+        return direct
+
+    candidates = [raw]
+    m = _CES_AGENT_REF_RE.match(raw)
+    if m:
+        short_ref = m.group(1)
+        short_match = _match_exact_agent_ref(
+            short_ref, index, use_short_map=True
+        )
+        if short_match is not None:
+            return short_match
+        candidates.append(short_ref)
+
+    if raw in index.short_name_map:
+        return index.short_name_map[raw]
+    return _match_normalized_agent_ref(candidates, index)
+
+
 def _build_agent_ref_resolver(
     agent_names: set[str],
     agent_configs: dict[str, dict[str, typing.Any]],
 ) -> typing.Callable[[typing.Any], str | None]:
-    """Build a deterministic resolver from agent ref strings to dir names."""
+    """Build a deterministic resolver from agent refs to directory names."""
     sorted_names = sorted(agent_names)
     index = _AgentRefIndex(name_set=set(sorted_names))
     for dir_name in sorted_names:
@@ -722,29 +688,161 @@ def _build_agent_ref_resolver(
             _register_agent_config_refs(dir_name, cfg, index)
 
     def _resolve(ref: typing.Any) -> str | None:
+        if isinstance(ref, dict):
+            for cand in _extract_dict_agent_refs(ref):
+                resolved = _resolve_agent_ref_str(cand, index)
+                if resolved is not None:
+                    return resolved
+            return None
         if not isinstance(ref, str) or not ref.strip():
             return None
-        raw = ref.strip()
-        direct = _match_exact_agent_ref(raw, index)
-        if direct is not None:
-            return direct
-
-        candidates = [raw]
-        m = _CES_AGENT_REF_RE.match(raw)
-        if m:
-            short_ref = m.group(1)
-            short_match = _match_exact_agent_ref(
-                short_ref, index, use_short_map=True
-            )
-            if short_match is not None:
-                return short_match
-            candidates.append(short_ref)
-
-        if raw in index.short_name_map:
-            return index.short_name_map[raw]
-        return _match_normalized_agent_ref(candidates, index)
+        return _resolve_agent_ref_str(ref.strip(), index)
 
     return _resolve
+
+
+def resolve_safe_app_file(app_root: Path, rel_path: str) -> Path | None:
+    """Resolve an app-relative file path strictly within ``app_root``.
+
+    Returns ``None`` if ``rel_path`` is absolute, traverses ``..``, traverses
+    any symlink inside ``app_root``, escapes ``app_root``, or is not a file.
+    """
+    if not isinstance(rel_path, str):
+        return None
+    stripped = rel_path.strip()
+    if not stripped or "://" in stripped or "\n" in stripped:
+        return None
+    p = Path(stripped)
+    if p.is_absolute() or ".." in p.parts:
+        return None
+
+    cur = app_root
+    for part in p.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return None
+
+    if not cur.is_file():
+        return None
+
+    try:
+        cur.resolve().relative_to(app_root.resolve())
+    except (OSError, ValueError):
+        return None
+    return cur
+
+
+@dataclass(frozen=True)
+class LocalResource:
+    """A locally defined resource under ``toolsets/`` or ``guardrails/``."""
+
+    key: str
+    report_path: Path
+    identifiers: frozenset[str]
+    normalized_identifiers: frozenset[str]
+
+
+def _extract_resource_identifiers(
+    key: str, cfg: dict[str, typing.Any] | None
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Build exact and normalized lookup identifier sets for a resource."""
+    ids: set[str] = {key, key.replace("_", " ")}
+    if isinstance(cfg, dict):
+        disp = cfg.get("displayName") or cfg.get("display_name")
+        if isinstance(disp, str) and disp.strip():
+            ids.add(disp.strip())
+        cfg_name = cfg.get("name")
+        if isinstance(cfg_name, str) and cfg_name.strip():
+            clean_name = cfg_name.strip()
+            ids.add(clean_name)
+            ids.add(clean_name.rsplit("/", 1)[-1])
+    norm_ids = {i.replace(" ", "_").lower() for i in ids}
+    return frozenset(ids), frozenset(norm_ids)
+
+
+def _load_resource_entry(
+    entry: Path,
+) -> tuple[str, Path, dict[str, typing.Any] | None] | None:
+    """Return ``(key, report_path, cfg)`` for a directory or flat config."""
+    if entry.is_dir():
+        cfg_path = _find_dir_config(entry)
+        cfg = _load_config_dict(cfg_path) if cfg_path is not None else None
+        return entry.name, cfg_path or entry, cfg
+    if entry.is_file() and entry.suffix.lower() in CONFIG_EXTENSIONS:
+        return entry.stem, entry, _load_config_dict(entry)
+    return None
+
+
+def discover_local_resources(
+    app_root: Path, subdir: str
+) -> list[LocalResource]:
+    """Discover directory and flat configs under ``app_root/<subdir>``."""
+    parent = app_root / subdir
+    if parent.is_symlink() or not parent.is_dir():
+        return []
+
+    resources: list[LocalResource] = []
+    for entry in sorted(parent.iterdir()):
+        if (
+            entry.is_symlink()
+            or entry.name.startswith(".")
+            or entry.name == "__pycache__"
+        ):
+            continue
+        loaded = _load_resource_entry(entry)
+        if loaded is None:
+            continue
+        key, report_path, cfg = loaded
+        ids, norm_ids = _extract_resource_identifiers(key, cfg)
+        resources.append(
+            LocalResource(
+                key=key,
+                report_path=report_path,
+                identifiers=ids,
+                normalized_identifiers=norm_ids,
+            )
+        )
+    return resources
+
+
+def match_local_resources(
+    ref: str,
+    subdir: str,
+    resources: list[LocalResource],
+) -> list[LocalResource]:
+    """Match a reference string against discovered ``LocalResource`` entries."""
+    cands = extract_resource_ref_candidates(ref, subdir)
+    if not cands:
+        return []
+    spaced_cands = {c.replace(" ", "_") for c in cands}
+    exact = [
+        res
+        for res in resources
+        if (cands & res.identifiers) or (spaced_cands & res.identifiers)
+    ]
+    if exact:
+        return exact
+    norm_cands = {c.replace(" ", "_").lower() for c in cands}
+    return [res for res in resources if norm_cands & res.normalized_identifiers]
+
+
+@dataclass
+class AgentGraph:
+    """Resolved agent hierarchy graph for a CES app."""
+
+    app_config: dict[str, typing.Any] | None = None
+    app_config_path: Path | None = None
+    root_agent_ref: str | None = None
+    root_agent_dir: str | None = None
+    agent_dirs: dict[str, Path] = field(default_factory=dict)
+    agent_configs: dict[str, dict[str, typing.Any]] = field(
+        default_factory=dict
+    )
+    agent_config_paths: dict[str, Path] = field(default_factory=dict)
+    agent_display_names: dict[str, str] = field(default_factory=dict)
+    adjacency: dict[str, list[str]] = field(default_factory=dict)
+    reachable: set[str] = field(default_factory=set)
+    cycles: list[list[str]] = field(default_factory=list)
 
 
 def _canonicalize_cycle(
@@ -979,37 +1077,6 @@ def collect_attached_guardrails(
             agent_refs[res].add(agent_name)
 
     return app_referenced, agent_refs
-
-
-def resolve_safe_app_file(app_root: Path, rel_path: str) -> Path | None:
-    """Resolve an app-relative file path strictly within ``app_root``.
-
-    Returns ``None`` if ``rel_path`` is absolute, traverses ``..``, traverses
-    any symlink inside ``app_root``, escapes ``app_root``, or is not a file.
-    """
-    if not isinstance(rel_path, str):
-        return None
-    stripped = rel_path.strip()
-    if not stripped or "://" in stripped or "\n" in stripped:
-        return None
-    p = Path(stripped)
-    if p.is_absolute() or ".." in p.parts:
-        return None
-
-    cur = app_root
-    for part in p.parts:
-        cur = cur / part
-        if cur.is_symlink():
-            return None
-
-    if not cur.is_file():
-        return None
-
-    try:
-        cur.resolve().relative_to(app_root.resolve())
-    except (OSError, ValueError):
-        return None
-    return cur
 
 
 def discover_deployment_files(
@@ -1614,6 +1681,48 @@ def get_toolset_tools(
     return ToolsetResolution(behavior=ToolsetValidationBehavior.BYPASS)
 
 
+def _build_agent_parent_and_display_maps(
+    known_agent_names: set[str],
+    agent_configs: dict[str, Path],
+    discovery: Discovery,
+) -> tuple[dict[str, set[str]], set[str]]:
+    """Load agent configs and return ``(agent_to_parents, display_names)``."""
+    loaded_configs: dict[str, dict[str, typing.Any]] = {}
+    for agent_name, config_path in agent_configs.items():
+        loaded = _load_config_dict(config_path)
+        if loaded is not None:
+            loaded_configs[agent_name] = loaded
+
+    resolve_agent_ref = _build_agent_ref_resolver(
+        known_agent_names, loaded_configs
+    )
+    agent_to_parents: dict[str, set[str]] = defaultdict(set)
+    for parent_name, agent_config in loaded_configs.items():
+        child_agents = (
+            agent_config.get("childAgents")
+            if "childAgents" in agent_config
+            else agent_config.get("child_agents")
+        )
+        if not isinstance(child_agents, list):
+            continue
+        for child_ref in child_agents:
+            child_name = resolve_agent_ref(child_ref)
+            if child_name:
+                agent_to_parents[child_name].add(parent_name)
+
+    display_names = {
+        discovery.dir_name_to_display(name) for name in known_agent_names
+    }
+    for agent_config in loaded_configs.values():
+        disp = agent_config.get("displayName") or agent_config.get(
+            "display_name"
+        )
+        if isinstance(disp, str) and disp.strip():
+            display_names.add(disp.strip())
+
+    return agent_to_parents, display_names
+
+
 def build_context(
     project_root: Path,
     config: LintConfig,
@@ -1634,47 +1743,17 @@ def build_context(
         for ts_name in toolsets:
             res = get_toolset_tools(app_root, ts_name)
             if res.behavior == ToolsetValidationBehavior.BYPASS:
-                # MCP/Connector toolset -> bypass validation of operation suffix
                 bypass_tool_prefixes.add(f"{ts_name}_")
             elif res.tools:
                 all_tool_names.update(res.tools)
 
-    # Discover agent configs to build parent-child map
     agent_configs = discovery.discover_agent_configs()
-    loaded_agent_configs: dict[str, dict[str, typing.Any]] = {}
-    for agent_name, config_path in agent_configs.items():
-        loaded = _load_config_dict(config_path)
-        if loaded is not None:
-            loaded_agent_configs[agent_name] = loaded
-
     known_agent_names = set(agents.keys()) | set(agent_configs.keys())
-    resolve_agent_ref = _build_agent_ref_resolver(
-        known_agent_names, loaded_agent_configs
+    agent_to_parents, all_agent_display_names = (
+        _build_agent_parent_and_display_maps(
+            known_agent_names, agent_configs, discovery
+        )
     )
-    agent_to_parents: dict[str, set[str]] = defaultdict(set)
-
-    for parent_name, agent_config in loaded_agent_configs.items():
-        child_agents = (
-            agent_config.get("childAgents")
-            if "childAgents" in agent_config
-            else agent_config.get("child_agents")
-        )
-        if not isinstance(child_agents, list):
-            continue
-        for child_ref in child_agents:
-            child_name = resolve_agent_ref(child_ref)
-            if child_name:
-                agent_to_parents[child_name].add(parent_name)
-
-    all_agent_display_names = {
-        discovery.dir_name_to_display(name) for name in known_agent_names
-    }
-    for agent_config in loaded_agent_configs.values():
-        disp = agent_config.get("displayName") or agent_config.get(
-            "display_name"
-        )
-        if isinstance(disp, str) and disp.strip():
-            all_agent_display_names.add(disp.strip())
 
     resolved_model = (
         model_override or config.model or discovery.discover_app_model()
@@ -1699,6 +1778,85 @@ def build_context(
     )
 
 
+def _resolve_emitted_result(
+    config: LintConfig,
+    rule_obj: Rule,
+    result: LintResult,
+    rel: str,
+    file_override: Severity | None,
+) -> LintResult | None:
+    """Apply ignore patterns and per-file severity overrides to a finding."""
+    effective_override = file_override
+    if result.file and result.file != rel:
+        if config.is_ignored(result.file):
+            return None
+        res_override = config.get_severity_override(rule_obj, result.file)
+        if res_override == Severity.OFF:
+            return None
+        if res_override is not None:
+            effective_override = res_override
+    if effective_override is not None:
+        result.severity = effective_override
+    return result
+
+
+def _lint_files(
+    rules: list[Rule],
+    files: dict[str, Path],
+    config: LintConfig,
+    context: LintContext,
+    report: LintReport,
+) -> None:
+    """Apply ``rules`` to a set of discovered files or directories."""
+    for _name, file_path in files.items():
+        rel = str(file_path.relative_to(context.project_root))
+        if config.is_ignored(rel):
+            continue
+        file_model = context.get_model_for_file(file_path)
+        if file_path.is_file():
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+        else:
+            content = ""
+        for rule_obj in rules:
+            if not rule_obj.is_applicable_for_model(file_model):
+                continue
+            override = config.get_severity_override(rule_obj, rel)
+            effective_sev = (
+                override if override is not None else rule_obj.default_severity
+            )
+            if effective_sev == Severity.OFF:
+                continue
+            for result in rule_obj.check(file_path, content, context):
+                resolved = _resolve_emitted_result(
+                    config, rule_obj, result, rel, override
+                )
+                if resolved is not None:
+                    report.add(resolved)
+
+
+def _build_target_files(
+    discovery: Discovery,
+    instruction_files: dict[str, Path],
+) -> dict[str, dict[str, Path]]:
+    """Collect target-keyed file maps for structure and schema rules."""
+    app_cfg = discovery.discover_app_config()
+    return {
+        "app_config": {"app": app_cfg} if app_cfg else {},
+        "instruction": instruction_files,
+        "agent_config": discovery.discover_agent_configs(),
+        "tool_config": discovery._discover_resource_dirs("tools"),
+        "toolset_config": discovery.discover_toolsets(),
+        "guardrail_config": discovery.discover_guardrails(),
+        "evaluation_config": discovery.discover_evaluations(),
+        "eval_expectation_config": (
+            discovery.discover_evaluation_expectations()
+        ),
+    }
+
+
 def run_rules(
     registry: RuleRegistry,
     config: LintConfig,
@@ -1711,48 +1869,14 @@ def run_rules(
 ) -> None:
     """Run lint rules against discovered files."""
 
-    def should_run(rule_obj: typing.Any) -> bool:
-        if specific_rules and rule_obj.id not in specific_rules:
-            return False
-        if model_only and not rule_obj.models:
-            return False
-        return not (categories and rule_obj.category not in categories)
-
-    def _lint_files(rules: list[Rule], files: dict[str, Path]) -> None:
-        """Apply rules to a set of discovered files or directories."""
-        for _name, file_path in files.items():
-            rel = str(file_path.relative_to(context.project_root))
-            if config.is_ignored(rel):
-                continue
-            file_model = context.get_model_for_file(file_path)
-            if file_path.is_file():
-                try:
-                    content = file_path.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
-                    continue
-            else:
-                content = ""
-            for rule_obj in rules:
-                if not rule_obj.is_applicable_for_model(file_model):
-                    continue
-                override = config.get_severity_override(rule_obj, rel)
-                effective_sev = (
-                    override
-                    if override is not None
-                    else rule_obj.default_severity
-                )
-                if effective_sev == Severity.OFF:
-                    continue
-                for result in rule_obj.check(file_path, content, context):
-                    if override is not None:
-                        result.severity = override
-                    report.add(result)
-
     def _get_rules(category: str) -> list[Rule]:
         if categories and category not in categories:
             return []
         return [
-            r for r in registry.rules_for_category(category) if should_run(r)
+            r
+            for r in registry.rules_for_category(category)
+            if (not specific_rules or r.id in specific_rules)
+            and (not model_only or bool(r.models))
         ]
 
     def _split_targeted(category: str) -> tuple[list[Rule], list[Rule]]:
@@ -1775,7 +1899,7 @@ def run_rules(
         instruction_files["global_instruction"] = global_inst
     inst_rules, inst_targeted = _split_targeted("instructions")
     target_dispatched.extend(inst_targeted)
-    _lint_files(inst_rules, instruction_files)
+    _lint_files(inst_rules, instruction_files, config, context, report)
 
     # Callbacks
     cb_files = {
@@ -1784,55 +1908,33 @@ def run_rules(
     }
     cb_rules, cb_targeted = _split_targeted("callbacks")
     target_dispatched.extend(cb_targeted)
-    _lint_files(cb_rules, cb_files)
+    _lint_files(cb_rules, cb_files, config, context, report)
 
     # Tools
     tool_rules, tool_targeted = _split_targeted("tools")
     target_dispatched.extend(tool_targeted)
-    _lint_files(tool_rules, discovery.discover_tools())
+    _lint_files(tool_rules, discovery.discover_tools(), config, context, report)
 
     # Evals
     eval_rules, eval_targeted = _split_targeted("evals")
     target_dispatched.extend(eval_targeted)
-    _lint_files(eval_rules, discovery.discover_evals())
+    _lint_files(eval_rules, discovery.discover_evals(), config, context, report)
 
     # Config — app config + agent configs
     config_rules, config_targeted = _split_targeted("config")
     target_dispatched.extend(config_targeted)
     if config_rules:
         app_cfg = discovery.discover_app_config()
-        config_files = {}
-        if app_cfg:
-            config_files["app"] = app_cfg
+        config_files = {"app": app_cfg} if app_cfg else {}
         config_files.update(discovery.discover_agent_configs())
-        _lint_files(config_rules, config_files)
+        _lint_files(config_rules, config_files, config, context, report)
 
     # Target-dispatched rules (structure, schema, and targeted rules from
     # any category, e.g. app_config-targeted tool/callback/config rules).
     target_dispatched.extend(_get_rules("structure"))
     target_dispatched.extend(_get_rules("schema"))
     if target_dispatched:
-        deployment_configs: dict[str, Path] = {}
-        for dep_path in discover_deployment_files(discovery.app_root, context):
-            deployment_configs.setdefault(dep_path.name, dep_path)
-
-        target_files = {
-            "app_config": {},
-            "instruction": instruction_files,
-            "agent_config": discovery.discover_agent_configs(),
-            "tool_config": discovery._discover_resource_dirs("tools"),
-            "toolset_config": discovery.discover_toolsets(),
-            "guardrail_config": discovery.discover_guardrails(),
-            "deployment_config": deployment_configs,
-            "evaluation_config": discovery.discover_evaluations(),
-            "eval_expectation_config": (
-                discovery.discover_evaluation_expectations()
-            ),
-        }
-        app_cfg = discovery.discover_app_config()
-        if app_cfg:
-            target_files["app_config"] = {"app": app_cfg}
-
+        target_files = _build_target_files(discovery, instruction_files)
         by_target: dict[str, list[Rule]] = {}
         for r in target_dispatched:
             by_target.setdefault(r.target, []).append(r)
@@ -1840,4 +1942,4 @@ def run_rules(
         for target_name, rules in by_target.items():
             files = target_files.get(target_name, {})
             if files:
-                _lint_files(rules, files)
+                _lint_files(rules, files, config, context, report)

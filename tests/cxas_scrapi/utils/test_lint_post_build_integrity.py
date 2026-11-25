@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for post-build integrity lint rules (T020-T021, A018, S018-S019)."""
+"""Unit tests for post-build integrity lint rules (T020-T021, A018, S018)."""
 
 from __future__ import annotations
 
@@ -26,10 +26,7 @@ from typing import Any
 import yaml
 
 from cxas_scrapi.utils.lint_rules.config import VoiceLanguageTtsParity
-from cxas_scrapi.utils.lint_rules.structure import (
-    AgentRefSelfOrOrphan,
-    DeploymentEntryAgentParity,
-)
+from cxas_scrapi.utils.lint_rules.structure import AgentRefSelfOrOrphan
 from cxas_scrapi.utils.lint_rules.tools import (
     OpenApiSchemaValidity,
     ToolToolsetEnvVarParity,
@@ -42,6 +39,8 @@ from cxas_scrapi.utils.linter import (
     Severity,
     build_context,
     build_registry,
+    discover_deployment_files,
+    is_voice_app,
     run_rules,
 )
 
@@ -91,30 +90,23 @@ def _run_specific(
 # ── Deployment YAML (.yml) discovery ───────────────────────────────────
 
 
-def test_run_rules_discovers_deployments_yml_and_skips_symlinks(
+def test_discover_deployment_files_finds_yml_and_skips_symlinks(
     tmp_path: Path,
 ) -> None:
     outside = tmp_path / "outside.yml"
-    outside.write_text("entryAgent: escaped_agent\n", encoding="utf-8")
+    outside.write_text("channel: VOICE_TELEPHONY\n", encoding="utf-8")
     app = tmp_path / "app"
     _write_json(app / "app.json", {"displayName": "app", "rootAgent": "root"})
-    _write_json(
-        app / "agents" / "root" / "root.json",
-        {"displayName": "root", "tools": ["end_session"]},
-    )
-    (app / "agents" / "root" / "instruction.txt").write_text(
-        "<role>Hi.</role>\n", encoding="utf-8"
-    )
     _write_yaml(
         app / "deployments" / "web.yml",
-        {"entryAgent": "missing_entry"},
+        {"channel": "WEB"},
     )
     os.symlink(outside, app / "deployments" / "escape.yml")
 
-    rep = _run_specific(app, {"S018"})
-    assert len(rep.results) == 1
-    assert rep.results[0].file == "deployments/web.yml"
-    assert "missing_entry" in rep.results[0].message
+    ctx = _ctx(app)
+    found = discover_deployment_files(app, ctx)
+    assert found == [app / "deployments" / "web.yml"]
+    assert is_voice_app(ctx) is False
 
 
 # ── T020: Tool / Toolset $env_var <-> environment.json parity ───────────
@@ -313,6 +305,7 @@ def test_a018_language_settings_and_voice_tts_parity(tmp_path: Path) -> None:
         {
             "name": "voice_app",
             "displayName": "Voice App",
+            "modelSettings": {"model": "gemini-composite-v1"},
             "languageSettings": {
                 "defaultLanguageCode": "fr-FR",
                 "supportedLanguageCodes": ["en-US", "de-DE"],
@@ -341,6 +334,7 @@ def test_a018_language_settings_and_voice_tts_parity(tmp_path: Path) -> None:
         {
             "name": "voice_app",
             "displayName": "Voice App",
+            "modelSettings": {"model": "gemini-composite-v1"},
             "languageSettings": {
                 "defaultLanguageCode": "en-US",
                 "supportedLanguageCodes": ["en-US", "de-DE"],
@@ -362,51 +356,10 @@ def test_a018_language_settings_and_voice_tts_parity(tmp_path: Path) -> None:
     )
 
 
-# ── S018: deployments/*.{yaml,yml} entryAgent existence & parity ────────
+# ── S018: {@AGENT:} Self-Transfer or Orphaned-Agent Target ──────────────
 
 
-def test_s018_deployment_entry_agent_missing_and_divergent(
-    tmp_path: Path,
-) -> None:
-    _write_json(
-        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root_agent"}
-    )
-    _write_json(
-        tmp_path / "agents" / "root_agent" / "root_agent.json",
-        {"displayName": "Root Agent", "childAgents": ["alt_entry"]},
-    )
-    _write_json(
-        tmp_path / "agents" / "alt_entry" / "alt_entry.json",
-        {"displayName": "Alt Entry"},
-    )
-    _write_yaml(
-        tmp_path / "deployments" / "ok.yaml", {"entryAgent": "Root Agent"}
-    )
-    _write_yaml(
-        tmp_path / "deployments" / "diverge.yml", {"entry_agent": "Alt Entry"}
-    )
-    _write_yaml(
-        tmp_path / "deployments" / "broken.yaml", {"entryAgent": "ghost_agent"}
-    )
-
-    rep = _run_specific(tmp_path, {"S018"})
-    errors = [r for r in rep.results if r.severity == Severity.ERROR]
-    warnings = [r for r in rep.results if r.severity == Severity.WARNING]
-    assert len(errors) == 1
-    assert errors[0].file == "deployments/broken.yaml"
-    assert "ghost_agent" in errors[0].message
-    assert len(warnings) == 1
-    assert warnings[0].file == "deployments/diverge.yml"
-    assert "diverges from app rootAgent" in warnings[0].message
-    assert DeploymentEntryAgentParity().check(
-        tmp_path / "app.json", "", _ctx(tmp_path)
-    )
-
-
-# ── S019: {@AGENT:} Self-Transfer or Orphaned-Agent Target ──────────────
-
-
-def test_s019_self_transfer_and_orphaned_agent_target(tmp_path: Path) -> None:
+def test_s018_self_transfer_and_orphaned_agent_target(tmp_path: Path) -> None:
     app_json = _write_json(
         tmp_path / "app.json", {"displayName": "app", "rootAgent": "root_agent"}
     )
@@ -439,7 +392,7 @@ def test_s019_self_transfer_and_orphaned_agent_target(tmp_path: Path) -> None:
     results = AgentRefSelfOrOrphan().check(app_json, "", _ctx(tmp_path))
     assert len(results) == 2
     assert all(
-        r.rule_id == "S019" and r.severity == Severity.WARNING for r in results
+        r.rule_id == "S018" and r.severity == Severity.WARNING for r in results
     )
     by_line = {r.line: r.message for r in results}
     assert "self-transfer" in by_line[2]
@@ -447,7 +400,7 @@ def test_s019_self_transfer_and_orphaned_agent_target(tmp_path: Path) -> None:
     assert all(r.file == "agents/root_agent/custom_prompt.txt" for r in results)
 
 
-# ── Sample_Support_Agent Regression Guard ───────────────────────────────
+# ── Example App Regression Guards ───────────────────────────────────────
 
 
 def test_sample_support_agent_clean_with_all_rules() -> None:
@@ -464,11 +417,46 @@ def test_sample_support_agent_clean_with_all_rules() -> None:
     discovery = Discovery(template_root / "cxas_app", template_root / "evals")
     ctx = build_context(template_root, cfg, discovery)
     registry = build_registry()
-    assert len(registry.all_rules()) == 118  # noqa: PLR2004
+    assert len(registry.all_rules()) == 117  # noqa: PLR2004
     report = LintReport()
     run_rules(registry, cfg, ctx, discovery, report)
     assert report.errors == []
     assert report.warnings == []
+
+
+def test_self_steering_sample_agent_zero_new_rule_findings() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    sample_root = (
+        repo_root
+        / ".agents"
+        / "skills"
+        / "cxas-self-steering-agent"
+        / "resources"
+        / "sample-agent"
+    )
+    cfg = LintConfig()
+    discovery = Discovery(sample_root, sample_root / "evals")
+    ctx = build_context(sample_root, cfg, discovery)
+    report = LintReport()
+    new_rules = {
+        "T017",
+        "T018",
+        "T019",
+        "T020",
+        "T021",
+        "A018",
+        "C024",
+        "S014",
+        "S015",
+        "S016",
+        "S017",
+        "S018",
+        "S019",
+    }
+    run_rules(
+        build_registry(), cfg, ctx, discovery, report, specific_rules=new_rules
+    )
+    assert report.results == [], [str(r) for r in report.results]
 
 
 # ── Edge-case & CLI integration coverage ────────────────────────────────
@@ -491,13 +479,12 @@ def test_category_dispatch_and_cxaslint_severity_overrides(
     _write_json(
         tmp_path / "agents" / "root" / "root.json", {"displayName": "root"}
     )
+    (tmp_path / "agents" / "root" / "instruction.txt").write_text(
+        "Loop {@AGENT: root}.\n", encoding="utf-8"
+    )
     _write_json(
         tmp_path / "tools" / "api" / "api.json",
         {"displayName": "api", "openApiTool": {"url": "$env_var"}},
-    )
-    _write_yaml(
-        tmp_path / "deployments" / "prod.yml",
-        {"environment": "prod", "entryAgent": "missing_agent"},
     )
     (tmp_path / "cxaslint.yaml").write_text(
         "rules:\n  T020: warning\n  S018: off\n", encoding="utf-8"
@@ -686,25 +673,7 @@ def test_a018_voice_missing_audio_empty_tts_and_digital_override(
     )
 
 
-def test_s018_omitted_entry_and_ces_resource_path(tmp_path: Path) -> None:
-    app_json = _write_json(
-        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
-    )
-    _write_json(
-        tmp_path / "agents" / "root" / "root.json",
-        {"name": "projects/p/locations/us/apps/a/agents/root-id"},
-    )
-    _write_yaml(tmp_path / "deployments" / "no_entry.yaml", {"channel": "WEB"})
-    _write_yaml(
-        tmp_path / "deployments" / "ces_ref.yaml",
-        {"entryAgent": "projects/p/locations/us/apps/a/agents/root-id"},
-    )
-    assert (
-        DeploymentEntryAgentParity().check(app_json, "", _ctx(tmp_path)) == []
-    )
-
-
-def test_s019_inline_instruction_and_traversal_fallback(tmp_path: Path) -> None:
+def test_s018_inline_instruction_and_traversal_fallback(tmp_path: Path) -> None:
     (tmp_path / "secret.txt").write_text("{@AGENT: root}\n", encoding="utf-8")
     app = tmp_path / "app"
     app_json = _write_json(
@@ -724,8 +693,44 @@ def test_s019_inline_instruction_and_traversal_fallback(tmp_path: Path) -> None:
     )
     res = AgentRefSelfOrOrphan().check(app_json, "", _ctx(app))
     assert len(res) == 1
+    assert res[0].rule_id == "S018"
     assert res[0].file == "agents/root/root.json"
     assert "self-transfer" in res[0].message
+
+
+def test_ignore_tools_glob_suppresses_t020_and_t021(tmp_path: Path) -> None:
+    """cxaslint.yaml ignore: ['tools/**'] suppresses T020/T021 findings."""
+    _write_json(
+        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
+    )
+    _write_json(
+        tmp_path / "agents" / "root" / "root.json", {"displayName": "root"}
+    )
+    _write_json(
+        tmp_path / "tools" / "bad_api" / "bad_api.json",
+        {"displayName": "bad_api", "openApiTool": {"url": "$env_var"}},
+    )
+    bad_schema = (
+        tmp_path
+        / "tools"
+        / "bad_api"
+        / "open_api_tool"
+        / "open_api_schema.yaml"
+    )
+    bad_schema.parent.mkdir(parents=True)
+    bad_schema.write_text("openapi: 3.0.0\npaths: {}\n", encoding="utf-8")
+
+    # Without ignore -> both T020 and T021 fire
+    rep_unfiltered = _run_specific(tmp_path, {"T020", "T021"})
+    assert {r.rule_id for r in rep_unfiltered.results} == {"T020", "T021"}
+
+    # With ignore: ["tools/**"] -> both T020 and T021 suppressed
+    (tmp_path / "cxaslint.yaml").write_text(
+        "ignore:\n  - 'tools/**'\n", encoding="utf-8"
+    )
+    cfg = LintConfig.load(tmp_path)
+    rep_ignored = _run_specific(tmp_path, {"T020", "T021"}, config=cfg)
+    assert rep_ignored.results == []
 
 
 def _run_cli_lint(*args: str) -> subprocess.CompletedProcess[str]:
@@ -760,7 +765,6 @@ def test_cli_list_rules_exit_codes_and_sample_template(tmp_path: Path) -> None:
         "S017",
         "S018",
         "S019",
-        "S020",
     ):
         assert rule_id in listed.stdout
 
