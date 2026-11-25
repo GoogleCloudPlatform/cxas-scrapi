@@ -19,7 +19,7 @@
   "beforeModelCallbacks": [
     {
       "pythonCode": "agents/Support_Agent/before_model_callbacks/before_model_callbacks_01/python_code.py",
-      "description": "Plays actions queued by set_next_agent_actions, sends the greeting on the first model call, and hides tools the current instruction doesn't mention."
+      "description": "Plays actions queued in next_agent_actions, sends the greeting on the first model call, and hides tools the current instruction doesn't mention."
     }
   ]
 }
