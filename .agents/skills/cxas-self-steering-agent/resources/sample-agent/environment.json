@@ -2,7 +2,7 @@
   "app": {
     "loggingSettings": {
       "bigqueryExportSettings": {
-        "project": "ces-deployment-dev"
+        "project": "$env_var"
       }
     }
   }

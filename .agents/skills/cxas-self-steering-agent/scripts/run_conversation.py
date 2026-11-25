@@ -22,7 +22,7 @@ application default credentials (gcloud auth application-default login).
 Example:
   python3 run_conversation.py \
     projects/my-project/locations/us/apps/0a1b2c3d-... \
-    "Hi." "Where is my order 1002?" "That's all, thanks."
+    "Hi." "Can you help me check my account status?" "That's all, thanks."
 """
 
 import argparse

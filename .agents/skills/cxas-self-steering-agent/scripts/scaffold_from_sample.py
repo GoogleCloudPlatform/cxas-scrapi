@@ -24,6 +24,7 @@ import argparse
 import json
 import pathlib
 import shutil
+import stat
 from typing import Any
 
 SAMPLE_AGENT = "Support_Agent"
@@ -79,7 +80,17 @@ def main() -> None:
                 f"{target} already exists. Pass --overwrite to replace it."
             )
         shutil.rmtree(target)
-    shutil.copytree(sample, target)
+    shutil.copytree(
+        sample,
+        target,
+        ignore=shutil.ignore_patterns("__init__.py", "__pycache__"),
+    )
+    for item in (target, *target.rglob("*")):
+        mode = item.stat().st_mode
+        if item.is_dir():
+            item.chmod(mode | stat.S_IRWXU)
+        else:
+            item.chmod(mode | stat.S_IRUSR | stat.S_IWUSR)
 
     app_path = target / "app.json"
     app = json.loads(app_path.read_text(encoding="utf-8"))
@@ -114,9 +125,9 @@ def main() -> None:
     print(f"  root agent:   {args.agent_name}")
     print(
         "Next: rewrite the instruction, GREETING and agent description,"
-        " update the router lists, replace the sample's order tools and"
-        " variables, then run cxas lint, check_tool_visibility.py and"
-        " run_locally.py before pushing."
+        " update the router lists, add your domain tools and variables,"
+        " then run cxas lint, check_tool_visibility.py and run_locally.py"
+        " before pushing."
     )
 
 
