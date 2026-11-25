@@ -464,11 +464,10 @@ class LintConfig:
 
         return config
 
-    def get_severity(self, rule_obj: Rule, file_path: str = "") -> Severity:
-        """Get the effective severity for a rule.
-
-        Considers per-file overrides.
-        """
+    def get_severity_override(
+        self, rule_obj: Rule, file_path: str = ""
+    ) -> Severity | None:
+        """Return an explicit configured severity override, or None."""
         for pattern, overrides in self.per_file.items():
             if fnmatch.fnmatch(file_path, pattern):  # noqa: SIM102
                 if rule_obj.id in overrides:
@@ -476,6 +475,17 @@ class LintConfig:
 
         if rule_obj.id in self.rules:
             return self.rules[rule_obj.id]
+
+        return None
+
+    def get_severity(self, rule_obj: Rule, file_path: str = "") -> Severity:
+        """Get the effective severity for a rule.
+
+        Considers per-file overrides.
+        """
+        override = self.get_severity_override(rule_obj, file_path)
+        if override is not None:
+            return override
 
         return rule_obj.default_severity
 
@@ -938,10 +948,6 @@ def run_rules(
             return False
         return not (categories and rule_obj.category not in categories)
 
-    def _get_severity(rule_obj: typing.Any, file_rel: typing.Any) -> typing.Any:
-        sev = config.get_severity(rule_obj, file_rel)
-        return sev if sev != Severity.OFF else None
-
     def _lint_files(rules: list[Rule], files: dict[str, Path]) -> None:
         """Apply rules to a set of discovered files or directories."""
         for _name, file_path in files.items():
@@ -949,15 +955,27 @@ def run_rules(
             if config.is_ignored(rel):
                 continue
             file_model = context.get_model_for_file(file_path)
-            content = file_path.read_text() if file_path.is_file() else ""
+            if file_path.is_file():
+                try:
+                    content = file_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+            else:
+                content = ""
             for rule_obj in rules:
                 if not rule_obj.is_applicable_for_model(file_model):
                     continue
-                sev = _get_severity(rule_obj, rel)
-                if sev is None:
+                override = config.get_severity_override(rule_obj, rel)
+                effective_sev = (
+                    override
+                    if override is not None
+                    else rule_obj.default_severity
+                )
+                if effective_sev == Severity.OFF:
                     continue
                 for result in rule_obj.check(file_path, content, context):
-                    result.severity = sev
+                    if override is not None:
+                        result.severity = override
                     report.add(result)
 
     def _get_rules(category: str) -> list[Rule]:
@@ -966,6 +984,15 @@ def run_rules(
         return [
             r for r in registry.rules_for_category(category) if should_run(r)
         ]
+
+    def _split_targeted(category: str) -> tuple[list[Rule], list[Rule]]:
+        cat_rules = _get_rules(category)
+        return (
+            [r for r in cat_rules if not r.target],
+            [r for r in cat_rules if r.target],
+        )
+
+    target_dispatched: list[Rule] = []
 
     # Instructions — instruction.txt files + global_instruction.txt
     instruction_files = {
@@ -976,23 +1003,32 @@ def run_rules(
     global_inst = discovery.discover_global_instruction()
     if global_inst:
         instruction_files["global_instruction"] = global_inst
-    _lint_files(_get_rules("instructions"), instruction_files)
+    inst_rules, inst_targeted = _split_targeted("instructions")
+    target_dispatched.extend(inst_targeted)
+    _lint_files(inst_rules, instruction_files)
 
     # Callbacks
     cb_files = {
         f"{agent}_{cb_type}_{cb_name}": code_path
         for agent, cb_type, cb_name, code_path in discovery.discover_callbacks()
     }
-    _lint_files(_get_rules("callbacks"), cb_files)
+    cb_rules, cb_targeted = _split_targeted("callbacks")
+    target_dispatched.extend(cb_targeted)
+    _lint_files(cb_rules, cb_files)
 
     # Tools
-    _lint_files(_get_rules("tools"), discovery.discover_tools())
+    tool_rules, tool_targeted = _split_targeted("tools")
+    target_dispatched.extend(tool_targeted)
+    _lint_files(tool_rules, discovery.discover_tools())
 
     # Evals
-    _lint_files(_get_rules("evals"), discovery.discover_evals())
+    eval_rules, eval_targeted = _split_targeted("evals")
+    target_dispatched.extend(eval_targeted)
+    _lint_files(eval_rules, discovery.discover_evals())
 
     # Config — app config + agent configs
-    config_rules = _get_rules("config")
+    config_rules, config_targeted = _split_targeted("config")
+    target_dispatched.extend(config_targeted)
     if config_rules:
         app_cfg = discovery.discover_app_config()
         config_files = {}
@@ -1001,9 +1037,10 @@ def run_rules(
         config_files.update(discovery.discover_agent_configs())
         _lint_files(config_rules, config_files)
 
-    # Target-dispatched rules (structure + schema categories)
-    # Rules with a ``target`` property get matched to discovered files.
-    target_dispatched = _get_rules("structure") + _get_rules("schema")
+    # Target-dispatched rules (structure, schema, and targeted rules from
+    # any category, e.g. app_config-targeted tool/callback/config rules).
+    target_dispatched.extend(_get_rules("structure"))
+    target_dispatched.extend(_get_rules("schema"))
     if target_dispatched:
         target_files = {
             "app_config": {},

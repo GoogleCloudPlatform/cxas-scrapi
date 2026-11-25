@@ -176,6 +176,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C012 | `after-model-unreturned-response` | Error | `after_model_callback` mutates or constructs `LlmResponse` without returning it |
     | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
     | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
+    | C025 | `shared-python-bundle-integrity` | Error | Validates `python_lib/` syntax and `CXAS_SHARED_BUNDLE` / `pythonEnvFiles` bundling |
 
     ---
 
@@ -250,6 +251,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     Invalid Python syntax means the callback file can't be loaded. The platform silently fails to register callbacks with syntax errors.
 
     *Fix:* Fix the syntax error. Run `python -m py_compile python_code.py` locally to check.
+
+    ---
+
+    **C025 — shared-python-bundle-integrity**
+
+    Validates shared Python modules under `python_lib/` and `pythonEnvFiles/content/` for UTF-8 readability and valid Python syntax, and ensures every callback/tool entrypoint that imports `python_lib.*` (excluding `if TYPE_CHECKING:` blocks) has either a well-formed `# === BEGIN CXAS_SHARED_BUNDLE` ... `# === END CXAS_SHARED_BUNDLE ===` block or matching modules in `pythonEnvFiles/content/` with a valid `pythonEnvFiles/pythonEnvFiles.yaml`.
+
+    *Triggers:* Syntax/UTF-8 error in `python_lib/` or `pythonEnvFiles/content/`, malformed `pythonEnvFiles/pythonEnvFiles.yaml`, truncated/mismatched `CXAS_SHARED_BUNDLE` markers, or a `python_lib.*` import with a missing `pythonEnvFiles` module or missing `python_lib/` (`Error`); unbundled `python_lib.*` import when local `python_lib/` exists (`Warning`).
+
+    *Fix:* Fix syntax errors or run `cxas build` / `cxas package` before deploying to CES.
 
 === "T — Tools"
 

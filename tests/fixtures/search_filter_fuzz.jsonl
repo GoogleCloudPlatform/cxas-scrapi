@@ -1,0 +1,26 @@
+{"input": "normal", "expected": "normal"}
+{"input": "brand_beta", "expected": "brand_beta"}
+{"input": "123", "expected": "123"}
+{"input": "with space", "expected": "with space"}
+{"input": "with\\backslash", "expected": "with\\\\backslash"}
+{"input": "with\"quote", "expected": "with\\\"quote"}
+{"input": "breakout\") OR brand: ANY(\"evil", "expected": "breakout\\\") OR brand: ANY(\\\"evil"}
+{"input": "breakout\") AND 1=1 --", "expected": "breakout\\\") AND 1=1 --"}
+{"input": "emoji😀", "expected": "emoji😀"}
+{"input": "äöüß", "expected": "äöüß"}
+{"input": "éèê", "expected": "éèê"}
+{"input": "日本語", "expected": "日本語"}
+{"input": "", "expected": ""}
+{"input": " ", "expected": " "}
+{"input": "a", "expected": "a"}
+{"input": "two\\\\backslashes", "expected": "two\\\\\\\\backslashes"}
+{"input": "\"quotes around\"", "expected": "\\\"quotes around\\\""}
+{"input": "'single quotes'", "expected": "'single quotes'"}
+{"input": "\"", "expected": "\\\""}
+{"input": "\\", "expected": "\\\\"}
+{"input": "\n", "error": "ValueError"}
+{"input": "\r", "error": "ValueError"}
+{"input": "\t", "error": "ValueError"}
+{"input": "\u0000", "error": "ValueError"}
+{"input": "\u001f", "error": "ValueError"}
+{"input": "\u007f", "error": "ValueError"}

@@ -27,8 +27,9 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from cxas_scrapi.core.apps import Apps
+from cxas_scrapi.core.apps import Apps, validate_zip_entry_name
 from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.python_bundler import strip_shared_bundles
 from cxas_scrapi.core.versions import Versions
 from cxas_scrapi.utils.env_vars import (
     collect_env_var_declaration_names,
@@ -36,8 +37,6 @@ from cxas_scrapi.utils.env_vars import (
     extract_env_variable_defaults,
     preserve_env_var_placeholders_on_pull,
     preserve_tool_and_toolset_env_vars_on_pull,
-    resolve_app_env_variables_in_dir,
-    resolve_tool_and_toolset_env_vars_in_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -171,6 +170,7 @@ def app_pull(args: argparse.Namespace) -> None:
         getattr(args, "overwrite", False),
         app_version=app_version,
         app_dir_name=getattr(args, "app_dir_name", None),
+        args=args,
     )
 
 
@@ -181,6 +181,7 @@ def _app_pull(
     overwrite: bool = False,
     app_version: str | None = None,
     app_dir_name: str | None = None,
+    args: argparse.Namespace | None = None,
 ) -> None:
     """Helper to pull an app from CXAS."""
     try:
@@ -210,14 +211,14 @@ def _app_pull(
         lro = apps_client.export_app(app_name=app_name, app_version=app_version)
         response = lro.result()
 
-        # Determine the target directory
-        if not os.path.exists(target_dir):
-            os.makedirs(target_dir)
-
-        # Extract content to target directory.
+        # Validate archive entries and extract into a staging directory first
+        # so Zip-Slip or bundle-strip failures never overwrite local files.
         top_dir = ""
         with zipfile.ZipFile(io.BytesIO(response.app_content)) as z:
             export_members = list(z.namelist())
+            for info in z.infolist():
+                validate_zip_entry_name(info.filename)
+
             if export_members:
                 first_part = export_members[0].split("/")[0]
                 has_top_dir = (
@@ -260,34 +261,85 @@ def _app_pull(
                     prev_env_defaults = {}
                     prev_env_data = None
 
-            if dest_app_root is not None:
-                os.makedirs(dest_app_root, exist_ok=True)
-                abs_dest_root = os.path.abspath(dest_app_root)
-                prefix = f"{top_dir}/" if top_dir else ""
-                for info in z.infolist():
-                    rel_name = info.filename
-                    if top_dir:
-                        if rel_name in (top_dir, prefix):
+            with tempfile.TemporaryDirectory() as stage_dir:
+                if dest_app_root is not None:
+                    staged_app_root = os.path.join(stage_dir, "app")
+                    os.makedirs(staged_app_root, exist_ok=True)
+                    abs_stage_root = os.path.abspath(staged_app_root)
+                    prefix = f"{top_dir}/" if top_dir else ""
+                    for info in z.infolist():
+                        rel_name = info.filename
+                        if top_dir:
+                            if rel_name in (top_dir, prefix):
+                                continue
+                            if rel_name.startswith(prefix):
+                                rel_name = rel_name[len(prefix) :]
+                        if not rel_name:
                             continue
-                        if rel_name.startswith(prefix):
-                            rel_name = rel_name[len(prefix) :]
-                    if not rel_name:
-                        continue
-                    target_member_path = os.path.abspath(
-                        os.path.join(dest_app_root, rel_name)
-                    )
-                    if (
-                        os.path.commonpath([abs_dest_root, target_member_path])
-                        != abs_dest_root
-                    ):
-                        raise ValueError(
-                            "Path traversal detected in archive entry: "
-                            f"{info.filename}"
+                        target_member_path = os.path.abspath(
+                            os.path.join(staged_app_root, rel_name)
                         )
-                    info.filename = rel_name
-                    z.extract(info, path=dest_app_root)
-            else:
-                z.extractall(target_dir)
+                        if (
+                            os.path.commonpath(
+                                [abs_stage_root, target_member_path]
+                            )
+                            != abs_stage_root
+                        ):
+                            raise ValueError(
+                                "Path traversal detected in archive entry: "
+                                f"{info.filename}"
+                            )
+                        info.filename = rel_name
+                        z.extract(info, path=staged_app_root)
+                else:
+                    abs_stage_dir = os.path.abspath(stage_dir)
+                    for info in z.infolist():
+                        target_member_path = os.path.abspath(
+                            os.path.join(stage_dir, info.filename)
+                        )
+                        if (
+                            os.path.commonpath(
+                                [abs_stage_dir, target_member_path]
+                            )
+                            != abs_stage_dir
+                        ):
+                            raise ValueError(
+                                "Path traversal detected in archive entry: "
+                                f"{info.filename}"
+                            )
+                    z.extractall(stage_dir)
+                    staged_app_root = (
+                        os.path.join(stage_dir, top_dir)
+                        if top_dir
+                        else stage_dir
+                    )
+
+                force_strip = getattr(args, "force", False) if args else False
+                has_local_lib = os.path.isdir(
+                    os.path.join(pulled_app_root, "python_lib")
+                ) or os.path.isdir(
+                    os.path.join(
+                        pulled_app_root,
+                        "pythonEnvFiles",
+                        "content",
+                        "python_lib",
+                    )
+                )
+                strip_shared_bundles(
+                    Path(staged_app_root),
+                    local_source_dir=(
+                        Path(pulled_app_root)
+                        if has_local_lib
+                        else Path(staged_app_root)
+                    ),
+                    force=force_strip,
+                )
+
+                os.makedirs(target_dir, exist_ok=True)
+                os.makedirs(pulled_app_root, exist_ok=True)
+                shutil.copytree(
+                    staged_app_root, pulled_app_root, dirs_exist_ok=True
+                )
 
         # Handle overwrite logic if requested. Pruning is scoped to a dedicated
         # app folder (the archive's top-level folder or --app-dir-name) so a
@@ -445,107 +497,67 @@ def _app_push(
     args: argparse.Namespace | None = None,
 ) -> str | None:
     """Helper to push an app to CXAS."""
-    temp_dir = tempfile.mkdtemp()
-    temp_zip = tempfile.mktemp(suffix=".zip")
-    inner_dir = os.path.join(temp_dir, "agent")
-    os.makedirs(inner_dir)
+    from cxas_scrapi.core.packaging import package_app_archive  # noqa: PLC0415
 
-    valid_roots = [
-        "app.yaml",
-        "app.json",
-        "global_instruction.txt",
-        "environment.json",
-        "agents",
-        "tools",
-        "examples",
-        "guardrails",
-        "toolsets",
-        "evaluations",
-        "evaluationDatasets",
-        "evaluationExpectations",
-        ".github/workflows",
-    ]
+    native_python_env = (
+        getattr(args, "native_python_env", False) if args else False
+    )
 
     try:
-        for item in valid_roots:
-            src_path = os.path.join(app_dir, item)
-            if os.path.exists(src_path):
-                dst_path = os.path.join(inner_dir, item)
-                os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-                if os.path.isdir(src_path):
-                    shutil.copytree(src_path, dst_path)
-                else:
-                    shutil.copy2(src_path, dst_path)
-
         # Inject explicit env_file if provided
-        env_file_missing = False
+        env_path: Path | None = None
         if env_file:
             if os.path.exists(env_file):
-                dst_path = os.path.join(inner_dir, "environment.json")
-                shutil.copy2(env_file, dst_path)
+                env_path = Path(env_file)
                 print(
                     f"Included custom environment file "
                     f"from {env_file} as environment.json"
                 )
             else:
-                env_file_missing = True
                 print(
                     f"Warning: Custom environment file "
                     f"'{env_file}' not found. Skipping."
                 )
+                from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
+                    has_bool_env_var_placeholders,
+                )
 
-        from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
-            has_bool_env_var_placeholders,
-            resolve_env_booleans_in_dir,
-        )
+                if (
+                    collect_env_var_declaration_names(app_dir)
+                    or collect_tool_and_toolset_env_var_placeholders(app_dir)
+                    or has_bool_env_var_placeholders(app_dir)
+                ):
+                    raise FileNotFoundError(
+                        f"Custom environment file '{env_file}' not found; "
+                        "required to resolve '$env_var' placeholders"
+                    )
 
-        if env_file_missing and (
-            collect_env_var_declaration_names(inner_dir)
-            or collect_tool_and_toolset_env_var_placeholders(inner_dir)
-            or has_bool_env_var_placeholders(inner_dir)
-        ):
-            raise FileNotFoundError(
-                f"Custom environment file '{env_file}' not found; required to "
-                "resolve '$env_var' placeholders"
+        resolved_vars: list[str] = []
+        resolved_resources: list[str] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_zip = Path(temp_dir) / "app.zip"
+            package_app_archive(
+                Path(app_dir),
+                temp_zip,
+                env_path,
+                native_python_env=native_python_env,
+                wrapper_dir="agent",
+                resolved_env_vars=resolved_vars,
+                resolved_tool_env_vars=resolved_resources,
             )
-
-        resolved_vars = resolve_app_env_variables_in_dir(inner_dir)
-        if resolved_vars:
-            print(
-                f"Resolved {len(resolved_vars)} '$env_var' variable "
-                f"default(s) from environment.json: {', '.join(resolved_vars)}"
-            )
-
-        # Resolve boolean $env_var placeholders and boolean environment
-        # overrides in the staged inner_dir before creating the zip archive.
-        resolve_env_booleans_in_dir(inner_dir)
-
-        resolved_resources = resolve_tool_and_toolset_env_vars_in_dir(inner_dir)
-        if resolved_resources:
-            print(
-                f"Resolved {len(resolved_resources)} '$env_var' "
-                "tool/toolset field(s) from environment.json: "
-                f"{', '.join(resolved_resources)}"
-            )
-
-        # ZIP does not support timestamps before 1980.
-        # Touch files and directories in temp_dir with timestamps before 1980.
-        limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
-        for root, dirs, files in os.walk(temp_dir):
-            for name in files:
-                path = os.path.join(root, name)
-                if os.path.getmtime(path) < limit_time:
-                    os.utime(path, None)
-            for name in dirs:
-                path = os.path.join(root, name)
-                if os.path.getmtime(path) < limit_time:
-                    os.utime(path, None)
-
-        # Zip the filtered agent directory
-        shutil.make_archive(temp_zip.replace(".zip", ""), "zip", temp_dir)
-
-        with open(temp_zip, "rb") as f:
-            app_content = f.read()
+            if resolved_vars:
+                print(
+                    f"Resolved {len(resolved_vars)} '$env_var' variable "
+                    f"default(s) from environment.json: "
+                    f"{', '.join(resolved_vars)}"
+                )
+            if resolved_resources:
+                print(
+                    f"Resolved {len(resolved_resources)} '$env_var' "
+                    "tool/toolset field(s) from environment.json: "
+                    f"{', '.join(resolved_resources)}"
+                )
+            app_content = temp_zip.read_bytes()
 
         # If no target is specified, the SDK creates a new app with the
         # provided display_name.
@@ -597,11 +609,6 @@ def _app_push(
     except Exception as e:
         print(f"Failed to push app: {e}")
         sys.exit(1)
-    finally:
-        if os.path.exists(temp_zip):
-            os.remove(temp_zip)
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def app_create(args: argparse.Namespace) -> None:
