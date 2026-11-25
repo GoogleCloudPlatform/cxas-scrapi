@@ -1516,16 +1516,45 @@ def _dict_lookup_variants(
     return False, None
 
 
-def _contains_resolved_leaf(obj: typing.Any, leaf_variants: set[str]) -> bool:
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k in leaf_variants and _is_resolved_env_value(v):
-                return True
-            if _contains_resolved_leaf(v, leaf_variants):
-                return True
-    elif isinstance(obj, list):
-        return any(_contains_resolved_leaf(i, leaf_variants) for i in obj)
-    return False
+_TOOL_ENV_WRAPPER_KEYS: frozenset[str] = frozenset(
+    {
+        "openApiTool",
+        "open_api_tool",
+        "openApiToolset",
+        "open_api_toolset",
+        "dataStoreTool",
+        "data_store_tool",
+        "pythonFunction",
+        "python_function",
+        "connectorTool",
+        "connector_tool",
+        "mcpTool",
+        "mcp_tool",
+    }
+)
+
+
+def _traverse_env_path(
+    entry: dict[str, typing.Any], path: tuple[str, ...]
+) -> tuple[bool, typing.Any]:
+    """Traverse ``path`` in ``entry``, returning ``(found, value)``."""
+    if not path:
+        return False, None
+    cur: typing.Any = entry
+    for seg in path:
+        if isinstance(cur, dict):
+            ok, cur = _dict_lookup_variants(cur, seg)
+            if not ok:
+                return False, None
+        elif isinstance(cur, list) and seg.isdigit():
+            idx = int(seg)
+            if 0 <= idx < len(cur):
+                cur = cur[idx]
+            else:
+                return False, None
+        else:
+            return False, None
+    return True, cur
 
 
 def _env_entry_resolves_placeholder(
@@ -1535,34 +1564,18 @@ def _env_entry_resolves_placeholder(
     if not isinstance(entry, dict) or not entry:
         return False
 
-    # 1. Exact nested path traversal (allowing camelCase/snake_case keys)
-    cur: typing.Any = entry
-    matched_exact = True
-    for seg in path:
-        if isinstance(cur, dict):
-            ok, cur = _dict_lookup_variants(cur, seg)
-            if not ok:
-                matched_exact = False
-                break
-        elif isinstance(cur, list) and seg.isdigit():
-            idx = int(seg)
-            if 0 <= idx < len(cur):
-                cur = cur[idx]
-            else:
-                matched_exact = False
-                break
-        else:
-            matched_exact = False
-            break
-    if matched_exact and _is_resolved_env_value(cur):
-        return True
+    # 1. Exact nested path match — if key exists, judge ONLY its value
+    found, cur = _traverse_env_path(entry, path)
+    if found:
+        return _is_resolved_env_value(cur)
 
-    # 2. Leaf key lookup anywhere inside entry (handles flat {"url": ...}, etc.)
-    non_index_segs = [s for s in path if not s.isdigit()]
-    if non_index_segs:
-        leaf = non_index_segs[-1]
-        if _contains_resolved_leaf(entry, _camel_snake_variants(leaf)):
-            return True
+    # 2. CES shorthand stripping top-level tool/toolset wrapper
+    #    (e.g. openApiTool.url -> entry["url"],
+    #     openApiTool.headers.X-Api-Key -> entry["headers"]["X-Api-Key"])
+    if len(path) >= 2 and path[0] in _TOOL_ENV_WRAPPER_KEYS:  # noqa: PLR2004
+        found_short, cur_short = _traverse_env_path(entry, path[1:])
+        if found_short:
+            return _is_resolved_env_value(cur_short)
 
     return False
 
@@ -1757,7 +1770,7 @@ def _is_valid_openapi_server_url(url: typing.Any) -> bool:
         return True
     if stripped.startswith("/"):
         return True
-    if stripped.startswith(("http://", "https://")):
+    if stripped.lower().startswith(("http://", "https://")):
         rest = stripped.split("://", 1)[1]
         authority = rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
         return bool(authority) and not authority.startswith((".", ":"))

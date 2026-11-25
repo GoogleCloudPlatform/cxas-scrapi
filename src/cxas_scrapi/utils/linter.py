@@ -370,66 +370,39 @@ def is_voice_app(context: LintContext) -> bool:
     TTS settings are not misclassified as voice apps.
     """
     saw_deployment_channel = False
-    seen_roots: set[Path] = set()
-    for root in (context.app_root, context.app_dir, context.project_root):
-        if root is None or root in seen_roots:
+    for dep_file in discover_deployment_files(context.app_root, context):
+        data = _load_config_dict(dep_file)
+        if data is None:
             continue
-        seen_roots.add(root)
-        deps_dir = root / "deployments"
-        if not deps_dir.is_dir():
-            continue
-        dep_files = sorted({*deps_dir.glob("*.yaml"), *deps_dir.glob("*.yml")})
-        for dep_file in dep_files:
-            try:
-                data = yaml.safe_load(dep_file.read_text("utf-8"))
-            except (yaml.YAMLError, OSError, UnicodeDecodeError):
-                continue
-            if not isinstance(data, dict):
-                continue
 
-            candidates: list[object] = [data.get("channel")]
-            for cp_key in ("channelProfile", "channel_profile"):
-                cp = data.get(cp_key)
-                if isinstance(cp, dict):
-                    candidates.append(cp.get("channelType"))
-                    candidates.append(cp.get("channel_type"))
+        candidates: list[object] = [data.get("channel")]
+        for cp_key in ("channelProfile", "channel_profile"):
+            cp = data.get(cp_key)
+            if isinstance(cp, dict):
+                candidates.append(cp.get("channelType"))
+                candidates.append(cp.get("channel_type"))
 
-            for raw in candidates:
-                if isinstance(raw, str) and raw.strip():
-                    saw_deployment_channel = True
-                    if raw.strip().upper() in VOICE_CHANNEL_TYPES:
-                        return True
+        for raw in candidates:
+            if isinstance(raw, str) and raw.strip():
+                saw_deployment_channel = True
+                if raw.strip().upper() in VOICE_CHANNEL_TYPES:
+                    return True
 
     if saw_deployment_channel:
         return False
 
     app_root = context.app_root or context.app_dir
     if app_root is not None:
-        app_json = app_root / "app.json"
-        if app_json.is_file():
-            try:
-                data = json.loads(app_json.read_text("utf-8"))
-                if isinstance(data, dict) and (
+        for cfg_name in _APP_CONFIG_NAMES:
+            app_cfg = app_root / cfg_name
+            if app_cfg.is_file() and not app_cfg.is_symlink():
+                data = _load_config_dict(app_cfg)
+                if data is not None and (
                     data.get("audioProcessingConfig")
                     or data.get("audio_processing_config")
                 ):
                     return True
-            except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-                pass
-        else:
-            for yaml_name in ("app.yaml", "app.yml"):
-                app_yaml = app_root / yaml_name
-                if app_yaml.is_file():
-                    try:
-                        data = yaml.safe_load(app_yaml.read_text("utf-8"))
-                        if isinstance(data, dict) and (
-                            data.get("audioProcessingConfig")
-                            or data.get("audio_processing_config")
-                        ):
-                            return True
-                    except (yaml.YAMLError, OSError, UnicodeDecodeError):
-                        pass
-                    break
+                break
 
     return False
 

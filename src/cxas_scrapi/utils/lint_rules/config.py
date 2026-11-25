@@ -1292,38 +1292,44 @@ class VoiceLanguageTtsParity(Rule):
             audio_cfg = data.get("audioProcessingConfig") or data.get(
                 "audio_processing_config"
             )
-            if isinstance(audio_cfg, dict):
-                tts_cfgs = (
+            tts_cfgs = (
+                (
                     audio_cfg.get("synthesizeSpeechConfigs")
                     if "synthesizeSpeechConfigs" in audio_cfg
                     else audio_cfg.get("synthesize_speech_configs")
                 )
-                tts_keys_lower = (
-                    {
-                        k.strip().lower()
-                        for k in tts_cfgs
-                        if isinstance(k, str) and k.strip()
-                    }
-                    if isinstance(tts_cfgs, dict)
-                    else set()
-                )
-                for lang in supported:
-                    if lang.lower() not in tts_keys_lower:
-                        results.append(
-                            self.make_result(
-                                file=rel,
-                                severity=Severity.WARNING,
-                                message=(
-                                    f"Voice app language '{lang}' is missing "
-                                    "an entry in audioProcessingConfig."
-                                    "synthesizeSpeechConfigs."
-                                ),
-                                fix=(
-                                    f"Add a '{lang}' voice config under "
-                                    "audioProcessingConfig."
-                                    "synthesizeSpeechConfigs."
-                                ),
-                            )
+                if isinstance(audio_cfg, dict)
+                else None
+            )
+            tts_keys_lower = (
+                {
+                    k.strip().lower()
+                    for k, v in tts_cfgs.items()
+                    if isinstance(k, str)
+                    and k.strip()
+                    and isinstance(v, dict)
+                    and bool(v)
+                }
+                if isinstance(tts_cfgs, dict)
+                else set()
+            )
+            for lang in supported:
+                if lang.lower() not in tts_keys_lower:
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            severity=Severity.WARNING,
+                            message=(
+                                f"Voice app language '{lang}' is missing "
+                                "a valid entry in audioProcessingConfig."
+                                "synthesizeSpeechConfigs."
+                            ),
+                            fix=(
+                                f"Add a '{lang}' voice config under "
+                                "audioProcessingConfig."
+                                "synthesizeSpeechConfigs."
+                            ),
                         )
+                    )
 
         return results
