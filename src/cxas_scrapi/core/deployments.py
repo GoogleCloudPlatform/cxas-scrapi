@@ -62,22 +62,22 @@ class Deployments(Apps):
         "very_high",
     )
 
-    _API_FALLBACK_CHANNEL_TYPES = frozenset({"WHATSAPP", "INSTAGRAM"})
-
     @classmethod
     def _resolve_proto_channel_type(cls, channel_type: ChannelType) -> Any:
-        """Map SDK ChannelType to CES protobuf ChannelProfile.ChannelType.
-
-        Messaging channels not yet present on the installed ces_v1beta
-        protobuf enum fall back to ``API`` until the GAPIC enum adds them.
-        """
+        """Map SDK ChannelType to CES protobuf ChannelProfile.ChannelType."""
         proto_enum = types.common.ChannelProfile.ChannelType
-        try:
-            return getattr(proto_enum, channel_type.value)
-        except AttributeError:
-            if channel_type.value in cls._API_FALLBACK_CHANNEL_TYPES:
-                return proto_enum.API
-            raise
+        resolved = getattr(proto_enum, channel_type.value, None)
+        if resolved is None:
+            supported = sorted(
+                member.name for member in proto_enum if member.name != "UNKNOWN"
+            )
+            raise ValueError(
+                f"ChannelType '{channel_type.value}' is not supported by the "
+                "installed CES protobuf ChannelProfile.ChannelType enum "
+                f"(supported: {supported}). Pass ChannelType.API explicitly "
+                "for API-backed messaging channels."
+            )
+        return resolved
 
     def __init__(
         self,

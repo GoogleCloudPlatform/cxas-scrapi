@@ -191,6 +191,16 @@ def test_load_manifests_validation_errors(tmp_path: Path) -> None:
     with pytest.raises(ManifestError, match="invalid YAML"):
         load_manifests(bad_yaml)
 
+    # Non-dict templates in env YAML must raise ManifestError (not TypeError)
+    bad_tpl = tmp_path / "bad_tpl"
+    _write_minimal_brand(bad_tpl)
+    (bad_tpl / "envs").mkdir()
+    (bad_tpl / "envs" / "prod.yaml").write_text(
+        "environment: prod\ntemplates: 123\n", encoding="utf-8"
+    )
+    with pytest.raises(ManifestError):
+        load_manifests(bad_tpl)
+
 
 def test_manifests_lookup_errors(tmp_path: Path) -> None:
     _write_minimal_brand(tmp_path)
@@ -202,3 +212,53 @@ def test_manifests_lookup_errors(tmp_path: Path) -> None:
 
     catalog = ContentBlockCatalog()
     assert catalog.blocks_for("brand_1", "US", "en") is None
+
+
+def test_yaml12_preserves_unquoted_country_no_and_booleans(
+    tmp_path: Path,
+) -> None:
+    brand_dir = tmp_path / "brands" / "nordic_brand"
+    brand_dir.mkdir(parents=True)
+    (brand_dir / "identity.yaml").write_text(
+        "brand_id: nordic_brand\n"
+        "display_name: Nordic Brand\n"
+        "languages: [en, no]\n",
+        encoding="utf-8",
+    )
+    (brand_dir / "channel_policy.yaml").write_text(
+        "brand_id: nordic_brand\n"
+        "supported_countries: [NO, US]\n"
+        "channels:\n"
+        "  WEB:\n"
+        "    deeplink_widgets: true\n"
+        "  API:\n"
+        "    deeplink_widgets: false\n",
+        encoding="utf-8",
+    )
+    envs_dir = tmp_path / "envs"
+    envs_dir.mkdir()
+    (envs_dir / "prod.yaml").write_text(
+        "environment: prod\n"
+        "overrides:\n"
+        "  enabled: true\n"
+        "  disabled: false\n"
+        "  country_code: NO\n",
+        encoding="utf-8",
+    )
+
+    manifests = load_manifests(tmp_path)
+    brand = manifests.brand("nordic_brand")
+    assert brand.languages == ["en", "no"]
+    assert brand.tts_voices == {}
+
+    policy = manifests.policy("nordic_brand")
+    assert policy.supported_countries == ["NO", "US"]
+    assert policy.channels["WEB"].deeplink_widgets is True
+    assert policy.channels["API"].deeplink_widgets is False
+
+    env = manifests.env("prod")
+    assert env.overrides == {
+        "enabled": True,
+        "disabled": False,
+        "country_code": "NO",
+    }

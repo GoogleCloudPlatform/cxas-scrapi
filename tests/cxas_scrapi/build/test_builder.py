@@ -16,9 +16,11 @@
 
 from __future__ import annotations
 
+import ast
 import filecmp
 import hashlib
 import json
+import os
 import zipfile
 from typing import TYPE_CHECKING
 
@@ -31,6 +33,7 @@ from cxas_scrapi.build.builder import (
     build_app,
     deep_merge,
 )
+from cxas_scrapi.build.manifests import ManifestError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,6 +84,12 @@ def _setup_sample_workspace(tmp_path: Path) -> tuple[Path, Path]:
     a2_dir.mkdir()
     (a2_dir / "pruned_agent_dir.json").write_text(
         json.dumps({"displayName": "pruned_agent_display"}), encoding="utf-8"
+    )
+
+    a3_dir = agents_dir / "custom_entry"
+    a3_dir.mkdir()
+    (a3_dir / "custom_entry.json").write_text(
+        json.dumps({"displayName": "custom_entry"}), encoding="utf-8"
     )
 
     tools_dir = core_dir / "tools"
@@ -221,9 +230,12 @@ def test_build_all_pruning_tokens_deployments_and_determinism(
     assert not (b1_voice / "tools" / "secret_tool_dir").exists()
     assert (b1_voice / "tools" / "active_tool").exists()
 
-    # app.json checks: unpruned rootAgent preserved, TTS & multilingual set
+    # app.json checks: configured entry_agent aligns rootAgent with entryAgent
     a_json = json.loads((b1_voice / "app.json").read_text("utf-8"))
-    assert a_json["rootAgent"] == "default_agent"
+    assert a_json["rootAgent"] == "custom_entry"
+    b1_digital = out_root1 / "brand_1" / "digital_app"
+    digital_app = json.loads((b1_digital / "app.json").read_text("utf-8"))
+    assert digital_app["rootAgent"] == "default_agent"
     assert (
         a_json["audioProcessingConfig"]["synthesizeSpeechConfigs"]["en"][
             "voice"
@@ -693,3 +705,687 @@ def test_yaml_pruning_and_app_yaml_settings(tmp_path: Path) -> None:
     assert app_cfg["languageSettings"]["defaultLanguageCode"] == "en"
     assert app_cfg["languageSettings"]["supportedLanguageCodes"] == ["en", "es"]
     assert app_cfg["languageSettings"]["enableMultilingualSupport"] is True
+
+
+def test_entry_agent_validation_and_root_agent_alignment(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    pol_path = manifests_dir / "brands" / "brand_1" / "channel_policy.yaml"
+
+    # Missing entry_agent fails fast instead of emitting a broken rootAgent.
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["channels"]["VOICE_TELEPHONY"]["entry_agent"] = "nonexistent_agent"
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+    with pytest.raises(BuildError, match="does not match any surviving agent"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_missing_entry",
+        )
+
+    # Disabled entry_agent fails fast.
+    pol["channels"]["VOICE_TELEPHONY"]["entry_agent"] = "pruned_agent_display"
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+    with pytest.raises(BuildError, match="cannot also be in disabled_agents"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_disabled_entry",
+        )
+
+    # Full CES resource-path entry_agent matching a surviving agent succeeds
+    # and syncs both app.json rootAgent and deployments/<channel>.yaml.
+    full_entry = "projects/p/locations/l/apps/a/agents/custom_entry"
+    pol["channels"]["VOICE_TELEPHONY"]["entry_agent"] = full_entry
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+    out_full = tmp_path / "out_full_entry"
+    build_app(
+        core_dir, manifests_dir, "brand_1", "VOICE_TELEPHONY", "prod", out_full
+    )
+    app_cfg = json.loads((out_full / "app.json").read_text("utf-8"))
+    dep_cfg = yaml.safe_load(
+        (out_full / "deployments" / "voice-telephony.yaml").read_text("utf-8")
+    )
+    assert app_cfg["rootAgent"] == full_entry
+    assert dep_cfg["entryAgent"] == full_entry
+
+    # Pruned rootAgent (including resource-path form) without entry_agent fails.
+    pol["channels"]["VOICE_TELEPHONY"].pop("entry_agent")
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+    for pruned_ref in (
+        "pruned_agent_dir",
+        "agents/pruned_agent_dir",
+        "projects/p/locations/l/apps/a/agents/pruned_agent_dir",
+    ):
+        (core_dir / "app.json").write_text(
+            json.dumps({"rootAgent": pruned_ref}), encoding="utf-8"
+        )
+        with pytest.raises(BuildError, match=r"(?i)rootAgent|entry_agent"):
+            build_app(
+                core_dir,
+                manifests_dir,
+                "brand_1",
+                "VOICE_TELEPHONY",
+                "prod",
+                tmp_path / "out_pruned_root",
+            )
+
+
+def test_nested_and_full_resource_path_pruning_across_json_and_yaml(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    (core_dir / "agents" / "default_agent" / "default_agent.json").write_text(
+        json.dumps(
+            {
+                "displayName": "default_agent",
+                "childAgents": [
+                    "agents/pruned_agent_dir",
+                    "projects/p/locations/l/apps/a/agents/pruned_agent_dir",
+                    {
+                        "name": "projects/p/locations/l/apps/a/agents/pruned_agent_dir"
+                    },
+                    {"displayName": "pruned_agent_display"},
+                    "custom_entry",
+                ],
+                "tools": [
+                    "tools/secret_tool_dir",
+                    "projects/p/locations/l/apps/a/tools/secret_tool_dir",
+                    {"name": "tools/secret_tool_dir"},
+                    "active_tool",
+                ],
+                "nested": {
+                    "items": [
+                        {
+                            "childAgents": [
+                                "agents/pruned_agent_dir",
+                                "custom_entry",
+                            ],
+                            "tools": {
+                                "projects/p/locations/l/apps/a/tools/secret_tool_dir": {
+                                    "enabled": True
+                                },
+                                "active_tool": {"enabled": True},
+                            },
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (core_dir / "agents" / "default_agent" / "nested_refs.yaml").write_text(
+        "wrapper:\n"
+        "  childAgents:\n"
+        "    - projects/p/locations/l/apps/a/agents/pruned_agent_dir\n"
+        "    - name: agents/pruned_agent_dir\n"
+        "    - custom_entry\n"
+        "  tools:\n"
+        "    - tools/secret_tool_dir\n"
+        "    - active_tool\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_nested_prune"
+    build_app(
+        core_dir, manifests_dir, "brand_1", "VOICE_TELEPHONY", "prod", out_dir
+    )
+
+    agent_json = json.loads(
+        (out_dir / "agents" / "default_agent" / "default_agent.json").read_text(
+            "utf-8"
+        )
+    )
+    assert agent_json["childAgents"] == ["custom_entry"]
+    assert agent_json["tools"] == ["active_tool"]
+    nested_item = agent_json["nested"]["items"][0]
+    assert nested_item["childAgents"] == ["custom_entry"]
+    assert nested_item["tools"] == {"active_tool": {"enabled": True}}
+
+    nested_yaml = yaml.safe_load(
+        (out_dir / "agents" / "default_agent" / "nested_refs.yaml").read_text(
+            "utf-8"
+        )
+    )
+    assert nested_yaml["wrapper"]["childAgents"] == ["custom_entry"]
+    assert nested_yaml["wrapper"]["tools"] == ["active_tool"]
+
+
+def test_dict_key_placeholder_substitution_and_fail_fast(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "agents" / "default_agent" / "key_tokens.json").write_text(
+        json.dumps({"@@brand.brand_id@@_key": "@@brand.display_name@@"}),
+        encoding="utf-8",
+    )
+    (core_dir / "agents" / "default_agent" / "key_tokens.yaml").write_text(
+        '"@@brand.brand_id@@_yaml": "@@brand.display_name@@"\n200:\n  ok: true\n',
+        encoding="utf-8",
+    )
+
+    out_ok = tmp_path / "out_key_ok"
+    build_app(core_dir, manifests_dir, "brand_1", "DIGITAL_APP", "prod", out_ok)
+    rendered_json = json.loads(
+        (out_ok / "agents" / "default_agent" / "key_tokens.json").read_text(
+            "utf-8"
+        )
+    )
+    assert rendered_json == {"brand_1_key": "Brand One"}
+    rendered_yaml = yaml.safe_load(
+        (out_ok / "agents" / "default_agent" / "key_tokens.yaml").read_text(
+            "utf-8"
+        )
+    )
+    assert rendered_yaml["brand_1_yaml"] == "Brand One"
+    assert rendered_yaml[200] == {"ok": True}
+
+    (core_dir / "agents" / "default_agent" / "key_tokens.json").write_text(
+        json.dumps({"@@unknown.key@@": "x"}), encoding="utf-8"
+    )
+    with pytest.raises(BuildError, match="Unresolved placeholders"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_key_bad",
+        )
+
+
+def test_atomic_build_failure_preserves_previous_out_dir_and_zip(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    out_dir = tmp_path / "atomic_out"
+
+    first_report = build_app(
+        core_dir,
+        manifests_dir,
+        "brand_1",
+        "DIGITAL_APP",
+        "prod",
+        out_dir,
+        package_zip=True,
+    )
+    assert first_report.zip_path is not None
+    good_zip_bytes = first_report.zip_path.read_bytes()
+    good_gi = (out_dir / "global_instruction.txt").read_text("utf-8")
+
+    # Introduce a build error and rebuild into the same out_dir.
+    (core_dir / "global_instruction.txt").write_text(
+        "Broken @@brand.missing_field@@\n", encoding="utf-8"
+    )
+    with pytest.raises(BuildError, match="Unresolved placeholders"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            out_dir,
+            package_zip=True,
+        )
+
+    assert (out_dir / "global_instruction.txt").read_text("utf-8") == good_gi
+    assert first_report.zip_path.read_bytes() == good_zip_bytes
+    leftover_tmps = [
+        p.name for p in out_dir.parent.iterdir() if ".tmp-" in p.name
+    ]
+    assert leftover_tmps == []
+
+
+def test_symlinks_rejected_in_core_and_manifests(tmp_path: Path) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+
+    # Symlink file inside core_dir
+    core_link = core_dir / "leak.txt"
+    core_link.symlink_to(outside)
+    with pytest.raises(BuildError, match="Symlinks are not permitted"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_core_link",
+        )
+    core_link.unlink()
+
+    # Symlinked core_dir itself
+    core_root_link = tmp_path / "core_link"
+    core_root_link.symlink_to(core_dir)
+    with pytest.raises(BuildError, match="Symlinks are not permitted"):
+        build_app(
+            core_root_link,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_core_root_link",
+        )
+
+    # Symlink file inside manifests_dir
+    man_link = manifests_dir / "brands" / "brand_1" / "extra.yaml"
+    man_link.symlink_to(outside)
+    with pytest.raises(BuildError, match="Symlinks are not permitted"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_man_link",
+        )
+    man_link.unlink()
+
+    # Symlinked manifests_dir itself
+    man_root_link = tmp_path / "manifests_link"
+    man_root_link.symlink_to(manifests_dir)
+    with pytest.raises(BuildError, match="Symlinks are not permitted"):
+        build_app(
+            core_dir,
+            man_root_link,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_man_root_link",
+        )
+
+
+def test_app_yml_end_to_end_build_and_zip(tmp_path: Path) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").unlink()
+    (core_dir / "app.yml").write_text(
+        'displayName: "@@brand.display_name@@"\nrootAgent: default_agent\n',
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_app_yml"
+    report = build_app(
+        core_dir,
+        manifests_dir,
+        "brand_1",
+        "VOICE_TELEPHONY",
+        "prod",
+        out_dir,
+        package_zip=True,
+    )
+    assert report.zip_path is not None
+    with zipfile.ZipFile(report.zip_path, "r") as zf:
+        assert "app.yml" in zf.namelist()
+        staged_app = yaml.safe_load(zf.read("app.yml").decode("utf-8"))
+    assert staged_app["displayName"] == "Brand One"
+    assert staged_app["rootAgent"] == "custom_entry"
+    assert staged_app["languageSettings"]["supportedLanguageCodes"] == [
+        "en",
+        "es",
+    ]
+
+
+def test_text_only_brand_explicit_languages_and_yaml12_country_no(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    b3 = manifests_dir / "brands" / "brand_no"
+    b3.mkdir(parents=True)
+    (b3 / "identity.yaml").write_text(
+        "brand_id: brand_no\n"
+        "display_name: Nordic Text Brand\n"
+        "languages: [en, no]\n"
+        "lexicon:\n"
+        "  account: Konto\n"
+        "urls:\n"
+        "  support: https://support.nordic.example.com\n",
+        encoding="utf-8",
+    )
+    (b3 / "channel_policy.yaml").write_text(
+        "brand_id: brand_no\n"
+        "supported_countries: [NO]\n"
+        "api_routing:\n"
+        "  core_api: https://core.nordic.example.com\n"
+        "channels:\n"
+        "  DIGITAL_APP:\n"
+        "    supported_modalities: [TEXT]\n",
+        encoding="utf-8",
+    )
+    (manifests_dir / "locales" / "content_blocks.yaml").write_text(
+        "blocks:\n"
+        "  brand_no:\n"
+        "    NO:\n"
+        "      no:\n"
+        "        disclosure: Norsk informasjon.\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_nordic"
+    build_app(
+        core_dir, manifests_dir, "brand_no", "DIGITAL_APP", "prod", out_dir
+    )
+
+    app_cfg = json.loads((out_dir / "app.json").read_text("utf-8"))
+    assert app_cfg["languageSettings"] == {
+        "defaultLanguageCode": "en",
+        "supportedLanguageCodes": ["en", "no"],
+        "enableMultilingualSupport": True,
+    }
+    assert "audioProcessingConfig" not in app_cfg
+
+    dep_cfg = yaml.safe_load(
+        (out_dir / "deployments" / "digital-app.yaml").read_text("utf-8")
+    )
+    assert dep_cfg["supportedCountries"] == ["NO"]
+    assert dep_cfg["supportedLanguages"] == ["en", "no"]
+
+    gi = (out_dir / "global_instruction.txt").read_text("utf-8")
+    assert "[NO-no] disclosure: Norsk informasjon." in gi
+
+
+def test_json_unicode_escaping_and_binary_assets_preserved(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (
+        core_dir
+        / "tools"
+        / "active_tool"
+        / "python_function"
+        / "python_code.py"
+    ).write_text("def active_tool() -> str:\n    return 'ok'\n", "utf-8")
+
+    tricky_display = 'Acme "Prime" \\ Bank äöüß€\nLine 2'
+    tricky_legal = 'Acme "Legal" GmbH & Co. KG \\ €'
+    tricky_lex = 'Giro "Konto" \\ äöüß€'
+    (manifests_dir / "brands" / "brand_1" / "identity.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "brand_id": "brand_1",
+                "display_name": tricky_display,
+                "legal_entity": tricky_legal,
+                "lexicon": {"account": tricky_lex},
+                "urls": {"support": "https://example.de/hilfe?q=äöü&a=1"},
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe\x80\x81"
+    (core_dir / "logo.png").write_bytes(png_bytes)
+    (core_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "displayName": "@@brand.display_name@@",
+                "rootAgent": "default_agent",
+                "audioProcessingConfig": None,
+                "languageSettings": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_unicode_bin"
+    build_app(
+        core_dir, manifests_dir, "brand_1", "DIGITAL_APP", "prod", out_dir
+    )
+
+    app_data = json.loads((out_dir / "app.json").read_text("utf-8"))
+    assert app_data["displayName"] == tricky_display
+    assert (out_dir / "logo.png").read_bytes() == png_bytes
+
+
+@pytest.mark.parametrize(
+    ("content", "expected_err"),
+    [
+        ("Broken @@env.missing@@\n", "Unresolved placeholders"),
+        ("Broken @@routing.bad@@\n", "Unresolved placeholders"),
+        (
+            "Endpoint: @@env.api:users\nWelcome to @@brand.display_name@@\n",
+            "Unresolved or unclosed placeholders",
+        ),
+        ("{@endChannel_DIGITAL_APP}\n", "Unbalanced or mismatched conditional"),
+        (
+            "{@startChannel_DIGITAL_APP}\n{@endBrand_brand_1}\n",
+            "Unbalanced or mismatched conditional",
+        ),
+        (
+            "{@startChannel_DIGITAL_APP}A{@startBrand_brand_1}B"
+            "{@endChannel_DIGITAL_APP}C{@endBrand_brand_1}\n",
+            "Unbalanced or overlapping inline",
+        ),
+        (
+            "{@startChannel_API}\n"
+            "Broken {@startBrand_brand_1}unclosed inline\n"
+            "{@endChannel_API}\n",
+            "Unbalanced inline conditional",
+        ),
+        (
+            "{@startModality_Voice}\nUnclosed modality\n",
+            "Unbalanced modality tags",
+        ),
+        (
+            "{@startModality_Voice}\n{@endModality_Text}\n",
+            "Unbalanced or mismatched modality",
+        ),
+    ],
+)
+def test_malformed_tokens_conditionals_and_modalities_fail_fast(
+    tmp_path: Path, content: str, expected_err: str
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "global_instruction.txt").write_text(content, encoding="utf-8")
+    with pytest.raises(BuildError, match=expected_err):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_malformed",
+        )
+
+
+def test_traversal_overlap_malformed_json_and_bad_env_templates(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    with pytest.raises(ManifestError, match="Unknown brand"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "../../escape",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_escape",
+        )
+
+    # out_dir overlapping manifests_dir must not wipe manifests_dir
+    with pytest.raises(BuildError, match="overlap"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            manifests_dir,
+        )
+    assert (manifests_dir / "brands" / "brand_1" / "identity.yaml").is_file()
+
+    # Unclosed brace and format-string attribute traversal in env template
+    for env_name, tpl in (
+        ("bad_tpl", "https://ex/{brand"),
+        ("gadget", "{brand.__class__.__name__}"),
+    ):
+        (manifests_dir / "envs" / f"{env_name}.yaml").write_text(
+            f"environment: {env_name}\ntemplates:\n  api: '{tpl}'\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildError):
+            build_app(
+                core_dir,
+                manifests_dir,
+                "brand_1",
+                "DIGITAL_APP",
+                env_name,
+                tmp_path / f"out_{env_name}",
+            )
+
+    # Malformed JSON in core raises BuildError
+    (core_dir / "app.json").write_text(
+        '{"displayName": "@@brand.display_name@@",}', encoding="utf-8"
+    )
+    with pytest.raises(BuildError, match=r"(?i)json"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_bad_json",
+        )
+
+
+def test_env_overrides_without_base_and_no_disabled_tool_reinjection(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "environment.json").unlink()
+    out1 = tmp_path / "out_no_base_env"
+    build_app(core_dir, manifests_dir, "brand_1", "DIGITAL_APP", "prod", out1)
+    assert json.loads((out1 / "environment.json").read_text("utf-8")) == {
+        "overridden_key": "prod_val",
+        "nested": {"replace": 2},
+    }
+
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "environment": "prod",
+                "templates": {
+                    "api": "https://api.example.com/{brand_slug}/{env}/{service}"
+                },
+                "overrides": {
+                    "tools": {
+                        "secret_tool_disabled": {
+                            "endpoint": "https://leaked.local"
+                        },
+                        "active_tool": {"endpoint": "https://active.local"},
+                    }
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    out2 = tmp_path / "out_no_reinject"
+    build_app(
+        core_dir, manifests_dir, "brand_1", "VOICE_TELEPHONY", "prod", out2
+    )
+    env_out = json.loads((out2 / "environment.json").read_text("utf-8"))
+    assert "secret_tool_disabled" not in env_out.get("tools", {})
+    assert "active_tool" in env_out.get("tools", {})
+
+
+def test_python_token_escaping_fstrings_and_triple_quotes(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    py_path = (
+        core_dir
+        / "tools"
+        / "active_tool"
+        / "python_function"
+        / "python_code.py"
+    )
+    id_path = manifests_dir / "brands" / "brand_1" / "identity.yaml"
+
+    # 1. Quotes, backslashes, and newlines inside standard string literal
+    id_data = yaml.safe_load(id_path.read_text("utf-8"))
+    id_data["display_name"] = 'Acme "Prime" \\ Bank\nLine2'
+    id_path.write_text(yaml.safe_dump(id_data, sort_keys=False), "utf-8")
+    out1 = tmp_path / "out_py_quotes"
+    build_app(core_dir, manifests_dir, "brand_1", "DIGITAL_APP", "prod", out1)
+    rendered1 = (
+        out1 / "tools" / "active_tool" / "python_function" / "python_code.py"
+    ).read_text("utf-8")
+    ast.parse(rendered1)
+
+    # Verify f-strings escape braces without injection and keep raw backslashes.
+    id_data["display_name"] = "Acme {1 + 1} Bank"
+    id_path.write_text(yaml.safe_dump(id_data, sort_keys=False), "utf-8")
+    py_path.write_text(
+        "def active_tool(user: str) -> tuple[str, str]:\n"
+        '    msg = f"Line1\\nWelcome to @@brand.display_name@@, {user}"\n'
+        '    raw_path = rf"C:\\dir\\@@brand.brand_id@@\\{user}"\n'
+        "    return msg, raw_path\n",
+        encoding="utf-8",
+    )
+    out2 = tmp_path / "out_fstring"
+    build_app(core_dir, manifests_dir, "brand_1", "DIGITAL_APP", "prod", out2)
+    rendered2 = (
+        out2 / "tools" / "active_tool" / "python_function" / "python_code.py"
+    ).read_text("utf-8")
+    ns2: dict[str, object] = {}
+    exec(compile(rendered2, str(py_path), "exec"), ns2)
+    fn2 = ns2["active_tool"]
+    assert callable(fn2)
+    assert fn2("Alice") == (
+        "Line1\nWelcome to Acme {1 + 1} Bank, Alice",
+        r"C:\dir\brand_1\Alice",
+    )
+
+    # 3. Triple-quoted string ending in triple quotes stays valid
+    brand_val = 'Acme """'
+    id_data["display_name"] = brand_val
+    id_path.write_text(yaml.safe_dump(id_data, sort_keys=False), "utf-8")
+    py_path.write_text(
+        'def active_tool() -> str:\n    return """@@brand.display_name@@"""\n',
+        encoding="utf-8",
+    )
+    out3 = tmp_path / "out_triple_q"
+    build_app(core_dir, manifests_dir, "brand_1", "DIGITAL_APP", "prod", out3)
+    rendered3 = (
+        out3 / "tools" / "active_tool" / "python_function" / "python_code.py"
+    ).read_text("utf-8")
+    ns3: dict[str, object] = {}
+    exec(compile(rendered3, str(py_path), "exec"), ns3)
+    fn3 = ns3["active_tool"]
+    assert callable(fn3)
+    assert fn3() == brand_val
+
+    # 4. Package determinism across mtimes + junk exclusions
+    os.utime(core_dir / "app.json", (1_700_000_000, 1_700_000_000))
+    rep_a = build_app(
+        core_dir,
+        manifests_dir,
+        "brand_1",
+        "DIGITAL_APP",
+        "prod",
+        tmp_path / "det_a",
+        package_zip=True,
+    )
+    os.utime(core_dir / "app.json", (1_750_000_000, 1_750_000_000))
+    rep_b = build_app(
+        core_dir,
+        manifests_dir,
+        "brand_1",
+        "DIGITAL_APP",
+        "prod",
+        tmp_path / "det_b",
+        package_zip=True,
+    )
+    assert rep_a.zip_path is not None
+    assert rep_b.zip_path is not None
+    assert rep_a.zip_path.read_bytes() == rep_b.zip_path.read_bytes()

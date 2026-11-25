@@ -24,6 +24,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import tokenize
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ from cxas_scrapi.build.manifests import (
     ContentBlockCatalog,
     EnvManifest,
     Manifests,
+    Yaml12SafeLoader,
     load_manifests,
 )
 from cxas_scrapi.core.packaging import package_app_archive
@@ -78,7 +80,6 @@ _STAGE_IGNORE_PATTERNS = ("__pycache__", "*.pyc", ".DS_Store", "manifests")
 _RESOURCE_CONFIG_SUFFIXES = (".json", ".yaml", ".yml")
 
 
-# scbc ignore[empty-exception-subclass] public API exception
 class BuildError(Exception):
     """Raised when building a brand/channel app fails."""
 
@@ -332,33 +333,38 @@ class _BuildRenderer:
         _check_remaining_tokens(text, unclosed_label="Unresolved or unclosed")
         return text
 
-    def process_string(
+    def render_string(
         self, text: str, *, evaluate_conditionals: bool = True
     ) -> str:
         if evaluate_conditionals:
             text = self.process_conditional_blocks(text)
         return self.substitute_tokens(text)
 
-    def process_json(
+    def render_data(
         self, val: JsonValue, *, evaluate_conditionals: bool = True
     ) -> JsonValue:
-        # scbc boundary: recursively traverses untyped JSON/YAML payloads
         if isinstance(val, dict):
             return {
-                k: self.process_json(
+                (
+                    self.render_string(
+                        k, evaluate_conditionals=evaluate_conditionals
+                    )
+                    if isinstance(k, str)
+                    else k
+                ): self.render_data(
                     v, evaluate_conditionals=evaluate_conditionals
                 )
                 for k, v in val.items()
             }
         if isinstance(val, list):
             return [
-                self.process_json(
+                self.render_data(
                     item, evaluate_conditionals=evaluate_conditionals
                 )
                 for item in val
             ]
         if isinstance(val, str):
-            return self.process_string(
+            return self.render_string(
                 val, evaluate_conditionals=evaluate_conditionals
             )
         return val
@@ -642,7 +648,6 @@ def _build_identity_block(manifests: Manifests, brand_id: str) -> str:
 
 
 def _read_json_strict(path: Path) -> JsonValue:
-    # scbc boundary: parses external JSON file from disk
     try:
         return json.loads(path.read_text("utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
@@ -650,16 +655,14 @@ def _read_json_strict(path: Path) -> JsonValue:
 
 
 def _read_yaml_strict(path: Path) -> JsonValue:
-    # scbc boundary: parses external YAML file from disk
     try:
-        return yaml.safe_load(path.read_text("utf-8"))
+        return yaml.load(path.read_text("utf-8"), Loader=Yaml12SafeLoader)
     except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
         raise BuildError(f"{path}: invalid YAML: {exc}") from exc
 
 
 def _read_resource_display_name(resource_dir: Path) -> str:
     """Read ``displayName`` from ``<id>.{json,yaml,yml}`` if present."""
-    # scbc boundary: reads untyped JSON/YAML resource descriptor from disk
     cfg_path = next(
         (
             candidate
@@ -680,6 +683,21 @@ def _read_resource_display_name(resource_dir: Path) -> str:
     if isinstance(data, dict) and isinstance(data.get("displayName"), str):
         return data["displayName"]
     return ""
+
+
+def _reject_symlinks(root: Path, label: str) -> None:
+    if root.is_symlink():
+        raise BuildError(f"Symlinks are not permitted in {label}: {root}")
+    if not root.is_dir():
+        return
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        base = Path(dirpath)
+        for name in (*sorted(dirnames), *sorted(filenames)):
+            entry = base / name
+            if entry.is_symlink():
+                raise BuildError(
+                    f"Symlinks are not permitted in {label}: {entry}"
+                )
 
 
 def _validate_build_paths(
@@ -703,19 +721,60 @@ def _validate_build_paths(
 
 
 def _stage_core_dir(
-    core_dir: Path, out_dir: Path, *, has_env_overrides: bool
+    core_dir: Path, staging_dir: Path, *, has_env_overrides: bool
 ) -> None:
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
     shutil.copytree(
         core_dir,
-        out_dir,
+        staging_dir,
+        dirs_exist_ok=True,
         ignore=shutil.ignore_patterns(*_STAGE_IGNORE_PATTERNS),
     )
     # Seed environment.json so env_manifest.overrides flows through the normal
     # merge, pruning, and token-substitution pass.
-    if has_env_overrides and not (out_dir / "environment.json").exists():
-        (out_dir / "environment.json").write_text("{}\n", "utf-8")
+    if has_env_overrides and not (staging_dir / "environment.json").exists():
+        (staging_dir / "environment.json").write_text("{}\n", "utf-8")
+
+
+def _swap_staging_dir(staging_dir: Path, out_dir: Path) -> None:
+    backup_dir: Path | None = None
+    if out_dir.exists():
+        backup_dir = Path(
+            tempfile.mkdtemp(prefix=f".{out_dir.name}.bak-", dir=out_dir.parent)
+        )
+        backup_dir.rmdir()
+        out_dir.rename(backup_dir)
+    try:
+        staging_dir.rename(out_dir)
+    except BaseException:
+        if backup_dir and backup_dir.exists() and not out_dir.exists():
+            backup_dir.rename(out_dir)
+        raise
+    if backup_dir and backup_dir.exists():
+        shutil.rmtree(backup_dir)
+
+
+def _matches_resource_ref(
+    ref: JsonValue, names: frozenset[str], collection: str
+) -> bool:
+    if not isinstance(ref, str):
+        return False
+    if ref in names:
+        return True
+    prefix = f"{collection}/"
+    if ref.startswith(prefix) and ref[len(prefix) :] in names:
+        return True
+    marker = f"/{collection}/"
+    return marker in ref and ref.rsplit("/", 1)[-1] in names
+
+
+def _entry_matches_disabled(
+    item: JsonValue, disabled: frozenset[str], collection: str
+) -> bool:
+    if isinstance(item, dict):
+        return _matches_resource_ref(
+            item.get("displayName"), disabled, collection
+        ) or _matches_resource_ref(item.get("name"), disabled, collection)
+    return _matches_resource_ref(item, disabled, collection)
 
 
 def _prune_resource_dir(
@@ -735,24 +794,58 @@ def _prune_resource_dir(
     return frozenset(pruned)
 
 
+def _collect_surviving_agent_names(agents_dir: Path) -> frozenset[str]:
+    if not agents_dir.is_dir():
+        return frozenset()
+    names: set[str] = set()
+    for entry in sorted(p for p in agents_dir.iterdir() if p.is_dir()):
+        names.add(entry.name)
+        display_name = _read_resource_display_name(entry)
+        if display_name:
+            names.add(display_name)
+    return frozenset(names)
+
+
+def _validate_entry_agent(
+    entry_agent: str | None,
+    channel: str,
+    disabled_agents: frozenset[str],
+    surviving_agents: frozenset[str],
+) -> None:
+    if not entry_agent:
+        return
+    if _matches_resource_ref(entry_agent, disabled_agents, "agents"):
+        reason = "cannot also be in disabled_agents."
+    elif not _matches_resource_ref(entry_agent, surviving_agents, "agents"):
+        reason = "does not match any surviving agent under 'agents/'."
+    else:
+        return
+    raise BuildError(
+        f"Channel '{channel}' entry_agent '{entry_agent}' {reason}"
+    )
+
+
 def _prune_mapping_key(
     data: ConfigMap,
     key: str,
     disabled: frozenset[str],
+    collection: str,
     *,
     allow_dict: bool = False,
 ) -> bool:
-    # scbc boundary: filters resource refs inside untyped JSON/YAML mappings
     value = data.get(key)
     if isinstance(value, list):
         filtered = [
             item
             for item in value
-            if (item.get("displayName") if isinstance(item, dict) else item)
-            not in disabled
+            if not _entry_matches_disabled(item, disabled, collection)
         ]
     elif allow_dict and isinstance(value, dict):
-        filtered = {k: v for k, v in value.items() if k not in disabled}
+        filtered = {
+            k: v
+            for k, v in value.items()
+            if not _matches_resource_ref(k, disabled, collection)
+        }
     else:
         return False
 
@@ -763,19 +856,37 @@ def _prune_mapping_key(
 
 
 def _prune_resource_refs(
-    data: ConfigMap,
+    data: JsonValue,
     disabled_agents: frozenset[str],
     disabled_tools: frozenset[str],
 ) -> bool:
-    pruned_agents = _prune_mapping_key(data, "childAgents", disabled_agents)
-    pruned_tools = _prune_mapping_key(
-        data, "tools", disabled_tools, allow_dict=True
+    if isinstance(data, list):
+        changed = False
+        for item in data:
+            changed = (
+                _prune_resource_refs(item, disabled_agents, disabled_tools)
+                or changed
+            )
+        return changed
+    if not isinstance(data, dict):
+        return False
+
+    changed = _prune_mapping_key(data, "childAgents", disabled_agents, "agents")
+    changed = (
+        _prune_mapping_key(
+            data, "tools", disabled_tools, "tools", allow_dict=True
+        )
+        or changed
     )
-    return pruned_agents or pruned_tools
+    for val in data.values():
+        changed = (
+            _prune_resource_refs(val, disabled_agents, disabled_tools)
+            or changed
+        )
+    return changed
 
 
 def _ensure_dict_section(data: ConfigMap, key: str) -> ConfigMap:
-    # scbc boundary: normalizes optional dict subsection in untyped app config
     section = data.get(key)
     if not isinstance(section, dict):
         section = {}
@@ -789,19 +900,17 @@ def _update_root_agent(
     entry_agent: str | None,
     disabled_agents: frozenset[str],
 ) -> bool:
-    # Set rootAgent only when missing or pointing to a pruned agent so valid
-    # custom roots stay intact.
     current_root = data.get("rootAgent")
-    root_pruned = current_root in disabled_agents
-    if root_pruned and not entry_agent:
+    if entry_agent:
+        changed = current_root != entry_agent
+        data["rootAgent"] = entry_agent
+        return changed
+    if _matches_resource_ref(current_root, disabled_agents, "agents"):
         raise BuildError(
             f"rootAgent '{current_root}' is disabled for channel "
             f"'{channel}' and no replacement entry_agent is configured."
         )
-    should_set = (root_pruned or not current_root) and bool(entry_agent)
-    if should_set:
-        data["rootAgent"] = entry_agent
-    return should_set
+    return False
 
 
 def _apply_app_manifest_settings(
@@ -883,8 +992,12 @@ def _render_json_file(
                 channel_caps,
                 renderer.disabled_agents,
             )
+    else:
+        _prune_resource_refs(
+            data, renderer.disabled_agents, renderer.disabled_tools
+        )
 
-    rendered = _wrap_path_error(path, lambda: renderer.process_json(data))
+    rendered = _wrap_path_error(path, lambda: renderer.render_data(data))
     path.write_text(json.dumps(rendered, indent=2) + "\n", "utf-8")
 
 
@@ -916,11 +1029,10 @@ def _render_text_file(
 def _parse_yaml_with_conditionals(
     path: Path, text: str, renderer: _BuildRenderer, *, has_tokens: bool
 ) -> JsonValue:
-    # scbc boundary: evaluates conditionals then parses external YAML file
     try:
         if has_tokens and ("{@start" in text or "{@end" in text):
             text = renderer.process_conditional_blocks(text)
-        return yaml.safe_load(text)
+        return yaml.load(text, Loader=Yaml12SafeLoader)
     except (yaml.YAMLError, BuildError) as exc:
         raise BuildError(f"{path}: {exc}") from exc
 
@@ -936,7 +1048,7 @@ def _yaml_render_flags(
 
 
 def _apply_yaml_mutations(
-    data: ConfigMap,
+    data: JsonValue,
     renderer: _BuildRenderer,
     brand: BrandIdentity,
     channel_caps: ChannelCapabilities,
@@ -946,8 +1058,16 @@ def _apply_yaml_mutations(
     pruned = _prune_resource_refs(
         data, renderer.disabled_agents, renderer.disabled_tools
     )
-    app_updated = is_app_yaml and _apply_app_manifest_settings(
-        data, brand, renderer.channel, channel_caps, renderer.disabled_agents
+    app_updated = (
+        is_app_yaml
+        and isinstance(data, dict)
+        and _apply_app_manifest_settings(
+            data,
+            brand,
+            renderer.channel,
+            channel_caps,
+            renderer.disabled_agents,
+        )
     )
     return pruned or app_updated
 
@@ -972,13 +1092,13 @@ def _render_yaml_file(
     data = _parse_yaml_with_conditionals(
         path, text, renderer, has_tokens=has_tokens
     )
-    modified = isinstance(data, dict) and _apply_yaml_mutations(
+    modified = _apply_yaml_mutations(
         data, renderer, brand, channel_caps, is_app_yaml=is_app_yaml
     )
     if has_tokens:
         data = _wrap_path_error(
             path,
-            lambda: renderer.process_json(data, evaluate_conditionals=False),
+            lambda: renderer.render_data(data, evaluate_conditionals=False),
         )
     if has_tokens or modified:
         path.write_text(
@@ -1073,6 +1193,62 @@ def _write_deployment_manifest(
     return slug
 
 
+def _build_in_staging(
+    core_dir: Path,
+    staging_dir: Path,
+    manifests: Manifests,
+    brand: BrandIdentity,
+    policy: ChannelPolicy,
+    env_manifest: EnvManifest,
+    channel: str,
+    environment: str,
+    channel_caps: ChannelCapabilities,
+    *,
+    package_zip: bool,
+) -> tuple[list[str], str]:
+    _stage_core_dir(
+        core_dir, staging_dir, has_env_overrides=bool(env_manifest.overrides)
+    )
+    all_disabled_agents = _prune_resource_dir(
+        staging_dir / "agents", set(channel_caps.disabled_agents)
+    )
+    all_disabled_tools = _prune_resource_dir(
+        staging_dir / "tools", set(channel_caps.disabled_tools)
+    )
+    surviving_agents = _collect_surviving_agent_names(staging_dir / "agents")
+    _validate_entry_agent(
+        channel_caps.entry_agent, channel, all_disabled_agents, surviving_agents
+    )
+
+    renderer = _BuildRenderer.from_context(
+        brand,
+        policy,
+        env_manifest,
+        channel,
+        environment,
+        all_disabled_agents,
+        all_disabled_tools,
+    )
+    warnings = _render_staged_tree(
+        staging_dir,
+        manifests,
+        renderer,
+        brand,
+        channel_caps,
+        env_manifest.overrides,
+    )
+    slug = _write_deployment_manifest(
+        staging_dir, brand, policy, channel, environment, channel_caps
+    )
+    if package_zip:
+        staged_zip = staging_dir / f"{brand.brand_id}_{slug}.zip"
+        try:
+            package_app_archive(staging_dir, staged_zip)
+        except (OSError, ValueError) as exc:
+            raise BuildError(f"Failed to package {staged_zip}: {exc}") from exc
+    return warnings, slug
+
+
 def _build_app_from_manifests(
     core_dir: Path,
     manifests_path: Path,
@@ -1096,53 +1272,30 @@ def _build_app_from_manifests(
             f"Channel {channel} not permitted for brand {brand_id}."
         ) from exc
 
-    _stage_core_dir(
-        core_dir, out_dir, has_env_overrides=bool(env_manifest.overrides)
+    out_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(
+        tempfile.mkdtemp(prefix=f".{out_dir.name}.tmp-", dir=out_dir.parent)
     )
-    all_disabled_agents = _prune_resource_dir(
-        out_dir / "agents", set(channel_caps.disabled_agents)
-    )
-    all_disabled_tools = _prune_resource_dir(
-        out_dir / "tools", set(channel_caps.disabled_tools)
-    )
-    if (
-        channel_caps.entry_agent
-        and channel_caps.entry_agent in all_disabled_agents
-    ):
-        raise BuildError(
-            f"Channel '{channel}' entry_agent '{channel_caps.entry_agent}' "
-            "cannot also be in disabled_agents."
+    try:
+        warnings, slug = _build_in_staging(
+            core_dir,
+            staging_dir,
+            manifests,
+            brand,
+            policy,
+            env_manifest,
+            channel,
+            environment,
+            channel_caps,
+            package_zip=package_zip,
         )
+        _swap_staging_dir(staging_dir, out_dir)
+    except BaseException:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
 
-    renderer = _BuildRenderer.from_context(
-        brand,
-        policy,
-        env_manifest,
-        channel,
-        environment,
-        all_disabled_agents,
-        all_disabled_tools,
-    )
-    warnings = _render_staged_tree(
-        out_dir,
-        manifests,
-        renderer,
-        brand,
-        channel_caps,
-        env_manifest.overrides,
-    )
-    slug = _write_deployment_manifest(
-        out_dir, brand, policy, channel, environment, channel_caps
-    )
-
-    zip_path: Path | None = None
-    if package_zip:
-        zip_path = out_dir / f"{brand_id}_{slug}.zip"
-        try:
-            package_app_archive(out_dir, zip_path)
-        except (OSError, ValueError) as exc:
-            raise BuildError(f"Failed to package {zip_path}: {exc}") from exc
-
+    zip_path = out_dir / f"{brand_id}_{slug}.zip" if package_zip else None
     return BuildReport(
         brand_id=brand_id,
         channel=channel,
@@ -1164,8 +1317,12 @@ def build_app(
     package_zip: bool = False,
 ) -> BuildReport:
     """Build one CES app for ``(brand_id, channel, environment)``."""
-    core_path = Path(core_dir).resolve()
-    manifests_path = Path(manifests_dir).resolve()
+    raw_core = Path(core_dir)
+    raw_manifests = Path(manifests_dir)
+    _reject_symlinks(raw_core, "core directory")
+    _reject_symlinks(raw_manifests, "manifests directory")
+    core_path = raw_core.resolve()
+    manifests_path = raw_manifests.resolve()
     out_path = Path(out_dir).resolve()
     _validate_build_paths(core_path, manifests_path, out_path)
     manifests = load_manifests(manifests_path)
@@ -1190,14 +1347,18 @@ def build_all(
     package_zip: bool = False,
 ) -> list[BuildReport]:
     """Build every ``(brand_id, channel)`` pair declared in manifests."""
-    core_path = Path(core_dir).resolve()
+    raw_core = Path(core_dir)
+    raw_manifests = Path(manifests_dir)
+    _reject_symlinks(raw_core, "core directory")
+    _reject_symlinks(raw_manifests, "manifests directory")
+    core_path = raw_core.resolve()
     if not core_path.is_dir():
         raise BuildError(
             f"Core directory '{core_path}' does not exist or is not a "
             "directory."
         )
 
-    manifests_path = Path(manifests_dir).resolve()
+    manifests_path = raw_manifests.resolve()
     manifests = load_manifests(manifests_path)
     manifests.env(environment)
 

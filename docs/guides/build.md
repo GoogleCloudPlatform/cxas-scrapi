@@ -28,7 +28,8 @@ manifests/
 
 ### `brands/brand_1/identity.yaml`
 
-Business-owned brand identity, lexicon, URLs, and TTS voice bindings:
+Business-owned brand identity, lexicon, URLs, explicit `languages` (optional;
+defaults to `tts_voices` keys when omitted), and TTS voice bindings:
 
 ```yaml
 brand_id: brand_1
@@ -40,6 +41,7 @@ lexicon:
   account: Checking Account
 urls:
   support: https://support.brand1.example.com
+languages: ["en"]
 tts_voices:
   en:
     voice: en-US-Standard-A
@@ -162,7 +164,8 @@ Each built app directory includes:
   mentions in surviving `.txt` files)
 - Updated `app.json` (or `app.yaml` / `app.yml`)
   (`audioProcessingConfig.synthesizeSpeechConfigs`, `languageSettings`, and
-  `rootAgent` fallback when missing or pruned)
+  `rootAgent` synced to any configured `entry_agent`—which must match a
+  surviving agent under `agents/`)
 - Merged `environment.json`
 - Generated `deployments/<channel-slug>.yaml` describing the channel profile,
   countries, languages, and modalities

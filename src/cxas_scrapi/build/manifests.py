@@ -46,9 +46,32 @@ if TYPE_CHECKING:
 
 BRAND_ID_PATTERN = r"^[a-z0-9_-]{2,64}$"
 _BRAND_ID_RE = re.compile(BRAND_ID_PATTERN)
+_YAML12_BOOL_RE = re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")
 _T = TypeVar("_T")
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 ManifestValue: TypeAlias = Any
+
+
+class Yaml12SafeLoader(yaml.SafeLoader):
+    """YAML 1.2-compatible SafeLoader (only ``true``/``false`` are booleans).
+
+    Prevents YAML 1.1 implicit boolean coercion on values such as country code
+    ``NO`` (Norway) or ``ON`` / ``OFF`` / ``YES``.
+    """
+
+
+Yaml12SafeLoader.yaml_implicit_resolvers = {
+    ch: [
+        (tag, pattern)
+        for tag, pattern in resolvers
+        if tag != "tag:yaml.org,2002:bool"
+    ]
+    for ch, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+for _bool_lead in "tTfF":
+    Yaml12SafeLoader.add_implicit_resolver(
+        "tag:yaml.org,2002:bool", _YAML12_BOOL_RE, [_bool_lead]
+    )
 
 # Channel name (manifest key) -> CES deployment ChannelProfile type.
 CHANNEL_PROFILE_TYPES: dict[str, str] = {
@@ -62,7 +85,6 @@ CHANNEL_PROFILE_TYPES: dict[str, str] = {
 }
 
 
-# scbc ignore[empty-exception-subclass] public API exception
 class ManifestError(ValueError):
     """Raised when a manifest file is missing or fails validation."""
 
@@ -82,9 +104,9 @@ class BrandIdentity(_StrictModel):
     """Business-owned description of who a brand is.
 
     Rendered by ``cxas build`` into the persona/lexicon block of
-    ``global_instruction.txt``, into ``app.json``
-    ``synthesizeSpeechConfigs``, and into ``@@brand.*@@`` placeholders in
-    guardrail prompts and tool descriptions.
+    ``global_instruction.txt``, into ``app.json`` / ``app.yaml`` / ``app.yml``
+    ``synthesizeSpeechConfigs`` and ``languageSettings``, and into
+    ``@@brand.*@@`` placeholders across app files.
     """
 
     brand_id: str = Field(pattern=BRAND_ID_PATTERN)
@@ -95,12 +117,13 @@ class BrandIdentity(_StrictModel):
     lexicon: dict[str, str] = Field(default_factory=dict)
     urls: dict[str, str] = Field(default_factory=dict)
     tts_voices: dict[str, TtsVoice] = Field(default_factory=dict)
+    languages: list[str] = Field(default_factory=list)
 
-    @property
-    # scbc ignore[trivial-wrapper] public BrandIdentity API property
-    def languages(self) -> list[str]:
-        """Languages this brand speaks, in manifest order."""
-        return list(self.tts_voices)
+    @model_validator(mode="after")
+    def _default_languages_from_tts(self) -> BrandIdentity:
+        if not self.languages and self.tts_voices:
+            object.__setattr__(self, "languages", list(self.tts_voices))
+        return self
 
 
 class ChannelCapabilities(_StrictModel):
@@ -171,7 +194,6 @@ class EnvManifest(_StrictModel):
     @model_validator(mode="before")
     @classmethod
     def _parse_top_level_templates(cls, data: ManifestValue) -> ManifestValue:
-        # scbc boundary: Pydantic before-validator normalizes raw YAML input
         if not isinstance(data, dict):
             return data
 
@@ -207,7 +229,6 @@ class ContentBlockCatalog(_StrictModel):
         except KeyError:
             return None
 
-    # scbc ignore[trivial-wrapper] public ContentBlockCatalog query API
     def missing_tuples(
         self, brand_id: str, countries: list[str], langs: list[str]
     ) -> list[tuple[str, str, str]]:
@@ -243,7 +264,6 @@ class Manifests(BaseModel):
     envs: dict[str, EnvManifest]
     content_blocks: ContentBlockCatalog | None = None
 
-    # scbc ignore[trivial-wrapper] public Manifests lookup API
     def brand(self, brand_id: str) -> BrandIdentity:
         return _lookup_known(self.brands, brand_id, "brand", "Known brands")
 
@@ -254,15 +274,15 @@ class Manifests(BaseModel):
             )
         return self.policies[brand_id]
 
-    # scbc ignore[trivial-wrapper] public Manifests lookup API
     def env(self, environment: str) -> EnvManifest:
         return _lookup_known(self.envs, environment, "environment", "Known")
 
 
 def _read_yaml(path: Path) -> dict[str, ManifestValue]:
-    # scbc boundary: reads and validates top-level YAML mapping from disk
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = yaml.load(
+            path.read_text(encoding="utf-8"), Loader=Yaml12SafeLoader
+        )
     except yaml.YAMLError as exc:
         raise ManifestError(f"{path}: invalid YAML: {exc}") from exc
     if data is None:
@@ -273,7 +293,6 @@ def _read_yaml(path: Path) -> dict[str, ManifestValue]:
 
 
 def _load_model(model: type[_ModelT], path: Path) -> _ModelT:
-    # scbc boundary: validates external YAML file against Pydantic schema
     try:
         return model.model_validate(_read_yaml(path))
     except (ValueError, TypeError) as exc:

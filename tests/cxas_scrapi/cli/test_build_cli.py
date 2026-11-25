@@ -18,12 +18,31 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
+import sys
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from cxas_scrapi.cli.build_cli import app_build, app_package
 from cxas_scrapi.cli.main import get_parser
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _run_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(_REPO_ROOT / "src")
+    return subprocess.run(
+        [sys.executable, "-m", "cxas_scrapi.cli.main", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
 
 
 def _setup_cli_workspace(tmp_path: Path) -> tuple[Path, Path]:
@@ -195,3 +214,194 @@ def test_cli_build_and_package_error_exits(
         )
     assert exc3.value.code == 1
     assert "Package Error:" in capsys.readouterr().err
+
+
+def test_cli_e2e_build_all_zip_and_package_env_resolution(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_cli_workspace(tmp_path)
+
+    out_single = tmp_path / "cli_single"
+    r1 = _run_cli(
+        [
+            "build",
+            "--core-dir",
+            str(core_dir),
+            "--manifests-dir",
+            str(manifests_dir),
+            "--brand",
+            "brand_1",
+            "--channel",
+            "WEB",
+            "--env",
+            "prod",
+            "--out",
+            str(out_single),
+            "--zip",
+            "--json",
+        ]
+    )
+    assert r1.returncode == 0, r1.stderr
+    payload = json.loads(r1.stdout)
+    assert payload["brand_id"] == "brand_1"
+    assert payload["channel"] == "WEB"
+    assert Path(payload["zip_path"]).is_file()
+
+    out_all = tmp_path / "cli_all"
+    r2 = _run_cli(
+        [
+            "build",
+            "--core-dir",
+            str(core_dir),
+            "--manifests-dir",
+            str(manifests_dir),
+            "--env",
+            "prod",
+            "--out",
+            str(out_all),
+            "--all",
+            "--zip",
+            "--json",
+        ]
+    )
+    assert r2.returncode == 0, r2.stderr
+    reports = json.loads(r2.stdout)
+    assert len(reports) == 2
+    assert {r["channel"] for r in reports} == {"WEB", "VOICE_TELEPHONY"}
+
+    # Verify `cxas package` resolves $env_var and boolean overrides cleanly.
+    app_dir = tmp_path / "env_app"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "displayName": "CliEnvApp",
+                "variableDeclarations": [
+                    {
+                        "name": "api_host",
+                        "schema": {"type": "STRING", "default": "$env_var"},
+                    }
+                ],
+                "languageSettings": {
+                    "defaultLanguageCode": "en",
+                    "enableMultilingualSupport": "$env_var",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "prod_env.json"
+    env_file.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "api_host",
+                            "schema": {"default": "api.prod.example.com"},
+                        }
+                    ],
+                    "languageSettings": {"enableMultilingualSupport": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    out_zip = tmp_path / "cli_resolved.zip"
+    r3 = _run_cli(
+        [
+            "package",
+            "--app-dir",
+            str(app_dir),
+            "--env-file",
+            str(env_file),
+            "--zip",
+            str(out_zip),
+        ]
+    )
+    assert r3.returncode == 0, r3.stderr
+    assert "Packaged app to" in r3.stdout
+    with zipfile.ZipFile(out_zip, "r") as zf:
+        staged = json.loads(zf.read("app.json"))
+    assert (
+        staged["variableDeclarations"][0]["schema"]["default"]
+        == "api.prod.example.com"
+    )
+    assert staged["languageSettings"]["enableMultilingualSupport"] is True
+
+
+def test_cli_e2e_user_errors_no_tracebacks_and_help_intact(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_cli_workspace(tmp_path)
+
+    error_cases = [
+        [
+            "build",
+            "--core-dir",
+            str(core_dir),
+            "--manifests-dir",
+            str(manifests_dir),
+            "--env",
+            "prod",
+            "--out",
+            str(tmp_path / "o1"),
+        ],
+        [
+            "build",
+            "--core-dir",
+            str(core_dir),
+            "--manifests-dir",
+            str(tmp_path / "missing_manifests"),
+            "--brand",
+            "brand_1",
+            "--channel",
+            "WEB",
+            "--env",
+            "prod",
+            "--out",
+            str(tmp_path / "o2"),
+        ],
+        [
+            "build",
+            "--core-dir",
+            str(core_dir),
+            "--manifests-dir",
+            str(manifests_dir),
+            "--brand",
+            "brand_1",
+            "--channel",
+            "WHATSAPP",
+            "--env",
+            "prod",
+            "--out",
+            str(tmp_path / "o3"),
+        ],
+        [
+            "package",
+            "--app-dir",
+            str(tmp_path / "no_such_app"),
+            "--zip",
+            str(tmp_path / "nope.zip"),
+        ],
+        [
+            "package",
+            "--app-dir",
+            str(core_dir),
+            "--env-file",
+            str(tmp_path / "missing_env.json"),
+            "--zip",
+            str(tmp_path / "nope2.zip"),
+        ],
+    ]
+    for cli_args in error_cases:
+        res = _run_cli(cli_args)
+        assert res.returncode != 0, f"Expected failure for {cli_args}"
+        assert "Traceback" not in res.stderr
+
+    for sub in (["--help"], ["lint", "--help"], ["push", "--help"]):
+        res = _run_cli(sub)
+        assert res.returncode == 0, res.stderr
+    root_help = _run_cli(["--help"]).stdout
+    assert "build" in root_help
+    assert "package" in root_help

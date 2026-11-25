@@ -26,6 +26,7 @@ from pathlib import Path, PurePosixPath
 VALID_ARCHIVE_ROOTS: frozenset[str] = frozenset(
     {
         "app.yaml",
+        "app.yml",
         "app.json",
         "global_instruction.txt",
         "environment.json",
@@ -47,9 +48,13 @@ _EXCLUDED_DIR_NAMES = frozenset({"__pycache__"})
 _EXCLUDED_FILE_NAMES = frozenset({".DS_Store"})
 
 
+def _reject_symlink(path: Path, label: str) -> None:
+    if path.is_symlink():
+        raise ValueError(f"Symlinks are not permitted in {label}: {path}")
+
+
 def _validate_wrapper_dir(wrapper_dir: str) -> PurePosixPath:
     """Validate that ``wrapper_dir`` is a safe relative archive prefix."""
-    # scbc boundary: validates external caller-supplied archive prefix path
     if not wrapper_dir or "\\" in wrapper_dir:
         raise ValueError(
             f"Invalid wrapper_dir '{wrapper_dir}': must be a non-empty "
@@ -68,26 +73,44 @@ def _validate_wrapper_dir(wrapper_dir: str) -> PurePosixPath:
     return posix
 
 
+def _copy_filtered_files(
+    root_path: Path, dst_dir: Path, files: list[str]
+) -> None:
+    for fname in sorted(files):
+        if (
+            fname.startswith(".")
+            or fname in _EXCLUDED_FILE_NAMES
+            or fname.endswith((".pyc", ".pyo"))
+        ):
+            continue
+        src_fpath = root_path / fname
+        _reject_symlink(src_fpath, "archive source")
+        dst_fpath = dst_dir / fname
+        dst_fpath.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_fpath, dst_fpath)
+
+
 def _copy_filtered_tree(src: Path, dst: Path) -> None:
     """Copy a directory tree while skipping hidden entries and bytecode."""
-    for root, dirs, files in os.walk(src):
-        rel_root = Path(root).relative_to(src)
+    for root, dirs, files in os.walk(src, followlinks=False):
+        root_path = Path(root)
+        rel_root = root_path.relative_to(src)
         dirs[:] = sorted(
             d
             for d in dirs
             if not d.startswith(".") and d not in _EXCLUDED_DIR_NAMES
         )
-        for fname in sorted(files):
-            if (
-                fname.startswith(".")
-                or fname in _EXCLUDED_FILE_NAMES
-                or fname.endswith((".pyc", ".pyo"))
-            ):
-                continue
-            src_fpath = Path(root) / fname
-            dst_fpath = dst / rel_root / fname
-            dst_fpath.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src_fpath, dst_fpath)
+        for dirname in dirs:
+            _reject_symlink(root_path / dirname, "archive source")
+        _copy_filtered_files(root_path, dst / rel_root, files)
+
+
+def _check_root_ancestors(app_dir: Path, root_name: str) -> Path:
+    current = app_dir
+    for part in PurePosixPath(root_name).parts:
+        current = current / part
+        _reject_symlink(current, "archive source")
+    return current
 
 
 def _stage_archive_dir(
@@ -95,7 +118,7 @@ def _stage_archive_dir(
 ) -> None:
     """Copy allowed CES roots and optional ``env_file`` into ``temp_dir``."""
     for root_name in sorted(VALID_ARCHIVE_ROOTS):
-        src_path = app_dir / root_name
+        src_path = _check_root_ancestors(app_dir, root_name)
         if not src_path.exists():
             continue
         dst_path = temp_dir / root_name
@@ -180,17 +203,21 @@ def package_app_archive(
     staged app config are resolved from the staged ``environment.json`` (after
     ``env_file`` is applied). If ``resolved_env_vars`` is a list, resolved
     variable names are appended to it. Raises ``ValueError`` if a placeholder
-    cannot be resolved or if ``wrapper_dir`` is unsafe.
+    cannot be resolved, a symlink is encountered, or ``wrapper_dir`` is unsafe.
     """
-    app_dir = Path(app_dir).resolve()
+    raw_app_dir = Path(app_dir)
+    _reject_symlink(raw_app_dir, "app_dir")
+    resolved_app_dir = raw_app_dir.resolve()
     output_zip = Path(output_zip).resolve()
 
-    if not app_dir.is_dir():
-        raise FileNotFoundError(f"App directory not found: {app_dir}")
+    if not resolved_app_dir.is_dir():
+        raise FileNotFoundError(f"App directory not found: {resolved_app_dir}")
 
     resolved_env_file: Path | None = None
     if env_file is not None:
-        resolved_env_file = Path(env_file).resolve()
+        raw_env_file = Path(env_file)
+        _reject_symlink(raw_env_file, "env_file")
+        resolved_env_file = raw_env_file.resolve()
         if not resolved_env_file.is_file():
             raise FileNotFoundError(
                 f"Environment file not found: {resolved_env_file}"
@@ -202,7 +229,7 @@ def package_app_archive(
 
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
-        _stage_archive_dir(app_dir, temp_dir, resolved_env_file)
+        _stage_archive_dir(resolved_app_dir, temp_dir, resolved_env_file)
         if resolve_env or resolved_env_vars is not None:
             _resolve_staged_env(temp_dir, resolved_env_vars)
         entries = _collect_archive_entries(temp_dir, wrapper_prefix)

@@ -168,3 +168,122 @@ def test_package_app_archive_missing_inputs(tmp_path: Path) -> None:
         package_app_archive(
             app_dir, tmp_path / "out.zip", tmp_path / "missing_env.json"
         )
+
+
+@pytest.mark.parametrize(
+    "bad_wrapper", ["../../escape", "/etc/evil", "a/../b", r"a\b"]
+)
+def test_package_wrapper_dir_rejects_path_traversal(
+    tmp_path: Path, bad_wrapper: str
+) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"(?i)wrapper|path|invalid|traversal"):
+        package_app_archive(
+            app_dir, tmp_path / "out.zip", wrapper_dir=bad_wrapper
+        )
+
+
+def test_package_resolves_string_boolean_env_override(tmp_path: Path) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "displayName": "BoolEnvApp",
+                "variableDeclarations": [
+                    {
+                        "name": "feature_flag",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    }
+                ],
+                "languageSettings": {
+                    "defaultLanguageCode": "en",
+                    "enableMultilingualSupport": "$env_var",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "prod_env.json"
+    env_file.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {"name": "feature_flag", "schema": {"default": True}}
+                    ],
+                    "languageSettings": {"enableMultilingualSupport": "true"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resolved: list[str] = []
+    zip_path = package_app_archive(
+        app_dir, tmp_path / "pkg.zip", env_file, resolved_env_vars=resolved
+    )
+    assert resolved == ["feature_flag"]
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        staged_app = json.loads(zf.read("app.json"))
+    assert staged_app["variableDeclarations"][0]["schema"]["default"] is True
+    assert staged_app["languageSettings"]["enableMultilingualSupport"] is True
+
+
+def test_package_includes_app_yml_root(tmp_path: Path) -> None:
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    (app_dir / "app.yml").write_text("rootAgent: main\n", encoding="utf-8")
+
+    zip_path = package_app_archive(app_dir, tmp_path / "app_yml.zip")
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        assert "app.yml" in zf.namelist()
+        assert zf.read("app.yml").decode("utf-8") == "rootAgent: main\n"
+
+
+def test_package_rejects_symlinks(tmp_path: Path) -> None:
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+
+    # Symlinked app_dir
+    real_app = tmp_path / "real_app"
+    real_app.mkdir()
+    (real_app / "app.json").write_text("{}", encoding="utf-8")
+    link_app = tmp_path / "link_app"
+    link_app.symlink_to(real_app)
+    with pytest.raises(ValueError, match="Symlinks are not permitted"):
+        package_app_archive(link_app, tmp_path / "out1.zip")
+
+    # Symlinked env_file
+    link_env = tmp_path / "link_env.json"
+    link_env.symlink_to(outside)
+    with pytest.raises(ValueError, match="Symlinks are not permitted"):
+        package_app_archive(real_app, tmp_path / "out2.zip", link_env)
+
+    # Symlinked archive root file
+    app_root_link = tmp_path / "app_root_link"
+    app_root_link.mkdir()
+    (app_root_link / "app.json").symlink_to(outside)
+    with pytest.raises(ValueError, match="Symlinks are not permitted"):
+        package_app_archive(app_root_link, tmp_path / "out3.zip")
+
+    # Symlinked nested file inside agents/
+    app_nested = tmp_path / "app_nested"
+    (app_nested / "agents" / "a1").mkdir(parents=True)
+    (app_nested / "app.json").write_text("{}", encoding="utf-8")
+    (app_nested / "agents" / "a1" / "leak.txt").symlink_to(outside)
+    with pytest.raises(ValueError, match="Symlinks are not permitted"):
+        package_app_archive(app_nested, tmp_path / "out4.zip")
+
+    # Symlinked nested directory inside agents/
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    app_dir_link = tmp_path / "app_dir_link"
+    (app_dir_link / "agents").mkdir(parents=True)
+    (app_dir_link / "app.json").write_text("{}", encoding="utf-8")
+    (app_dir_link / "agents" / "linked_agent").symlink_to(outside_dir)
+    with pytest.raises(ValueError, match="Symlinks are not permitted"):
+        package_app_archive(app_dir_link, tmp_path / "out5.zip")
