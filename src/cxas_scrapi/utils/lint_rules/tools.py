@@ -77,11 +77,8 @@ def _find_tool_ast_function(
     content: str, expected_name: str | None = None
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     """Find the entry tool AST function node, skipping private helpers."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(content)
-    except SyntaxError:
+    tree = safe_ast_parse(content)
+    if tree is None:
         return None
     fns = [
         node
@@ -796,12 +793,12 @@ class ToolInvalidPythonSyntax(Rule):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 compile(content, rel, "exec")
-        except SyntaxError as e:
+        except (SyntaxError, ValueError) as e:
             return [
                 self.make_result(
                     file=rel,
-                    line=e.lineno,
-                    message=(f"Invalid Python syntax: {e.msg}"),
+                    line=getattr(e, "lineno", None),
+                    message=(f"Invalid Python syntax: {getattr(e, 'msg', e)}"),
                     fix=(
                         "Fix the syntax error"
                         " — invalid Python causes"

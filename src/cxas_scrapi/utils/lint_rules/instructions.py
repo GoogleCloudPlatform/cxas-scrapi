@@ -21,7 +21,6 @@ import ast
 import contextlib
 import json
 import re
-import warnings
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (
@@ -30,6 +29,7 @@ from cxas_scrapi.utils.linter import (
     Rule,
     Severity,
     rule,
+    safe_ast_parse,
 )
 
 TOOL_REF_PATTERN = re.compile(r"\{@TOOL:\s*([^}]+)\}")
@@ -361,11 +361,8 @@ def _extract_py_tool_refs_and_dags(
     """Extract candidate tool references and ``*_dag`` calls from Python AST."""
     matched: set[str] = set()
     dags: set[str] = set()
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(text)
-    except SyntaxError:
+    tree = safe_ast_parse(text)
+    if tree is None:
         for tool in candidate_tools:
             if re.search(rf"\btools\.{re.escape(tool)}\b", text):
                 matched.add(tool)

@@ -26,7 +26,6 @@ CXAS Best Practices Guide (§1.2, §2.5, Appendix A Traps #24-#26):
 import ast
 import json
 import re
-import warnings
 from pathlib import Path
 
 import yaml
@@ -39,6 +38,7 @@ from cxas_scrapi.utils.linter import (
     Rule,
     Severity,
     rule,
+    safe_ast_parse,
 )
 
 SPEAKING_STYLE_WORD_LIMIT = 25
@@ -184,11 +184,8 @@ def _line_at(text: str, offset: int) -> str:
 
 def _extract_callback_tts_strings(content: str) -> list[tuple[int, str]]:
     """Extract string literals passed to Part.from_text/customized_response."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(content)
-    except SyntaxError:
+    tree = safe_ast_parse(content)
+    if tree is None:
         return []
 
     spans: list[tuple[int, str]] = []

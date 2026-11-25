@@ -24,7 +24,6 @@ import ast
 import json
 import re
 import typing
-import warnings
 from pathlib import Path
 
 import yaml
@@ -35,6 +34,7 @@ from cxas_scrapi.utils.linter import (
     Rule,
     Severity,
     rule,
+    safe_ast_parse,
 )
 
 # ── Schema loading & caching ─────────────────────────────────────────────
@@ -463,11 +463,8 @@ class _StateAccessVisitor(ast.NodeVisitor):
 def _collect_state_accesses(
     content: str,
 ) -> list[tuple[str, str, int, str | None]]:
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(content)
-    except SyntaxError:
+    tree = safe_ast_parse(content)
+    if tree is None:
         return []
     visitor = _StateAccessVisitor()
     visitor.visit(tree)
@@ -589,10 +586,10 @@ def _agent_callback_substitutes_ref(file_path: Path, ref: str) -> bool:
             continue
         try:
             text = py_file.read_text(errors="ignore")
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                tree = ast.parse(text)
-        except (OSError, SyntaxError):
+        except OSError:
+            continue
+        tree = safe_ast_parse(text)
+        if tree is None:
             continue
         if _tree_replaces_placeholder(tree, placeholder):
             return True

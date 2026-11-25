@@ -35,6 +35,8 @@ from cxas_scrapi.utils.linter import (
     LintResult,
     Rule,
     Severity,
+    _find_dir_config,
+    _load_config_dict,
     is_voice_app,
     parse_config_content,
     rel_to_project,
@@ -62,17 +64,45 @@ def _get_field(mapping: dict[str, Any], camel: str, snake: str) -> Any:
     return mapping.get(snake)
 
 
+def _find_agent_config_file(
+    agent_dir: Path, root_agent_name: str
+) -> Path | None:
+    """Return ``<dir>.{json,yaml,yml}`` or ``<root>.{json,yaml,yml}``."""
+    return _find_dir_config(agent_dir) or _find_dir_config(
+        agent_dir, root_agent_name
+    )
+
+
 @rule("config")
 class InvalidJson(Rule):
     id = "A001"
     name = "config-json-parse"
-    description = "Config file must be valid JSON"
+    description = "Config file must be valid JSON or YAML"
     default_severity = Severity.ERROR
 
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
+        if file_path.suffix.lower() in (".yaml", ".yml"):
+            try:
+                data = yaml.safe_load(content)
+            except yaml.YAMLError as e:
+                return [
+                    self.make_result(
+                        file=rel,
+                        message=f"Invalid YAML: {e}",
+                    )
+                ]
+            if not isinstance(data, dict):
+                return [
+                    self.make_result(
+                        file=rel,
+                        message="Invalid YAML: expected a mapping",
+                    )
+                ]
+            return []
+
         try:
             json.loads(content)
         except json.JSONDecodeError as e:
@@ -96,13 +126,12 @@ class MissingRequiredFields(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = parse_config_content(file_path, content)
+        if data is None:
             return []
 
         results = []
-        if file_path.name == "app.json":
+        if file_path.name in APP_CONFIG_NAMES:
             for field_name in ["name", "displayName"]:
                 if field_name not in data:
                     results.append(
@@ -126,16 +155,21 @@ class AgentToolNotExists(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name == "app.json":
+        if file_path.name in APP_CONFIG_NAMES:
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = parse_config_content(file_path, content)
+        if data is None:
+            return []
+
+        raw_tools = data.get("tools", [])
+        if not isinstance(raw_tools, list):
             return []
 
         results = []
-        for tool in data.get("tools", []):
+        for tool in raw_tools:
+            if not isinstance(tool, str):
+                continue
             if tool not in context.all_known_tools:
                 results.append(
                     self.make_result(
@@ -171,28 +205,25 @@ def _resolve_agent_dir(agents_dir: Path, agent_ref: str) -> Path | None:
     contain spaces or differ in casing from the sanitized directory name).
     """
     direct = agents_dir / agent_ref
-    if direct.is_dir():
+    if direct.is_dir() and not direct.is_symlink():
         return direct
 
     sanitized = agents_dir / agent_ref.replace(" ", "_")
-    if sanitized.is_dir():
+    if sanitized.is_dir() and not sanitized.is_symlink():
         return sanitized
 
-    if not agents_dir.is_dir():
+    if not agents_dir.is_dir() or agents_dir.is_symlink():
         return None
 
     ref_norm = agent_ref.replace(" ", "_").lower()
     for subdir in sorted(agents_dir.iterdir()):
-        if not subdir.is_dir():
+        if subdir.is_symlink() or not subdir.is_dir():
             continue
         if subdir.name.replace(" ", "_").lower() == ref_norm:
             return subdir
-        agent_json = subdir / f"{subdir.name}.json"
-        if agent_json.exists():
-            try:
-                agent_data = json.loads(agent_json.read_text())
-            except (json.JSONDecodeError, OSError):
-                continue
+        agent_cfg_path = _find_dir_config(subdir)
+        if agent_cfg_path is not None:
+            agent_data = _load_config_dict(agent_cfg_path)
             if (
                 isinstance(agent_data, dict)
                 and agent_data.get("displayName") == agent_ref
@@ -214,15 +245,12 @@ class AgentMissingInstruction(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name == "app.json":
+        if file_path.name in APP_CONFIG_NAMES:
             return []
 
-        try:
-            data = json.loads(content)
-            if isinstance(data, dict) and (_NON_LLM_AGENT_KEYS & data.keys()):
-                return []
-        except json.JSONDecodeError:
-            pass
+        data = parse_config_content(file_path, content)
+        if data is not None and (_NON_LLM_AGENT_KEYS & data.keys()):
+            return []
 
         agent_dir = file_path.parent
         instruction = agent_dir / "instruction.txt"
@@ -257,12 +285,11 @@ class RootAgentMissingEndSession(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name != "app.json":
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = parse_config_content(file_path, content)
+        if data is None:
             return []
 
         root_agent_name = data.get("rootAgent")
@@ -275,19 +302,16 @@ class RootAgentMissingEndSession(Rule):
         if not agent_dir:
             return []
 
-        agent_json = agent_dir / f"{agent_dir.name}.json"
-        if not agent_json.exists():
-            agent_json = agent_dir / f"{root_agent_name}.json"
-        if not agent_json.exists():
+        agent_cfg_path = _find_agent_config_file(agent_dir, root_agent_name)
+        if agent_cfg_path is None:
             return []
 
-        try:
-            agent_data = json.loads(agent_json.read_text())
-        except (json.JSONDecodeError, OSError):
+        agent_data = _load_config_dict(agent_cfg_path)
+        if agent_data is None:
             return []
 
         tools = agent_data.get("tools", [])
-        if "end_session" not in tools:
+        if not isinstance(tools, list) or "end_session" not in tools:
             return [
                 self.make_result(
                     file=rel,
@@ -327,12 +351,11 @@ class AppRootAgentValidation(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name != "app.json":
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
 
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
+        data = parse_config_content(file_path, content)
+        if data is None:
             return []
 
         results = []
@@ -343,8 +366,8 @@ class AppRootAgentValidation(Rule):
                 self.make_result(
                     file=rel,
                     message=(
-                        "Found 'root_agent' in app.json, but CXAS strictly "
-                        "requires camelCase 'rootAgent'"
+                        f"Found 'root_agent' in {file_path.name}, but CXAS "
+                        "strictly requires camelCase 'rootAgent'"
                     ),
                     fix="Rename 'root_agent' to 'rootAgent'",
                 )
@@ -358,11 +381,14 @@ class AppRootAgentValidation(Rule):
                 self.make_result(
                     file=rel,
                     message=(
-                        "Missing required field 'rootAgent' in app.json. "
-                        "An app must have a rootAgent to handle incoming "
-                        "sessions"
+                        f"Missing required field 'rootAgent' in "
+                        f"{file_path.name}. An app must have a rootAgent to "
+                        "handle incoming sessions"
                     ),
-                    fix="Add 'rootAgent': '<agent_directory_name>' to app.json",
+                    fix=(
+                        "Add 'rootAgent': '<agent_directory_name>' to "
+                        f"{file_path.name}"
+                    ),
                 )
             )
             return results
@@ -373,8 +399,8 @@ class AppRootAgentValidation(Rule):
                 self.make_result(
                     file=rel,
                     message=(
-                        "Field 'rootAgent' in app.json must be a string, "
-                        f"got {type(root_agent_name).__name__}"
+                        f"Field 'rootAgent' in {file_path.name} must be a "
+                        f"string, got {type(root_agent_name).__name__}"
                     ),
                 )
             )
@@ -389,23 +415,20 @@ class AppRootAgentValidation(Rule):
                 self.make_result(
                     file=rel,
                     message=(
-                        f"rootAgent '{root_agent_name}' specified in app.json "
-                        "does not exist under the agents/ directory"
+                        f"rootAgent '{root_agent_name}' specified in "
+                        f"{file_path.name} does not exist under the agents/ "
+                        "directory"
                     ),
                     fix=(
                         f"Create the directory 'agents/{root_agent_name}' "
-                        "or fix the 'rootAgent' reference in app.json"
+                        f"or fix the 'rootAgent' reference in {file_path.name}"
                     ),
                 )
             )
             return results
 
-        # 5. Check if <rootAgent>.json exists
-        agent_json = agent_dir / f"{agent_dir.name}.json"
-        if (
-            not agent_json.exists()
-            and not (agent_dir / f"{root_agent_name}.json").exists()
-        ):
+        # 5. Check if <rootAgent>.{json,yaml,yml} exists
+        if _find_agent_config_file(agent_dir, root_agent_name) is None:
             results.append(
                 self.make_result(
                     file=rel,
@@ -960,13 +983,6 @@ class CompositeSamplingTemperature(Rule):
         return results
 
 
-def _rel_or_str(path: Path, root: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(root.resolve()))
-    except ValueError:
-        return str(path)
-
-
 @rule("config")
 class AppVariableDefaultsAndEnvVars(Rule):
     id = "A017"
@@ -980,19 +996,12 @@ class AppVariableDefaultsAndEnvVars(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
 
-        rel = _rel_or_str(file_path, context.project_root)
-        try:
-            if file_path.suffix == ".yaml":
-                data = yaml.safe_load(content)
-            else:
-                data = json.loads(content)
-        except (json.JSONDecodeError, yaml.YAMLError):
-            return []
-
-        if not isinstance(data, dict):
+        rel = rel_to_project(file_path, context)
+        data = parse_config_content(file_path, content)
+        if data is None:
             return []
 
         raw_decls = (
@@ -1043,7 +1052,7 @@ class AppVariableDefaultsAndEnvVars(Rule):
         env_path: Path | None = None
         if context.env_file is not None:
             env_path = context.env_file
-            env_rel = _rel_or_str(env_path, context.project_root)
+            env_rel = rel_to_project(env_path, context)
             if not env_path.is_file():
                 results.append(
                     self.make_result(
@@ -1057,7 +1066,7 @@ class AppVariableDefaultsAndEnvVars(Rule):
             candidate = file_path.parent / "environment.json"
             if candidate.is_file():
                 env_path = candidate
-                env_rel = _rel_or_str(env_path, context.project_root)
+                env_rel = rel_to_project(env_path, context)
 
         if env_path is None:
             return results

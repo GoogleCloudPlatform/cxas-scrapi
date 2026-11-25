@@ -43,20 +43,33 @@ from cxas_scrapi.utils.linter import (
 
 
 def _load_json_or_yaml(directory: Path, file_name: str) -> typing.Any:
-    """Load config from ``<file_name>.yaml`` or ``<file_name>.json``."""
-    yaml_path = directory / f"{file_name}.yaml"
-    json_path = directory / f"{file_name}.json"
+    """Load config from ``<file_name>.yaml``, ``.yml``, or ``.json``."""
+    for ext in (".yaml", ".yml", ".json"):
+        path = directory / f"{file_name}{ext}"
+        if path.is_file() and not path.is_symlink():
+            raw = path.read_text(encoding="utf-8")
+            return json.loads(raw) if ext == ".json" else yaml.safe_load(raw)
+    raise FileNotFoundError(
+        f"Missing {file_name}.yaml, {file_name}.yml, or {file_name}.json "
+        f"in {directory}"
+    )
 
-    if yaml_path.exists():
-        with open(yaml_path) as f:
-            return yaml.safe_load(f)
-    elif json_path.exists():
-        with open(json_path) as f:
-            return json.load(f)
-    else:
-        raise FileNotFoundError(
-            f"Missing {file_name}.yaml or {file_name}.json in {directory}"
-        )
+
+def _load_schema_config(
+    rule_obj: Rule, resource_dir: Path, config_name: str, rel: str
+) -> tuple[typing.Any, list[LintResult]]:
+    """Load config data or return a structured LintResult error."""
+    try:
+        return _load_json_or_yaml(resource_dir, config_name), []
+    except FileNotFoundError as e:
+        return None, [rule_obj.make_result(rel, f"Missing config: {e}")]
+    except (
+        yaml.YAMLError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        OSError,
+    ) as e:
+        return None, [rule_obj.make_result(rel, f"Invalid config file: {e}")]
 
 
 _NON_PATH_KEYS: frozenset[str] = frozenset(
@@ -99,7 +112,7 @@ def _resolve_paths(
         isinstance(data, str)
         and "://" not in data
         and not any(c.isspace() for c in data)
-        and data.endswith((".txt", ".py", ".yaml", ".json"))
+        and data.endswith((".txt", ".py", ".yaml", ".yml", ".json"))
     ):
         path_to_check = Path(data)
         resolved = False
@@ -285,6 +298,44 @@ def _validate_legacy_remote_agent_tool(tool_data: dict) -> str | None:
     return None
 
 
+def _strip_tool_config_v1main_fields(data: dict[str, typing.Any]) -> None:
+    """Strip v1main-only fields inside a tool_config payload."""
+    ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
+    if isinstance(ds_tool, dict):
+        mod_configs = ds_tool.get("modalityConfigs") or ds_tool.get(
+            "modality_configs"
+        )
+        if isinstance(mod_configs, list):
+            for mc in mod_configs:
+                _pop_missing_descriptor_fields(
+                    mc,
+                    types.DataStoreTool.ModalityConfig,
+                    ("snippetsConfig", "snippets_config"),
+                )
+    if getattr(types, "RemoteAgentTool", None) is None:
+        if _validate_legacy_remote_agent_tool(data) is None:
+            data.pop("remoteAgentTool", None)
+            data.pop("remote_agent_tool", None)
+    else:
+        remote_tool = data.get("remoteAgentTool") or data.get(
+            "remote_agent_tool"
+        )
+        _pop_missing_descriptor_fields(
+            remote_tool,
+            types.RemoteAgentTool,
+            (
+                "apiAuthentication",
+                "api_authentication",
+                "statefulAgent",
+                "stateful_agent",
+                "inputVariableMapping",
+                "input_variable_mapping",
+                "outputVariableMapping",
+                "output_variable_mapping",
+            ),
+        )
+
+
 def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
     """Strip CES v1main fields that lag in the google-cloud-ces v1beta wheel."""
     if not isinstance(data, dict):
@@ -296,41 +347,14 @@ def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
             types.ModelSettings,
             ("thinkingLevel", "thinking_level"),
         )
-    elif target == "tool_config":
-        ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
-        if isinstance(ds_tool, dict):
-            mod_configs = ds_tool.get("modalityConfigs") or ds_tool.get(
-                "modality_configs"
-            )
-            if isinstance(mod_configs, list):
-                for mc in mod_configs:
-                    _pop_missing_descriptor_fields(
-                        mc,
-                        types.DataStoreTool.ModalityConfig,
-                        ("snippetsConfig", "snippets_config"),
-                    )
-        if getattr(types, "RemoteAgentTool", None) is None:
-            if _validate_legacy_remote_agent_tool(data) is None:
-                data.pop("remoteAgentTool", None)
-                data.pop("remote_agent_tool", None)
-        else:
-            remote_tool = data.get("remoteAgentTool") or data.get(
-                "remote_agent_tool"
-            )
+        if target == "agent_config":
             _pop_missing_descriptor_fields(
-                remote_tool,
-                types.RemoteAgentTool,
-                (
-                    "apiAuthentication",
-                    "api_authentication",
-                    "statefulAgent",
-                    "stateful_agent",
-                    "inputVariableMapping",
-                    "input_variable_mapping",
-                    "outputVariableMapping",
-                    "output_variable_mapping",
-                ),
+                data,
+                types.Agent,
+                ("guidedAgent", "guided_agent"),
             )
+    elif target == "tool_config":
+        _strip_tool_config_v1main_fields(data)
     elif target == "guardrail_config":
         action = data.get("action")
         _pop_missing_descriptor_fields(
@@ -467,10 +491,11 @@ class SchemaValid(Rule):
         config_name = self._config_name or resource_dir.name
         rel = str(resource_dir)
 
-        try:
-            data = _load_json_or_yaml(resource_dir, config_name)
-        except FileNotFoundError as e:
-            return [self.make_result(rel, f"Missing config: {e}")]
+        data, load_errors = _load_schema_config(
+            self, resource_dir, config_name, rel
+        )
+        if load_errors:
+            return load_errors
 
         if not isinstance(data, dict):
             return [
