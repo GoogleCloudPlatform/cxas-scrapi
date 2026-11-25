@@ -25,9 +25,10 @@ what it returned or which tools the model would see.
 
 Example:
   python3 run_locally.py cxas_app/my-agent callback \
-    'open_playbook={"playbook_name": "order_support", "rationale": "test"}' \
-    'load_task={"task_name": "cancel_order", "rationale": "test"}' \
-    'lookup_order={"order_number": "1001"}' \
+    'select_domain={"domain_name": "live_agent", "rationale": "test"}' \
+    'load_workflow={"workflow_name": "live_agent_escalation",
+      "rationale": "test"}' \
+    'execute_live_agent_handover={"reason": "customer_requested_agent"}' \
     callback
 """
 
@@ -40,7 +41,7 @@ import pathlib
 import re
 import types
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any, Literal, Optional, TypedDict, Union
 
 import jinja2
 
@@ -49,6 +50,11 @@ from cxas_scrapi.utils import callback_libs
 COMMENT = re.compile(r"\{\{#.*?#\}\}", re.S)
 SINGLE_COMMENT = re.compile(r"(?<!\{)\{#.*?#\}(?!\})", re.S)
 DOUBLE_BLOCK = re.compile(r"\{\{%(-?)(.*?)(-?)%\}\}", re.S)
+OUTPUT_TAG = re.compile(r"(?<!\{)\{\{(?![%#])(.*?)\}\}(?!\})", re.S)
+VALID_OUTPUT_EXPR = re.compile(
+    r"^\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*$",
+    re.S,
+)
 
 
 class ToolResponse:
@@ -90,28 +96,34 @@ class _ToolsProxy:
 class Runner:
     """Runs an app's tools and callback against one shared session state."""
 
-    def __init__(self, app_dir: pathlib.Path, state: dict[str, Any]):
+    def __init__(
+        self,
+        app_dir: pathlib.Path | str,
+        state: dict[str, Any] | None = None,
+    ):
         """Initializes the runner.
 
         Args:
           app_dir: The app directory, as `cxas pull` writes it.
           state: The session state, which every step updates in place.
         """
-        self.app_dir = app_dir
+        self.app_dir = pathlib.Path(app_dir)
         self.app = json.loads(
-            (app_dir / "app.json").read_text(encoding="utf-8")
+            (self.app_dir / "app.json").read_text(encoding="utf-8")
         )
         root = self.app["rootAgent"]
-        self.agent_dir = app_dir / "agents" / root
+        self.agent_dir = self.app_dir / "agents" / root
         self.agent = json.loads(
             (self.agent_dir / f"{root}.json").read_text(encoding="utf-8")
         )
+        if state is None:
+            state = _defaults(self.app)
         self.state = state
         self.context = types.SimpleNamespace(
             state=state, session_id="local-test"
         )
         self.tools = _ToolsProxy(self)
-        self._loaded = {}
+        self._loaded: dict[str, Callable[..., Any]] = {}
 
     def load_tool(self, name: str) -> Callable[..., Any]:
         """Returns the function of the Python tool `name`, loading it once."""
@@ -127,10 +139,17 @@ class Runner:
                 raise SystemExit(
                     f"no Python tool named {name!r} ({path} is missing)"
                 )
-            namespace = {
+            namespace: dict[str, Any] = {
                 "context": self.context,
                 "tools": self.tools,
                 "__name__": name,
+                "Any": Any,
+                "Literal": Literal,
+                "Optional": Optional,
+                "TypedDict": TypedDict,
+                "Union": Union,
+                "re": re,
+                "json": json,
             }
             # Tool code expects the globals CES provides, so exec it in place.
             code = compile(path.read_text(encoding="utf-8"), str(path), "exec")
@@ -159,13 +178,20 @@ class Runner:
         code = (self.app_dir / callbacks[0]["pythonCode"]).read_text(
             encoding="utf-8"
         )
-        namespace = {
+        namespace: dict[str, Any] = {
             n: getattr(callback_libs, n)
             for n in dir(callback_libs)
             if not n.startswith("_")
         }
         namespace.update(
-            Optional=Optional, Any=Any, json=json, tools=self.tools
+            Optional=Optional,
+            Any=Any,
+            Literal=Literal,
+            TypedDict=TypedDict,
+            Union=Union,
+            re=re,
+            json=json,
+            tools=self.tools,
         )
         compiled = compile(code, "before_model_callback", "exec")
         exec(compiled, namespace)  # pylint: disable=exec-used
@@ -177,6 +203,14 @@ class Runner:
         )
         source = SINGLE_COMMENT.sub(
             lambda m: "{% raw %}" + m.group(0) + "{% endraw %}", source
+        )
+        source = OUTPUT_TAG.sub(
+            lambda m: (
+                m.group(0)
+                if VALID_OUTPUT_EXPR.match(m.group(1))
+                else "{% raw %}" + m.group(0) + "{% endraw %}"
+            ),
+            source,
         )
         rendered = jinja2.Environment().from_string(source).render(**self.state)
         cl = callback_libs
@@ -205,12 +239,24 @@ class Runner:
         return response, request
 
 
+def _empty(schema: dict[str, Any]) -> Any:
+    """Returns a variable's declared default, or an empty value of its type."""
+    if "default" in schema:
+        return copy.deepcopy(schema["default"])
+    kind = schema.get("type")
+    if kind == "OBJECT":
+        return {
+            k: _empty(v) for k, v in (schema.get("properties") or {}).items()
+        }
+    if kind == "ARRAY":
+        return []
+    return {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}.get(kind)
+
+
 def _defaults(app: dict[str, Any]) -> dict[str, Any]:
-    empty = {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}
     out = {}
     for var in app.get("variableDeclarations", []):
-        schema = var.get("schema", {})
-        out[var["name"]] = schema.get("default", empty.get(schema.get("type")))
+        out[var["name"]] = _empty(var.get("schema", {}))
     tz = app.get("timeZoneSettings", {}).get("timeZone", "UTC")
     out.setdefault("current_date", f"{datetime.date.today().isoformat()}[{tz}]")
     return out
@@ -228,14 +274,46 @@ def _changes(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
 def _describe(response: callback_libs.LlmResponse) -> list[str]:
     """Returns one line for each part of the callback's response."""
     out = []
-    for part in (response.content.parts if response.content else None) or []:
-        if part.inline_data is not None:
-            data = json.loads(base64.b64decode(part.inline_data.data))
-            out.append(f"says: {data.get('content')!r}")
-        elif part.function_call is not None:
+    parts = (
+        (response.content.parts if getattr(response, "content", None) else None)
+        or getattr(response, "parts", None)
+        or []
+    )
+    for part in parts:
+        if getattr(part, "inline_data", None) is not None:
+            raw_data = part.inline_data.data
+            if isinstance(raw_data, (bytes, str)):
+                try:
+                    decoded = base64.b64decode(raw_data)
+                    data = json.loads(decoded)
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    data = (
+                        json.loads(raw_data)
+                        if isinstance(raw_data, str)
+                        else {}
+                    )
+            else:
+                data = {}
+            if "content" in data:
+                out.append(f"says: {data.get('content')!r}")
+            elif (
+                "end_session" in data
+                or "session_escalated" in data
+                or "escalated" in data
+            ):
+                out.append(f"calls end_session({json.dumps(data)})")
+            else:
+                out.append(f"inline_data: {json.dumps(data)}")
+        elif getattr(part, "function_call", None) is not None:
             call = part.function_call
             out.append(f"calls {call.name}({json.dumps(call.args)})")
-        elif part.text:
+        elif getattr(part, "end_session", None) is not None:
+            es = part.end_session
+            if isinstance(es, dict):
+                out.append(f"calls end_session({json.dumps(es)})")
+            else:
+                out.append(f"calls end_session({es!r})")
+        elif getattr(part, "text", None):
             out.append(f"text: {part.text!r}")
     return out
 

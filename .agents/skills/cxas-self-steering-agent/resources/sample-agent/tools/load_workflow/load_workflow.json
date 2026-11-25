@@ -1,0 +1,10 @@
+{
+  "name": "load_workflow",
+  "pythonFunction": {
+    "name": "load_workflow",
+    "pythonCode": "tools/load_workflow/python_function/python_code.py",
+    "description": "Loads the instructions for a workflow in the currently selected domain.\n\nArgs:\n  workflow_name (str): Exact name of the workflow to load.\n  rationale (str): Why this workflow is being loaded. Kept in the conversation\n    history so later turns know what prompted it. One short sentence (max 15\n    words) stating the customer's request or the tool result that led here,\n    e.g. \"Connect the customer with a live representative.\" Do not restate\n    the workflow name or include personal data.\n\nReturns:\n  dict[str, Any]: Status and the loaded workflow, or an error code with the\n    required domain or valid workflows."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "load_workflow"
+}
