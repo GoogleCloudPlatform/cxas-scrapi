@@ -696,15 +696,10 @@ def apply_brand_overrides(
                             label=f"{t_label} environment.json",
                         )
 
-            if (not env_updated) or (
-                "url" in oa_cfg and oa_cfg.get("url") != CES_ENV_VAR_PLACEHOLDER
-            ):
-                oa_cfg["url"] = r_url
-                t_mod = True
-
             oa_yaml_path = _resolve_openapi_schema_path(
                 out_dir, t_dir, oa_cfg, label=t_label
             )
+            schema_has_servers_url = False
             if oa_yaml_path is not None:
                 oa_raw = oa_yaml_path.read_text("utf-8")
                 try:
@@ -717,6 +712,15 @@ def apply_brand_overrides(
                     ) from exc
                 oa_paths = (
                     oa_doc.get("paths") if isinstance(oa_doc, dict) else None
+                )
+                oa_servers = (
+                    oa_doc.get("servers") if isinstance(oa_doc, dict) else None
+                )
+                schema_has_servers_url = isinstance(oa_servers, list) and any(
+                    isinstance(s, dict)
+                    and isinstance(s.get("url"), str)
+                    and s.get("url") != CES_ENV_VAR_PLACEHOLDER
+                    for s in oa_servers
                 )
                 parsed_u = urlsplit(r_url)
                 srv_val = (
@@ -734,6 +738,13 @@ def apply_brand_overrides(
                 )
                 if oa_changed:
                     oa_yaml_path.write_text(rebuilt_oa, "utf-8")
+
+            if oa_cfg.get("url") != CES_ENV_VAR_PLACEHOLDER and (
+                "url" in oa_cfg
+                or (not env_updated and not schema_has_servers_url)
+            ):
+                oa_cfg["url"] = r_url
+                t_mod = True
 
         if t_mod:
             _write_config_dict(t_cfg_path, out_dir, t_data, label=t_label)

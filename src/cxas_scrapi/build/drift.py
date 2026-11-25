@@ -358,12 +358,23 @@ def extract_normalized_resources(
 
                 if category == "agents":
                     instr_file = entry / "instruction.txt"
+                    raw_instr = raw_obj.get("instruction")
+                    if isinstance(raw_instr, str) and raw_instr.strip():
+                        rel_instr = raw_instr.strip()
+                        cand = root / rel_instr
+                        if not cand.is_file() and (
+                            ("/" not in rel_instr and "\\" not in rel_instr)
+                            or (entry / rel_instr).is_file()
+                        ):
+                            cand = entry / rel_instr
+                        instr_file = cand
                     if instr_file.is_symlink() or instr_file.is_file():
                         assert_safe_subpath(instr_file, root, label=res_id)
                     if instr_file.is_file():
                         norm_obj["_instructionLines"] = (
                             read_utf8_strict(
-                                instr_file, context=f"{res_id} instruction.txt"
+                                instr_file,
+                                context=f"{res_id} {instr_file.name}",
                             )
                             .replace("\r\n", "\n")
                             .splitlines()
