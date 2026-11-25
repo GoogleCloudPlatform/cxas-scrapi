@@ -1054,7 +1054,7 @@ class AsyncToolMissingInactivityTimeout(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
             return []
         data = _load_structured(file_path, content)
         if data is None:
@@ -1130,7 +1130,7 @@ class VariableCountLimit(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
             return []
         data = _load_structured(file_path, content)
         if data is None:
@@ -1192,7 +1192,7 @@ class LlmPolicyGuardrailLimit(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
             return []
         data = _load_structured(file_path, content)
         if data is None:

@@ -36,6 +36,8 @@ from cxas_scrapi.utils.linter import (
     Rule,
     Severity,
     ToolsetValidationBehavior,
+    _find_dir_config,
+    _load_config_dict,
     collect_attached_guardrails,
     discover_local_resources,
     get_toolset_tools,
@@ -43,6 +45,19 @@ from cxas_scrapi.utils.linter import (
     resolve_agent_graph,
     rule,
 )
+
+
+def _parse_agent_content(file_path: Path, content: str) -> dict | None:
+    """Parse JSON or YAML agent config content into a dict, or None."""
+    try:
+        data = (
+            yaml.safe_load(content)
+            if file_path.suffix.lower() in (".yaml", ".yml")
+            else json.loads(content)
+        )
+    except (json.JSONDecodeError, yaml.YAMLError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 @rule("structure")
@@ -67,13 +82,12 @@ class AgentToolReferences(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         agent_dir = file_path.parent
-        agent_json = agent_dir / f"{agent_dir.name}.json"
-        if not agent_json.exists():
+        agent_json = _find_dir_config(agent_dir)
+        if agent_json is None:
             return []
 
-        try:
-            agent_config = json.loads(agent_json.read_text())
-        except (json.JSONDecodeError, OSError):
+        agent_config = _load_config_dict(agent_json)
+        if agent_config is None:
             return []
 
         app_root = file_path.parent.parent.parent
@@ -185,16 +199,16 @@ class CallbackFileReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        try:
-            agent_config = json.loads(content)
-        except json.JSONDecodeError:
+        agent_config = _parse_agent_content(file_path, content)
+        if agent_config is None:
             return []
 
         results = []
         code_paths = [
             cb.get("pythonCode", "")
             for cb_type in _CALLBACK_TYPES
-            for cb in agent_config.get(cb_type, [])
+            for cb in (agent_config.get(cb_type) or [])
+            if isinstance(cb, dict)
         ]
         for code_path in filter(None, code_paths):
             resolved = _resolve_path(context.app_dir, code_path)
@@ -228,13 +242,14 @@ class ChildAgentReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        try:
-            agent_config = json.loads(content)
-        except json.JSONDecodeError:
+        agent_config = _parse_agent_content(file_path, content)
+        if agent_config is None:
             return []
 
         results = []
-        child_agents = agent_config.get("childAgents", [])
+        child_agents = agent_config.get("childAgents") or []
+        if not isinstance(child_agents, list):
+            return []
         valid_agents = context.all_agent_names | context.all_agent_display_names
         for child_name in child_agents:
             if child_name not in valid_agents:
@@ -269,9 +284,8 @@ class StrictAgentPathLayout(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         agent_name = file_path.stem
-        try:
-            agent_config = json.loads(content)
-        except json.JSONDecodeError:
+        agent_config = _parse_agent_content(file_path, content)
+        if agent_config is None:
             return []
 
         results = []
@@ -748,11 +762,8 @@ class AgentResourceReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        try:
-            agent_config = json.loads(content)
-        except json.JSONDecodeError:
-            return []
-        if not isinstance(agent_config, dict):
+        agent_config = _parse_agent_content(file_path, content)
+        if agent_config is None:
             return []
 
         app_root = _find_app_root_for_path(file_path, context)

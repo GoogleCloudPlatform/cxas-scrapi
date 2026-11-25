@@ -296,6 +296,14 @@ def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
             types.ModelSettings,
             ("thinkingLevel", "thinking_level"),
         )
+        if target == "agent_config":
+            for guided_key in ("guidedAgent", "guided_agent"):
+                if isinstance(data.get(guided_key), dict):
+                    _pop_missing_descriptor_fields(
+                        data,
+                        types.Agent,
+                        (guided_key,),
+                    )
     elif target == "tool_config":
         ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
         if isinstance(ds_tool, dict):

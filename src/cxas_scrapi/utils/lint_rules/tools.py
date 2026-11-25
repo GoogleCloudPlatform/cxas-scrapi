@@ -498,6 +498,18 @@ def _is_tool_referenced_in_code_or_guardrails(
                     )
                     if isinstance(disp, str) and disp.strip():
                         other_cands.add(disp.strip())
+                    raw_other_name = other_cfg.get("name")
+                    if (
+                        isinstance(raw_other_name, str)
+                        and raw_other_name.strip()
+                    ):
+                        clean_other = raw_other_name.strip()
+                        other_cands.update(
+                            extract_resource_ref_candidates(
+                                clean_other, "tools"
+                            )
+                        )
+                        other_cands.add(clean_other.rsplit("/", 1)[-1])
                 attaching = [
                     a
                     for a, refs in agent_tool_map.items()

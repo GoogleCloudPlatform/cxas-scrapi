@@ -1210,27 +1210,51 @@ class Discovery:
         if not self.app_root:
             return {}
         tools_dir = self.app_root / "tools"
-        if not tools_dir.exists():
+        if tools_dir.is_symlink() or not tools_dir.is_dir():
             return {}
         result = {}
         for d in sorted(tools_dir.iterdir()):
-            if d.is_dir():
-                if (
-                    self.limit_tools is not None
-                    and d.name not in self.limit_tools
-                ):
-                    continue
-                code = d / "python_function" / "python_code.py"
-                if code.exists():
-                    result[d.name] = code
-                else:
-                    config_files = (
-                        sorted(d.glob("*.json"))
-                        or sorted(d.glob("*.yaml"))
-                        or sorted(d.glob("*.yml"))
-                    )
-                    if config_files:
-                        result[d.name] = config_files[0]
+            if (
+                d.is_symlink()
+                or not d.is_dir()
+                or d.name.startswith(".")
+                or d.name == "__pycache__"
+            ):
+                continue
+            if self.limit_tools is not None and d.name not in self.limit_tools:
+                continue
+            py_fn_dir = d / "python_function"
+            code = py_fn_dir / "python_code.py"
+            if (
+                not py_fn_dir.is_symlink()
+                and code.is_file()
+                and not code.is_symlink()
+            ):
+                result[d.name] = code
+                continue
+            dir_cfg = _find_dir_config(d)
+            if dir_cfg is not None:
+                result[d.name] = dir_cfg
+                continue
+            config_files = (
+                [
+                    p
+                    for p in sorted(d.glob("*.json"))
+                    if p.is_file() and not p.is_symlink()
+                ]
+                or [
+                    p
+                    for p in sorted(d.glob("*.yaml"))
+                    if p.is_file() and not p.is_symlink()
+                ]
+                or [
+                    p
+                    for p in sorted(d.glob("*.yml"))
+                    if p.is_file() and not p.is_symlink()
+                ]
+            )
+            if config_files:
+                result[d.name] = config_files[0]
         return result
 
     def discover_callbacks(self) -> list[tuple[str, str, str, Path]]:
@@ -1238,7 +1262,7 @@ class Discovery:
         if not self.app_root:
             return []
         agents_dir = self.app_root / "agents"
-        if not agents_dir.exists():
+        if agents_dir.is_symlink() or not agents_dir.is_dir():
             return []
         result = []
         seen_paths: set[Path] = set()
@@ -1251,7 +1275,12 @@ class Discovery:
             "after_tool_callbacks",
         ]
         for agent_dir in sorted(agents_dir.iterdir()):
-            if not agent_dir.is_dir():
+            if (
+                agent_dir.is_symlink()
+                or not agent_dir.is_dir()
+                or agent_dir.name.startswith(".")
+                or agent_dir.name == "__pycache__"
+            ):
                 continue
             if (
                 self.limit_agents is not None
@@ -1260,20 +1289,40 @@ class Discovery:
                 continue
             for cb_type in cb_types:
                 cb_dir = agent_dir / cb_type
-                if not cb_dir.exists():
+                if cb_dir.is_symlink() or not cb_dir.is_dir():
                     continue
                 for cb in sorted(cb_dir.iterdir()):
+                    if (
+                        cb.is_symlink()
+                        or not cb.is_dir()
+                        or cb.name.startswith(".")
+                        or cb.name == "__pycache__"
+                    ):
+                        continue
                     code = cb / "python_code.py"
-                    if code.exists() and code not in seen_paths:
+                    if (
+                        code.is_file()
+                        and not code.is_symlink()
+                        and code not in seen_paths
+                    ):
                         seen_paths.add(code)
                         result.append((agent_dir.name, cb_type, cb.name, code))
             for d in sorted(agent_dir.iterdir()):
-                if not d.is_dir():
+                if (
+                    d.is_symlink()
+                    or not d.is_dir()
+                    or d.name.startswith(".")
+                    or d.name == "__pycache__"
+                ):
                     continue
                 for cb_type in cb_types:
                     if d.name.startswith(f"{cb_type}_"):
                         code = d / "python_code.py"
-                        if code.exists() and code not in seen_paths:
+                        if (
+                            code.is_file()
+                            and not code.is_symlink()
+                            and code not in seen_paths
+                        ):
                             seen_paths.add(code)
                             result.append(
                                 (agent_dir.name, cb_type, d.name, code)
