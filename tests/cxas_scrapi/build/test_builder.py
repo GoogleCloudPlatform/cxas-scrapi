@@ -1914,3 +1914,113 @@ def test_tokenized_display_name_prunes_disabled_agent_and_tool(
     assert yaml.safe_load(
         (out_voice / "tools" / "tok_tool" / "tok_tool.yaml").read_text("utf-8")
     ) == {"displayName": "VoiceTool"}
+
+
+@pytest.mark.parametrize(
+    ("disabled_tool_ref", "cond_tool_ref"),
+    [
+        ("Secret Tool", "secret_tool_dir"),
+        ("secret_tool_dir", "Secret Tool"),
+    ],
+)
+def test_fixed_point_cross_resource_conditional_pruning(
+    tmp_path: Path, disabled_tool_ref: str, cond_tool_ref: str
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (
+        core_dir / "tools" / "secret_tool_dir" / "secret_tool_dir.json"
+    ).write_text(json.dumps({"displayName": "Secret Tool"}), encoding="utf-8")
+
+    cond_dir = core_dir / "agents" / "cond_disabled_agent"
+    cond_dir.mkdir()
+    (cond_dir / "cond_disabled_agent.yaml").write_text(
+        'displayName: "'
+        f"{{@startToolEnabled_{cond_tool_ref}}}KeepMe"
+        f"{{@endToolEnabled_{cond_tool_ref}}}"
+        "{@startToolEnabled_active_tool}DropMe"
+        '{@endToolEnabled_active_tool}"\n',
+        encoding="utf-8",
+    )
+
+    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["channels"]["VOICE_TELEPHONY"]["disabled_tools"] = [disabled_tool_ref]
+    pol["channels"]["VOICE_TELEPHONY"]["disabled_agents"] = [
+        "pruned_agent_display",
+        "DropMe",
+    ]
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+
+    out_dir = tmp_path / "out_fixed_point"
+    build_app(
+        core_dir, manifests_dir, "profile_1", "VOICE_TELEPHONY", "prod", out_dir
+    )
+    assert not (out_dir / "tools" / "secret_tool_dir").exists()
+    assert not (out_dir / "agents" / "cond_disabled_agent").exists()
+
+
+@pytest.mark.parametrize(
+    ("yaml_body", "expected_key"),
+    [
+        (
+            "foo: 1\n"
+            "{@startChannel_DIGITAL_APP}\n"
+            "foo: 2\n"
+            "{@endChannel_DIGITAL_APP}\n",
+            "foo",
+        ),
+        (
+            "key: 1\n{@startProfile_profile_1}key{@endProfile_profile_1}: 2\n",
+            "key",
+        ),
+    ],
+)
+def test_yaml_conditional_block_duplicate_keys_fail_fast(
+    tmp_path: Path, yaml_body: str, expected_key: str
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "agents" / "default_agent" / "cond_dup.yaml").write_text(
+        yaml_body, encoding="utf-8"
+    )
+    with pytest.raises(
+        BuildError, match=f"Duplicate mapping key '{expected_key}'"
+    ):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_cond_dup",
+        )
+
+
+def test_disabled_resources_ignore_undefined_profile_tokens(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (
+        core_dir / "tools" / "secret_tool_dir" / "secret_tool_dir.json"
+    ).write_text(
+        json.dumps({"displayName": "@@routing.nonexistent_for_this_profile@@"}),
+        encoding="utf-8",
+    )
+    (
+        core_dir / "agents" / "pruned_agent_dir" / "pruned_agent_dir.json"
+    ).write_text(
+        json.dumps({"displayName": "@@routing.nonexistent_for_this_profile@@"}),
+        encoding="utf-8",
+    )
+
+    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["channels"]["VOICE_TELEPHONY"]["disabled_agents"] = ["pruned_agent_dir"]
+    pol["channels"]["VOICE_TELEPHONY"]["disabled_tools"] = ["secret_tool_dir"]
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+
+    out_dir = tmp_path / "out_disabled_undef_tok"
+    build_app(
+        core_dir, manifests_dir, "profile_1", "VOICE_TELEPHONY", "prod", out_dir
+    )
+    assert not (out_dir / "tools" / "secret_tool_dir").exists()
+    assert not (out_dir / "agents" / "pruned_agent_dir").exists()

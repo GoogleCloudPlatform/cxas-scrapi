@@ -82,6 +82,36 @@ _RESOURCE_CONFIG_SUFFIXES = (".json", ".yaml", ".yml")
 _BUILD_MARKER_FILE = ".cxas-build-output"
 
 
+class _UniqueKeyYaml12Loader(Yaml12SafeLoader):
+    """YAML 1.2 SafeLoader that fails fast on duplicate mapping keys."""
+
+    def construct_mapping(
+        self, node: yaml.MappingNode, deep: bool = False
+    ) -> dict[JsonValue, JsonValue]:
+        self.flatten_mapping(node)
+        mapping: dict[JsonValue, JsonValue] = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                is_dup = key in mapping
+            except TypeError as exc:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found unhashable key",
+                    key_node.start_mark,
+                ) from exc
+            if is_dup:
+                raise yaml.constructor.ConstructorError(
+                    None,
+                    None,
+                    f"Duplicate mapping key '{key}'",
+                    key_node.start_mark,
+                )
+            mapping[key] = self.construct_object(value_node, deep=deep)
+        return mapping
+
+
 class BuildError(Exception):
     """Raised when building a profile/channel app fails."""
 
@@ -885,6 +915,75 @@ def _is_agent_config_file(rel_path: Path) -> bool:
     )
 
 
+def _extract_raw_identifiers(data: Mapping[str, JsonValue]) -> set[str]:
+    ids: set[str] = set()
+    display_name = data.get("displayName")
+    if isinstance(display_name, str) and display_name:
+        ids.add(display_name)
+    resource_name = data.get("name")
+    if isinstance(resource_name, str) and resource_name:
+        ids.add(resource_name)
+        if "/" in resource_name and (tail := resource_name.rsplit("/", 1)[-1]):
+            ids.add(tail)
+    return ids
+
+
+def _read_raw_config_identifiers(cfg_path: Path) -> set[str]:
+    try:
+        text = cfg_path.read_text("utf-8")
+        data = (
+            json.loads(text)
+            if cfg_path.suffix == ".json"
+            else yaml.load(text, Loader=_UniqueKeyYaml12Loader)
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, yaml.YAMLError):
+        return set()
+    return _extract_raw_identifiers(data) if isinstance(data, dict) else set()
+
+
+def _matches_any_disabled(
+    entry_ids: frozenset[str],
+    disabled_set: frozenset[str],
+    collection: str,
+) -> bool:
+    if any(
+        _matches_resource_ref(ident, disabled_set, collection)
+        for ident in entry_ids
+    ):
+        return True
+    return any(
+        _matches_resource_ref(ref, entry_ids, collection)
+        for ref in disabled_set
+    )
+
+
+def _inspect_prunable_entry(
+    entry: Path,
+    disabled_set: frozenset[str],
+    collection: str,
+    renderer: _BuildRenderer,
+) -> tuple[bool, set[str]]:
+    raw_ids: set[str] = {entry.name}
+    for suffix in _RESOURCE_CONFIG_SUFFIXES:
+        candidate = entry / f"{entry.name}{suffix}"
+        if candidate.is_file():
+            raw_ids.update(_read_raw_config_identifiers(candidate))
+            break
+    if _matches_any_disabled(frozenset(raw_ids), disabled_set, collection):
+        try:
+            _, rendered_ids = _read_resource_identifiers(entry, renderer)
+        except BuildError:
+            rendered_ids = set()
+        return True, raw_ids | rendered_ids
+
+    _, rendered_ids = _read_resource_identifiers(entry, renderer)
+    all_ids = raw_ids | rendered_ids
+    return (
+        _matches_any_disabled(frozenset(all_ids), disabled_set, collection),
+        all_ids,
+    )
+
+
 def _prune_resource_dir(
     resource_dir: Path,
     disabled: set[str],
@@ -896,20 +995,48 @@ def _prune_resource_dir(
         return frozenset(pruned)
     disabled_set = frozenset(disabled)
     for entry in sorted(p for p in resource_dir.iterdir() if p.is_dir()):
-        _, ids = _read_resource_identifiers(entry, renderer)
-        entry_ids = frozenset(ids | {entry.name})
-        matched = any(
-            _matches_resource_ref(ident, disabled_set, collection)
-            for ident in entry_ids
-        ) or any(
-            _matches_resource_ref(ref, entry_ids, collection)
-            for ref in disabled_set
+        matched, entry_ids = _inspect_prunable_entry(
+            entry, disabled_set, collection, renderer
         )
         if not matched:
             continue
         pruned.update(entry_ids)
         shutil.rmtree(entry)
     return frozenset(pruned)
+
+
+def _prune_all_resources(
+    staging_dir: Path,
+    profile: ProfileIdentity,
+    policy: ChannelPolicy,
+    env_manifest: EnvManifest,
+    channel: str,
+    environment: str,
+    channel_caps: ChannelCapabilities,
+) -> tuple[frozenset[str], frozenset[str]]:
+    disabled_agents = frozenset(channel_caps.disabled_agents)
+    disabled_tools = frozenset(channel_caps.disabled_tools)
+    for _ in range(4):
+        renderer = _BuildRenderer.from_context(
+            profile,
+            policy,
+            env_manifest,
+            channel,
+            environment,
+            disabled_agents,
+            disabled_tools,
+        )
+        next_tools = _prune_resource_dir(
+            staging_dir / "tools", set(disabled_tools), "tools", renderer
+        )
+        next_agents = _prune_resource_dir(
+            staging_dir / "agents", set(disabled_agents), "agents", renderer
+        )
+        if next_agents == disabled_agents and next_tools == disabled_tools:
+            break
+        disabled_agents = next_agents
+        disabled_tools = next_tools
+    return disabled_agents, disabled_tools
 
 
 def _collect_surviving_agent_names(
@@ -1145,7 +1272,7 @@ def _parse_yaml_with_conditionals(
     try:
         if has_tokens and ("{@start" in text or "{@end" in text):
             text = renderer.process_conditional_blocks(text)
-        return yaml.load(text, Loader=Yaml12SafeLoader)
+        return yaml.load(text, Loader=_UniqueKeyYaml12Loader)
     except (yaml.YAMLError, BuildError) as exc:
         raise BuildError(f"{path}: {exc}") from exc
 
@@ -1339,26 +1466,14 @@ def _build_in_staging(
     _stage_core_dir(
         core_dir, staging_dir, has_env_overrides=bool(env_manifest.overrides)
     )
-    prelim_renderer = _BuildRenderer.from_context(
+    all_disabled_agents, all_disabled_tools = _prune_all_resources(
+        staging_dir,
         profile,
         policy,
         env_manifest,
         channel,
         environment,
-        frozenset(channel_caps.disabled_agents),
-        frozenset(channel_caps.disabled_tools),
-    )
-    all_disabled_agents = _prune_resource_dir(
-        staging_dir / "agents",
-        set(channel_caps.disabled_agents),
-        "agents",
-        prelim_renderer,
-    )
-    all_disabled_tools = _prune_resource_dir(
-        staging_dir / "tools",
-        set(channel_caps.disabled_tools),
-        "tools",
-        prelim_renderer,
+        channel_caps,
     )
     renderer = _BuildRenderer.from_context(
         profile,
