@@ -449,3 +449,22 @@ def test_cli_package_rejects_symlink_app_dir_and_env_file(
     assert res_env.returncode != 0
     assert "Symlinks are not permitted" in res_env.stderr
     assert "Traceback" not in res_env.stderr
+
+    # Symlinked --zip target must be rejected without modifying target
+    precious = tmp_path / "precious_zip_target.txt"
+    precious.write_text("keep intact", encoding="utf-8")
+    link_zip = tmp_path / "link_out.zip"
+    link_zip.symlink_to(precious)
+    res_zip = _run_cli(
+        [
+            "package",
+            "--app-dir",
+            str(app_dir),
+            "--zip",
+            str(link_zip),
+        ]
+    )
+    assert res_zip.returncode != 0
+    assert "Symlinks are not permitted" in res_zip.stderr
+    assert "Traceback" not in res_zip.stderr
+    assert precious.read_text("utf-8") == "keep intact"

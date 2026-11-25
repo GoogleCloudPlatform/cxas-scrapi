@@ -42,37 +42,16 @@ from pydantic import (
     model_validator,
 )
 
+from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 PROFILE_ID_PATTERN = r"^[a-z0-9_-]{2,64}$"
 _PROFILE_ID_RE = re.compile(PROFILE_ID_PATTERN)
-_YAML12_BOOL_RE = re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")
 _T = TypeVar("_T")
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 ManifestValue: TypeAlias = Any
-
-
-class Yaml12SafeLoader(yaml.SafeLoader):
-    """YAML 1.2-compatible SafeLoader (only ``true``/``false`` are booleans).
-
-    Prevents YAML 1.1 implicit boolean coercion on values such as country code
-    ``NO`` (Norway) or ``ON`` / ``OFF`` / ``YES``.
-    """
-
-
-Yaml12SafeLoader.yaml_implicit_resolvers = {
-    ch: [
-        (tag, pattern)
-        for tag, pattern in resolvers
-        if tag != "tag:yaml.org,2002:bool"
-    ]
-    for ch, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
-}
-for _bool_lead in "tTfF":
-    Yaml12SafeLoader.add_implicit_resolver(
-        "tag:yaml.org,2002:bool", _YAML12_BOOL_RE, [_bool_lead]
-    )
 
 # Channel name (manifest key) -> CES deployment ChannelProfile type.
 CHANNEL_PROFILE_TYPES: dict[str, str] = {

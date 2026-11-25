@@ -208,7 +208,9 @@ def package_app_archive(
     raw_app_dir = Path(app_dir)
     _reject_symlink(raw_app_dir, "app_dir")
     resolved_app_dir = raw_app_dir.resolve()
-    output_zip = Path(output_zip).resolve()
+    raw_output_zip = Path(output_zip)
+    _reject_symlink(raw_output_zip, "output_zip")
+    output_zip = raw_output_zip.resolve()
 
     if not resolved_app_dir.is_dir():
         raise FileNotFoundError(f"App directory not found: {resolved_app_dir}")

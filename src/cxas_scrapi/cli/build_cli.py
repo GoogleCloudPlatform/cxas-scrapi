@@ -97,7 +97,7 @@ def app_package(args: argparse.Namespace) -> None:
     raw_env_file = Path(args.env_file) if args.env_file else None
     abs_app_dir = raw_app_dir.absolute()
     zip_path = (
-        Path(args.zip).resolve()
+        Path(args.zip)
         if args.zip
         else abs_app_dir.parent.resolve() / f"{abs_app_dir.name}.zip"
     )

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import functools
 import io
 import itertools
 import json
@@ -42,10 +43,10 @@ from cxas_scrapi.build.manifests import (
     EnvManifest,
     Manifests,
     ProfileIdentity,
-    Yaml12SafeLoader,
     load_manifests,
 )
 from cxas_scrapi.core.packaging import package_app_archive
+from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -78,6 +79,7 @@ _FSTRING_MIDDLE = getattr(tokenize, "FSTRING_MIDDLE", None)
 _FSTRING_END = getattr(tokenize, "FSTRING_END", None)
 _STAGE_IGNORE_PATTERNS = ("__pycache__", "*.pyc", ".DS_Store", "manifests")
 _RESOURCE_CONFIG_SUFFIXES = (".json", ".yaml", ".yml")
+_BUILD_MARKER_FILE = ".cxas-build-output"
 
 
 class BuildError(Exception):
@@ -343,22 +345,38 @@ class _BuildRenderer:
             text = self.process_conditional_blocks(text)
         return self.substitute_tokens(text)
 
+    def _render_mapping(
+        self,
+        mapping: dict[JsonValue, JsonValue],
+        *,
+        evaluate_conditionals: bool,
+    ) -> dict[JsonValue, JsonValue]:
+        rendered: dict[JsonValue, JsonValue] = {}
+        for k, v in mapping.items():
+            rendered_k = (
+                self.render_string(
+                    k, evaluate_conditionals=evaluate_conditionals
+                )
+                if isinstance(k, str)
+                else k
+            )
+            if rendered_k in rendered:
+                raise BuildError(
+                    f"Duplicate key '{rendered_k}' after placeholder "
+                    "substitution."
+                )
+            rendered[rendered_k] = self.render_data(
+                v, evaluate_conditionals=evaluate_conditionals
+            )
+        return rendered
+
     def render_data(
         self, val: JsonValue, *, evaluate_conditionals: bool = True
     ) -> JsonValue:
         if isinstance(val, dict):
-            return {
-                (
-                    self.render_string(
-                        k, evaluate_conditionals=evaluate_conditionals
-                    )
-                    if isinstance(k, str)
-                    else k
-                ): self.render_data(
-                    v, evaluate_conditionals=evaluate_conditionals
-                )
-                for k, v in val.items()
-            }
+            return self._render_mapping(
+                val, evaluate_conditionals=evaluate_conditionals
+            )
         if isinstance(val, list):
             return [
                 self.render_data(
@@ -366,11 +384,11 @@ class _BuildRenderer:
                 )
                 for item in val
             ]
-        if isinstance(val, str):
-            return self.render_string(
-                val, evaluate_conditionals=evaluate_conditionals
-            )
-        return val
+        return (
+            self.render_string(val, evaluate_conditionals=evaluate_conditionals)
+            if isinstance(val, str)
+            else val
+        )
 
 
 def _escape_for_python_quote(
@@ -664,8 +682,21 @@ def _read_yaml_strict(path: Path) -> JsonValue:
         raise BuildError(f"{path}: invalid YAML: {exc}") from exc
 
 
-def _read_resource_display_name(resource_dir: Path) -> str:
-    """Read ``displayName`` from ``<id>.{json,yaml,yml}`` if present."""
+def _add_config_identifiers(
+    data: Mapping[str, JsonValue], ids: set[str]
+) -> None:
+    display_name = data.get("displayName")
+    if isinstance(display_name, str) and display_name:
+        ids.add(display_name)
+    resource_name = data.get("name")
+    if isinstance(resource_name, str) and resource_name:
+        ids.add(resource_name)
+        if "/" in resource_name and (tail := resource_name.rsplit("/", 1)[-1]):
+            ids.add(tail)
+
+
+def _read_resource_identifiers(resource_dir: Path) -> tuple[bool, set[str]]:
+    """Read identifiers from ``<id>.{json,yaml,yml}`` if present."""
     cfg_path = next(
         (
             candidate
@@ -677,15 +708,16 @@ def _read_resource_display_name(resource_dir: Path) -> str:
         None,
     )
     if cfg_path is None:
-        return ""
+        return False, set()
     data = (
         _read_json_strict(cfg_path)
         if cfg_path.suffix == ".json"
         else _read_yaml_strict(cfg_path)
     )
-    if isinstance(data, dict) and isinstance(data.get("displayName"), str):
-        return data["displayName"]
-    return ""
+    ids: set[str] = {resource_dir.name}
+    if isinstance(data, dict):
+        _add_config_identifiers(data, ids)
+    return True, ids
 
 
 def _reject_symlinks(root: Path, label: str) -> None:
@@ -703,7 +735,9 @@ def _reject_symlinks(root: Path, label: str) -> None:
                 )
 
 
-def _validate_output_target(raw_out: Path, label: str) -> Path:
+def _validate_output_target(
+    raw_out: Path, label: str, *, require_marker: bool = False
+) -> Path:
     if raw_out.is_symlink():
         raise BuildError(f"Symlinks are not permitted for {label}: {raw_out}")
     resolved = raw_out.resolve()
@@ -711,6 +745,17 @@ def _validate_output_target(raw_out: Path, label: str) -> Path:
         raise BuildError(
             f"Output {label} '{resolved}' already exists and is not a "
             "directory."
+        )
+    if (
+        require_marker
+        and resolved.exists()
+        and any(resolved.iterdir())
+        and not (resolved / _BUILD_MARKER_FILE).is_file()
+    ):
+        raise BuildError(
+            f"Output directory '{resolved}' is non-empty and was not created "
+            f"by 'cxas build' (missing '{_BUILD_MARKER_FILE}'). "
+            "Refusing to overwrite unrelated files."
         )
     return resolved
 
@@ -733,7 +778,7 @@ def _validate_build_paths(
             f"Core directory '{core_dir}' does not exist or is not a directory."
         )
         raise BuildError(msg)
-    _validate_output_target(out_dir, "directory")
+    _validate_output_target(out_dir, "directory", require_marker=True)
     for label, source in (("core", core_dir), ("manifests", manifests_path)):
         if (
             out_dir == source
@@ -803,32 +848,55 @@ def _entry_matches_disabled(
     return _matches_resource_ref(item, disabled, collection)
 
 
+def _is_agent_config_file(rel_path: Path) -> bool:
+    return (
+        len(rel_path.parts) == 3
+        and rel_path.parts[0] == "agents"
+        and rel_path.stem == rel_path.parts[1]
+        and rel_path.suffix in _RESOURCE_CONFIG_SUFFIXES
+    )
+
+
 def _prune_resource_dir(
-    resource_dir: Path, disabled: set[str]
+    resource_dir: Path, disabled: set[str], collection: str
 ) -> frozenset[str]:
     pruned: set[str] = set(disabled)
     if not resource_dir.exists():
         return frozenset(pruned)
+    disabled_set = frozenset(disabled)
     for entry in sorted(p for p in resource_dir.iterdir() if p.is_dir()):
-        display_name = _read_resource_display_name(entry)
-        if entry.name not in disabled and display_name not in disabled:
+        _, ids = _read_resource_identifiers(entry)
+        entry_ids = frozenset(ids | {entry.name})
+        matched = any(
+            _matches_resource_ref(ident, disabled_set, collection)
+            for ident in entry_ids
+        ) or any(
+            _matches_resource_ref(ref, entry_ids, collection)
+            for ref in disabled_set
+        )
+        if not matched:
             continue
-        if display_name:
-            pruned.add(display_name)
-        pruned.add(entry.name)
+        pruned.update(entry_ids)
         shutil.rmtree(entry)
     return frozenset(pruned)
 
 
-def _collect_surviving_agent_names(agents_dir: Path) -> frozenset[str]:
+def _collect_surviving_agent_names(
+    agents_dir: Path, renderer: _BuildRenderer
+) -> frozenset[str]:
     if not agents_dir.is_dir():
         return frozenset()
     names: set[str] = set()
     for entry in sorted(p for p in agents_dir.iterdir() if p.is_dir()):
-        names.add(entry.name)
-        display_name = _read_resource_display_name(entry)
-        if display_name:
-            names.add(display_name)
+        has_cfg, ids = _read_resource_identifiers(entry)
+        if not has_cfg:
+            continue
+        for ident in ids:
+            rendered = _wrap_path_error(
+                entry, functools.partial(renderer.render_string, ident)
+            )
+            if rendered:
+                names.add(rendered)
     return frozenset(names)
 
 
@@ -881,35 +949,20 @@ def _prune_mapping_key(
     return True
 
 
-def _prune_resource_refs(
+def _prune_agent_config_refs(
     data: JsonValue,
     disabled_agents: frozenset[str],
     disabled_tools: frozenset[str],
 ) -> bool:
-    if isinstance(data, list):
-        changed = False
-        for item in data:
-            changed = (
-                _prune_resource_refs(item, disabled_agents, disabled_tools)
-                or changed
-            )
-        return changed
     if not isinstance(data, dict):
         return False
-
-    changed = _prune_mapping_key(data, "childAgents", disabled_agents, "agents")
-    changed = (
-        _prune_mapping_key(
-            data, "tools", disabled_tools, "tools", allow_dict=True
-        )
-        or changed
+    pruned_agents = _prune_mapping_key(
+        data, "childAgents", disabled_agents, "agents"
     )
-    for val in data.values():
-        changed = (
-            _prune_resource_refs(val, disabled_agents, disabled_tools)
-            or changed
-        )
-    return changed
+    pruned_tools = _prune_mapping_key(
+        data, "tools", disabled_tools, "tools", allow_dict=True
+    )
+    return pruned_agents or pruned_tools
 
 
 def _ensure_dict_section(data: ConfigMap, key: str) -> ConfigMap:
@@ -994,28 +1047,38 @@ def _collect_pruned_mentions(
     return warnings
 
 
+def _prune_env_json(data: ConfigMap, renderer: _BuildRenderer) -> None:
+    _prune_mapping_key(
+        data, "agents", renderer.disabled_agents, "agents", allow_dict=True
+    )
+    _prune_mapping_key(
+        data, "tools", renderer.disabled_tools, "tools", allow_dict=True
+    )
+
+
 def _render_json_file(
     path: Path,
+    out_dir: Path,
     renderer: _BuildRenderer,
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
 ) -> None:
+    rel_path = path.relative_to(out_dir)
+    is_env_json = rel_path == Path("environment.json")
     data = _read_json_strict(path)
-    if isinstance(data, dict) and path.name == "environment.json":
-        # Merge environment overrides before pruning so overrides cannot
-        # re-introduce disabled agents or tools.
-        if env_overrides:
-            data = deep_merge(data, env_overrides)
-        _prune_mapping_key(
-            data, "agents", renderer.disabled_agents, "agents", allow_dict=True
-        )
-    _prune_resource_refs(
-        data, renderer.disabled_agents, renderer.disabled_tools
-    )
+    if is_env_json and isinstance(data, dict) and env_overrides:
+        data = deep_merge(data, env_overrides)
 
     rendered = _wrap_path_error(path, lambda: renderer.render_data(data))
-    if path.name == "app.json" and isinstance(rendered, dict):
+    if is_env_json and isinstance(rendered, dict):
+        _prune_env_json(rendered, renderer)
+    elif _is_agent_config_file(rel_path):
+        _prune_agent_config_refs(
+            rendered, renderer.disabled_agents, renderer.disabled_tools
+        )
+
+    if rel_path == Path("app.json") and isinstance(rendered, dict):
         _apply_app_manifest_settings(
             rendered,
             profile,
@@ -1063,13 +1126,18 @@ def _parse_yaml_with_conditionals(
 
 
 def _yaml_render_flags(
-    path: Path, text: str, renderer: _BuildRenderer
-) -> tuple[bool, bool, bool]:
+    rel_path: Path, text: str, renderer: _BuildRenderer
+) -> tuple[bool, bool, bool, bool]:
     has_tokens = "@@" in text or "{@start" in text or "{@end" in text
+    is_agent_cfg = _is_agent_config_file(rel_path)
     has_disabled = bool(renderer.disabled_agents or renderer.disabled_tools)
-    needs_prune = has_disabled and ("childAgents" in text or "tools" in text)
-    is_app_yaml = path.name in ("app.yaml", "app.yml")
-    return has_tokens, needs_prune, is_app_yaml
+    needs_prune = (
+        is_agent_cfg
+        and has_disabled
+        and ("childAgents" in text or "tools" in text)
+    )
+    is_app_yaml = rel_path in (Path("app.yaml"), Path("app.yml"))
+    return has_tokens, is_agent_cfg, needs_prune, is_app_yaml
 
 
 def _apply_yaml_mutations(
@@ -1078,9 +1146,10 @@ def _apply_yaml_mutations(
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     *,
+    is_agent_cfg: bool,
     is_app_yaml: bool,
 ) -> bool:
-    pruned = _prune_resource_refs(
+    pruned = is_agent_cfg and _prune_agent_config_refs(
         data, renderer.disabled_agents, renderer.disabled_tools
     )
     app_updated = (
@@ -1099,6 +1168,7 @@ def _apply_yaml_mutations(
 
 def _render_yaml_file(
     path: Path,
+    out_dir: Path,
     renderer: _BuildRenderer,
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
@@ -1108,8 +1178,9 @@ def _render_yaml_file(
     except UnicodeDecodeError as exc:
         raise BuildError(f"{path}: file is not valid UTF-8: {exc}") from exc
 
-    has_tokens, needs_prune, is_app_yaml = _yaml_render_flags(
-        path, text, renderer
+    rel_path = path.relative_to(out_dir)
+    has_tokens, is_agent_cfg, needs_prune, is_app_yaml = _yaml_render_flags(
+        rel_path, text, renderer
     )
     if not (has_tokens or needs_prune or is_app_yaml):
         return
@@ -1125,7 +1196,12 @@ def _render_yaml_file(
             lambda: renderer.render_data(data, evaluate_conditionals=False),
         )
     modified = _apply_yaml_mutations(
-        data, renderer, profile, channel_caps, is_app_yaml=is_app_yaml
+        data,
+        renderer,
+        profile,
+        channel_caps,
+        is_agent_cfg=is_agent_cfg,
+        is_app_yaml=is_app_yaml,
     )
     if has_tokens or modified:
         path.write_text(
@@ -1154,11 +1230,13 @@ def _render_single_file(
 ) -> list[str]:
     suffix = path.suffix
     if suffix == ".json":
-        _render_json_file(path, renderer, profile, channel_caps, env_overrides)
+        _render_json_file(
+            path, out_dir, renderer, profile, channel_caps, env_overrides
+        )
     elif suffix == ".txt":
         return _render_text_file(path, out_dir, manifests, renderer)
     elif suffix in (".yaml", ".yml"):
-        _render_yaml_file(path, renderer, profile, channel_caps)
+        _render_yaml_file(path, out_dir, renderer, profile, channel_caps)
     elif suffix == ".py":
         _render_python_file(path, renderer)
     return []
@@ -1237,16 +1315,11 @@ def _build_in_staging(
         core_dir, staging_dir, has_env_overrides=bool(env_manifest.overrides)
     )
     all_disabled_agents = _prune_resource_dir(
-        staging_dir / "agents", set(channel_caps.disabled_agents)
+        staging_dir / "agents", set(channel_caps.disabled_agents), "agents"
     )
     all_disabled_tools = _prune_resource_dir(
-        staging_dir / "tools", set(channel_caps.disabled_tools)
+        staging_dir / "tools", set(channel_caps.disabled_tools), "tools"
     )
-    surviving_agents = _collect_surviving_agent_names(staging_dir / "agents")
-    _validate_entry_agent(
-        channel_caps.entry_agent, channel, all_disabled_agents, surviving_agents
-    )
-
     renderer = _BuildRenderer.from_context(
         profile,
         policy,
@@ -1256,6 +1329,13 @@ def _build_in_staging(
         all_disabled_agents,
         all_disabled_tools,
     )
+    surviving_agents = _collect_surviving_agent_names(
+        staging_dir / "agents", renderer
+    )
+    _validate_entry_agent(
+        channel_caps.entry_agent, channel, all_disabled_agents, surviving_agents
+    )
+
     warnings = _render_staged_tree(
         staging_dir,
         manifests,
@@ -1266,6 +1346,9 @@ def _build_in_staging(
     )
     slug = _write_deployment_manifest(
         staging_dir, profile, policy, channel, environment, channel_caps
+    )
+    (staging_dir / _BUILD_MARKER_FILE).write_text(
+        "cxas-build\n", encoding="utf-8"
     )
     if package_zip:
         staged_zip = staging_dir / f"{profile.profile_id}_{slug}.zip"
@@ -1345,7 +1428,9 @@ def build_app(
 ) -> BuildReport:
     """Build one CES app for ``(profile_id, channel, environment)``."""
     core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
-    out_path = _validate_output_target(Path(out_dir), "output directory")
+    out_path = _validate_output_target(
+        Path(out_dir), "output directory", require_marker=True
+    )
     _validate_build_paths(core_path, manifests_path, out_path)
     manifests = load_manifests(manifests_path)
     return _build_app_from_manifests(
@@ -1387,7 +1472,9 @@ def build_all(
         )
         for channel in sorted(policy.channels):
             channel_out_dir = _validate_output_target(
-                profile_out_dir / channel.lower(), "output directory"
+                profile_out_dir / channel.lower(),
+                "output directory",
+                require_marker=True,
             )
             reports.append(
                 _build_app_from_manifests(

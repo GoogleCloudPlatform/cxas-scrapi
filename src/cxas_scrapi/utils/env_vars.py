@@ -22,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
+
 ENV_VAR_PLACEHOLDER = "$env_var"
 CONNECTION_NAME_RE = re.compile(
     r"^projects/[^/\s]+/locations/[^/\s]+/connections/[^/\s]+$"
@@ -243,10 +245,6 @@ def _find_app_config_file(app_dir: Path) -> Path | None:
 def _load_config_file(path: Path) -> Any:
     text = path.read_text(encoding="utf-8")
     if path.suffix in (".yaml", ".yml"):
-        from cxas_scrapi.build.manifests import (  # noqa: PLC0415
-            Yaml12SafeLoader,
-        )
-
         return yaml.load(text, Loader=Yaml12SafeLoader)
     return json.loads(text)
 

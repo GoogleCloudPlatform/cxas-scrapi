@@ -289,6 +289,15 @@ def test_package_rejects_symlinks(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Symlinks are not permitted"):
         package_app_archive(app_dir_link, tmp_path / "out5.zip")
 
+    # Symlinked output_zip target must be rejected without modifying target
+    target_file = tmp_path / "precious_target.txt"
+    target_file.write_text("do not overwrite", encoding="utf-8")
+    link_zip = tmp_path / "out_symlink.zip"
+    link_zip.symlink_to(target_file)
+    with pytest.raises(ValueError, match="Symlinks are not permitted"):
+        package_app_archive(real_app, link_zip)
+    assert target_file.read_text("utf-8") == "do not overwrite"
+
 
 # Reproduces QA-002: app.yml skips $env_var and boolean env resolution.
 def test_package_app_yml_resolves_env_vars_and_booleans(

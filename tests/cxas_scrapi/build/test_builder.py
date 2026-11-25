@@ -667,8 +667,11 @@ def test_yaml_pruning_and_app_yaml_settings(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    # Surviving tokenless YAML file with dict-shaped tools map.
-    (core_dir / "agents" / "yaml_parent" / "tool_map.yml").write_text(
+    # Surviving tokenless YAML agent with dict-shaped tools map (.yml config).
+    yaml_map_dir = core_dir / "agents" / "yaml_map_agent"
+    yaml_map_dir.mkdir()
+    (yaml_map_dir / "yaml_map_agent.yml").write_text(
+        "displayName: yaml_map_agent\n"
         "tools:\n"
         "  secret_tool_disabled:\n"
         "    enabled: true\n"
@@ -700,7 +703,9 @@ def test_yaml_pruning_and_app_yaml_settings(tmp_path: Path) -> None:
     assert parent_cfg["tools"] == ["active_tool"]
 
     tool_map = yaml.safe_load(
-        (out_dir / "agents" / "yaml_parent" / "tool_map.yml").read_text("utf-8")
+        (
+            out_dir / "agents" / "yaml_map_agent" / "yaml_map_agent.yml"
+        ).read_text("utf-8")
     )
     assert tool_map["tools"] == {"active_tool": {"enabled": True}}
 
@@ -793,7 +798,7 @@ def test_entry_agent_validation_and_root_agent_alignment(
             )
 
 
-def test_nested_and_full_resource_path_pruning_across_json_and_yaml(
+def test_scoped_resource_path_pruning_and_openapi_non_mutation(
     tmp_path: Path,
 ) -> None:
     core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
@@ -817,39 +822,43 @@ def test_nested_and_full_resource_path_pruning_across_json_and_yaml(
                     {"name": "tools/secret_tool_dir"},
                     "active_tool",
                 ],
-                "nested": {
-                    "items": [
-                        {
-                            "childAgents": [
-                                "agents/pruned_agent_dir",
-                                "custom_entry",
-                            ],
-                            "tools": {
-                                "projects/p/locations/l/apps/a/tools/secret_tool_dir": {
-                                    "enabled": True
-                                },
-                                "active_tool": {"enabled": True},
-                            },
-                        }
-                    ]
+                "metadata": {
+                    "tools": ["secret_tool_disabled", "active_tool"],
+                    "childAgents": ["agents/pruned_agent_dir"],
                 },
             }
         ),
         encoding="utf-8",
     )
-    (core_dir / "agents" / "default_agent" / "nested_refs.yaml").write_text(
-        "wrapper:\n"
-        "  childAgents:\n"
-        "    - projects/p/locations/l/apps/a/agents/pruned_agent_dir\n"
-        "    - name: agents/pruned_agent_dir\n"
-        "    - custom_entry\n"
-        "  tools:\n"
-        "    - tools/secret_tool_dir\n"
-        "    - active_tool\n",
+    yaml_agent = core_dir / "agents" / "yaml_agent"
+    yaml_agent.mkdir()
+    (yaml_agent / "yaml_agent.yaml").write_text(
+        "displayName: yaml_agent\n"
+        "childAgents:\n"
+        "  - projects/p/locations/l/apps/a/agents/pruned_agent_dir\n"
+        "  - name: agents/pruned_agent_dir\n"
+        "  - custom_entry\n"
+        "tools:\n"
+        "  - tools/secret_tool_dir\n"
+        "  - active_tool\n",
         encoding="utf-8",
     )
 
-    out_dir = tmp_path / "out_nested_prune"
+    # OpenAPI schemas under tools/ must NEVER have `tools` or `childAgents`
+    # mutated, even when tokens in the same file are substituted.
+    openapi_dir = core_dir / "tools" / "active_tool" / "open_api_tool"
+    openapi_dir.mkdir(parents=True)
+    (openapi_dir / "open_api_schema.yaml").write_text(
+        'openapi: "3.0.3"\n'
+        "info:\n"
+        '  title: "@@profile.display_name@@ API"\n'
+        "tools:\n"
+        "  - active_tool\n"
+        "  - secret_tool_disabled\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_scoped_prune"
     build_app(
         core_dir, manifests_dir, "profile_1", "VOICE_TELEPHONY", "prod", out_dir
     )
@@ -861,17 +870,30 @@ def test_nested_and_full_resource_path_pruning_across_json_and_yaml(
     )
     assert agent_json["childAgents"] == ["custom_entry"]
     assert agent_json["tools"] == ["active_tool"]
-    nested_item = agent_json["nested"]["items"][0]
-    assert nested_item["childAgents"] == ["custom_entry"]
-    assert nested_item["tools"] == {"active_tool": {"enabled": True}}
+    assert agent_json["metadata"] == {
+        "tools": ["secret_tool_disabled", "active_tool"],
+        "childAgents": ["agents/pruned_agent_dir"],
+    }
 
-    nested_yaml = yaml.safe_load(
-        (out_dir / "agents" / "default_agent" / "nested_refs.yaml").read_text(
+    rendered_yaml_agent = yaml.safe_load(
+        (out_dir / "agents" / "yaml_agent" / "yaml_agent.yaml").read_text(
             "utf-8"
         )
     )
-    assert nested_yaml["wrapper"]["childAgents"] == ["custom_entry"]
-    assert nested_yaml["wrapper"]["tools"] == ["active_tool"]
+    assert rendered_yaml_agent["childAgents"] == ["custom_entry"]
+    assert rendered_yaml_agent["tools"] == ["active_tool"]
+
+    openapi = yaml.safe_load(
+        (
+            out_dir
+            / "tools"
+            / "active_tool"
+            / "open_api_tool"
+            / "open_api_schema.yaml"
+        ).read_text("utf-8")
+    )
+    assert openapi["info"]["title"] == "Profile One API"
+    assert openapi["tools"] == ["active_tool", "secret_tool_disabled"]
 
 
 def test_dict_key_placeholder_substitution_and_fail_fast(
@@ -1547,3 +1569,193 @@ def test_env_agents_pruning_tokenized_root_empty_app_yaml_and_unicode_dep(
             "prod",
             tmp_path / "out_tok_pruned",
         )
+
+
+def test_refuses_to_overwrite_unrelated_non_empty_out_dir(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # 1. Non-empty directory without build marker is refused and untouched.
+    unrelated = tmp_path / "unrelated_out"
+    unrelated.mkdir()
+    thesis = unrelated / "thesis.docx"
+    thesis.write_text("important draft", encoding="utf-8")
+    with pytest.raises(BuildError, match=r"\.cxas-build-output"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            unrelated,
+        )
+    assert thesis.read_text("utf-8") == "important draft"
+
+    # 2. Existing empty directory succeeds, writes marker, and allows rebuilds.
+    empty_out = tmp_path / "empty_out"
+    empty_out.mkdir()
+    rep1 = build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "DIGITAL_APP",
+        "prod",
+        empty_out,
+        package_zip=True,
+    )
+    assert (empty_out / ".cxas-build-output").is_file()
+    assert rep1.zip_path is not None
+    with zipfile.ZipFile(rep1.zip_path, "r") as zf:
+        assert ".cxas-build-output" not in zf.namelist()
+
+    # Subsequent rebuild into the same directory succeeds.
+    build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "DIGITAL_APP",
+        "prod",
+        empty_out,
+    )
+    assert (empty_out / ".cxas-build-output").is_file()
+
+
+def test_duplicate_dict_keys_after_placeholder_substitution_fail_fast(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # JSON duplicate key collision
+    (core_dir / "environment.json").write_text(
+        json.dumps({"Profile One": 1, "@@profile.display_name@@": 2}),
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match="Duplicate key 'Profile One'"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_dup_json",
+        )
+
+    # YAML duplicate key collision
+    (core_dir / "environment.json").write_text("{}\n", encoding="utf-8")
+    (core_dir / "agents" / "default_agent" / "dup.yaml").write_text(
+        'Profile One: 1\n"@@profile.display_name@@": 2\n', encoding="utf-8"
+    )
+    with pytest.raises(BuildError, match="Duplicate key 'Profile One'"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_dup_yaml",
+        )
+
+
+def test_tokenized_entry_agent_configless_agent_exported_name_and_post_render_pruning(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
+
+    # 1. Tokenized agent displayName matches entry_agent after rendering.
+    support_dir = core_dir / "agents" / "support_agent"
+    support_dir.mkdir()
+    (support_dir / "support_agent.json").write_text(
+        json.dumps({"displayName": "@@profile.display_name@@ Support"}),
+        encoding="utf-8",
+    )
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["channels"]["VOICE_TELEPHONY"]["entry_agent"] = "Profile One Support"
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+
+    out_tok_entry = tmp_path / "out_tok_entry"
+    build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "VOICE_TELEPHONY",
+        "prod",
+        out_tok_entry,
+    )
+    app_cfg = json.loads((out_tok_entry / "app.json").read_text("utf-8"))
+    assert app_cfg["rootAgent"] == "Profile One Support"
+
+    # 2. Empty/configless folder under agents/ does not qualify as entry_agent.
+    (core_dir / "agents" / "empty_agent").mkdir()
+    pol["channels"]["VOICE_TELEPHONY"]["entry_agent"] = "empty_agent"
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+    with pytest.raises(BuildError, match="does not match any surviving agent"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_empty_agent",
+        )
+
+    # 3. Exported `name` ID mismatch with folder name + post-render tool pruning.
+    billing_dir = core_dir / "agents" / "billing_dir"
+    billing_dir.mkdir()
+    exported_ref = "projects/p/locations/l/apps/a/agents/exported_uuid_42"
+    (billing_dir / "billing_dir.json").write_text(
+        json.dumps({"displayName": "Billing", "name": exported_ref}),
+        encoding="utf-8",
+    )
+    (core_dir / "agents" / "default_agent" / "default_agent.json").write_text(
+        json.dumps(
+            {
+                "displayName": "default_agent",
+                "childAgents": [exported_ref, "custom_entry"],
+                "tools": ["@@routing.disabled_tool@@", "active_tool"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    yaml_agent = core_dir / "agents" / "yaml_tok_agent"
+    yaml_agent.mkdir()
+    (yaml_agent / "yaml_tok_agent.yaml").write_text(
+        "displayName: yaml_tok_agent\n"
+        "tools:\n"
+        '  - "@@routing.disabled_tool@@"\n'
+        "  - active_tool\n",
+        encoding="utf-8",
+    )
+    pol["api_routing"]["disabled_tool"] = "secret_tool_disabled"
+    pol["channels"]["VOICE_TELEPHONY"]["entry_agent"] = "custom_entry"
+    pol["channels"]["VOICE_TELEPHONY"]["disabled_agents"] = [
+        "pruned_agent_display",
+        "exported_uuid_42",
+    ]
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+
+    out_exported = tmp_path / "out_exported"
+    build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "VOICE_TELEPHONY",
+        "prod",
+        out_exported,
+    )
+    assert not (out_exported / "agents" / "billing_dir").exists()
+    parent_json = json.loads(
+        (
+            out_exported / "agents" / "default_agent" / "default_agent.json"
+        ).read_text("utf-8")
+    )
+    assert parent_json["childAgents"] == ["custom_entry"]
+    assert parent_json["tools"] == ["active_tool"]
+
+    yaml_tok_cfg = yaml.safe_load(
+        (
+            out_exported / "agents" / "yaml_tok_agent" / "yaml_tok_agent.yaml"
+        ).read_text("utf-8")
+    )
+    assert yaml_tok_cfg["tools"] == ["active_tool"]

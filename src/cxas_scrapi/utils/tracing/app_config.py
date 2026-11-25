@@ -36,6 +36,8 @@ import yaml
 from google.cloud.ces_v1beta import types as ces_types
 from google.protobuf.descriptor import Descriptor, FieldDescriptor
 
+from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
+
 logger = logging.getLogger(__name__)
 
 ENV_VAR_PLACEHOLDER = "$env_var"
@@ -633,8 +635,6 @@ def _iter_component_manifests(cat_dir: str) -> list[tuple[str, str, bool]]:
 
 
 def _load_yaml12(stream: Any) -> Any:
-    from cxas_scrapi.build.manifests import Yaml12SafeLoader  # noqa: PLC0415
-
     return yaml.load(stream, Loader=Yaml12SafeLoader)
 
 
