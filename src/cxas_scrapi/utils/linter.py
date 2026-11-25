@@ -321,6 +321,9 @@ class LintContext:
     agent_to_parents: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set)
     )
+    require_agent_contracts: bool = False
+    contracts_dir: str = "docs/contracts"
+    allowed_variable_prefixes: list[str] = field(default_factory=list)
 
     @property
     def all_known_tools(self) -> set:
@@ -433,6 +436,9 @@ class LintConfig:
     options: dict[str, dict] = field(default_factory=dict)
     ignore: list[str] = field(default_factory=list)
     per_file: dict[str, dict[str, str]] = field(default_factory=dict)
+    require_agent_contracts: bool = False
+    contracts_dir: str = "docs/contracts"
+    allowed_variable_prefixes: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, project_root: Path) -> "LintConfig":
@@ -453,6 +459,18 @@ class LintConfig:
             config.options = data.get("options") or {}
             config.ignore = data.get("ignore") or []
             config.per_file = data.get("per_file") or {}
+            config.require_agent_contracts = bool(
+                data.get(
+                    "require_agent_contracts", config.require_agent_contracts
+                )
+            )
+            if data.get("contracts_dir"):
+                config.contracts_dir = str(data["contracts_dir"])
+            raw_prefixes = data.get("allowed_variable_prefixes") or []
+            if isinstance(raw_prefixes, list):
+                config.allowed_variable_prefixes = [
+                    str(p) for p in raw_prefixes if p
+                ]
 
         # Fall back to gecx-config.json for app_dir if not set by cxaslint.yaml
         if config.app_dir == ".":
@@ -916,6 +934,9 @@ def build_context(
         app_root=app_root,
         env_file=env_file,
         agent_to_parents=agent_to_parents,
+        require_agent_contracts=config.require_agent_contracts,
+        contracts_dir=config.contracts_dir,
+        allowed_variable_prefixes=list(config.allowed_variable_prefixes),
     )
 
 

@@ -13,11 +13,12 @@
 # limitations under the License.
 
 
-"""Variable-reference lint rules (V100-V104).
+"""Variable-reference lint rules (V100-V105).
 
 Surfaces state/instruction/eval references that target undeclared keys,
 mistyped nested children, or wrong parent objects after a flat→nested
 ``variableDeclarations`` migration. See issue #291 for the bug catalogue.
+Also includes opt-in ``variableDeclarations`` prefix governance (V105).
 """
 
 import ast
@@ -1089,6 +1090,81 @@ class InstructionVariableRef(Rule):
                         fix=(
                             f"Change '{parent_path}' schema type to OBJECT, "
                             "or use a flat reference"
+                        ),
+                    )
+                )
+        return results
+
+
+@rule("config")
+class VariablePrefixRule(Rule):
+    """Opt-in rule: enforce allowed prefixes on declared app variables."""
+
+    id = "V105"
+    name = "allowed-variable-prefixes"
+    description = (
+        "Every variable in app.json/app.yaml variableDeclarations must "
+        "start with one of allowed_variable_prefixes (opt-in)"
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        prefixes = context.allowed_variable_prefixes
+        if not prefixes:
+            return []
+        if file_path.name not in ("app.json", "app.yaml", "app.yml"):
+            return []
+
+        try:
+            parsed = (
+                yaml.safe_load(content)
+                if file_path.suffix in (".yaml", ".yml")
+                else json.loads(content)
+            )
+        except (json.JSONDecodeError, yaml.YAMLError):
+            return []
+
+        if not isinstance(parsed, dict):
+            return []
+
+        app_data = (
+            parsed["app"] if isinstance(parsed.get("app"), dict) else parsed
+        )
+        var_decls = (
+            app_data.get("variableDeclarations")
+            or app_data.get("variable_declarations")
+            or []
+        )
+        if not isinstance(var_decls, list):
+            return []
+
+        try:
+            rel = str(file_path.relative_to(context.project_root))
+        except ValueError:
+            rel = str(file_path)
+
+        prefix_list = ", ".join(repr(p) for p in prefixes)
+        results: list[LintResult] = []
+        for decl in var_decls:
+            if not isinstance(decl, dict):
+                continue
+            var_name = decl.get("name")
+            if not isinstance(var_name, str) or not var_name:
+                continue
+            if not any(var_name.startswith(p) for p in prefixes):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"Declared variable '{var_name}' does not match "
+                            f"allowed prefixes: {prefix_list}"
+                        ),
+                        fix=(
+                            f"Rename '{var_name}' to start with one of "
+                            f"{prefix_list}, or update "
+                            "allowed_variable_prefixes in cxaslint.yaml."
                         ),
                     )
                 )

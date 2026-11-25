@@ -444,6 +444,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S011 | `agent-resource-references` | Error | Agent JSON references guardrails, toolsets, or `instruction` files that don't exist |
     | S012 | `tool-file-references` | Error | Tool JSON references `pythonCode` or `openApiSchema` files that don't exist |
     | S013 | `toolset-file-references` | Error | Toolset JSON references `openApiSchema` files that don't exist |
+    | S014 | `require-agent-contracts` | Error | Opt-in: every non-root sub-agent must have `<agent_name>.md` in `contracts_dir` |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 
@@ -481,6 +482,12 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     Validates that `openApiToolset.openApiSchema` file paths in `<toolset>.json` exist on disk when non-inline paths are specified.
 
+    ---
+
+    **S014 — require-agent-contracts**
+
+    Opt-in governance rule enabled by setting `require_agent_contracts: true` in `cxaslint.yaml` (emits zero findings by default). Validates that every non-root sub-agent directory under `agents/` has a corresponding `<agent_name>.md` contract document in `contracts_dir` (default: `docs/contracts`).
+
 === "V — Schema"
 
     Rules in the `V` category validate resource configs against the CES protobuf schema. These catch structural issues that would cause API errors on push.
@@ -508,6 +515,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | V102 | `nested-property-exists` | Error | Dotted state keys must resolve to declared OBJECT properties |
     | V103 | `no-stale-flat-var-regression` | Warning | Reference matches a nested property — likely a stale flat-variable reference |
     | V104 | `instruction-variable-ref` | Error | Instruction {var} references must resolve to a declared variable |
+    | V105 | `allowed-variable-prefixes` | Error | Opt-in: declared `variableDeclarations` names must match `allowed_variable_prefixes` |
 
     ---
 
@@ -558,3 +566,13 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `{var}` reference where `var` is not declared or doesn't resolve.
 
     *Fix:* Declare the variable in `app.json` or fix the reference.
+
+    ---
+
+    **V105 — allowed-variable-prefixes**
+
+    Opt-in governance rule enabled by setting `allowed_variable_prefixes` in `cxaslint.yaml` (emits zero findings when unset or empty). Validates that every variable declared in `app.json`/`app.yaml` `variableDeclarations` starts with one of the configured prefixes.
+
+    *Triggers:* A declared variable name does not start with any prefix in `allowed_variable_prefixes`.
+
+    *Fix:* Rename the variable to use an allowed prefix, or update `allowed_variable_prefixes` in `cxaslint.yaml`.

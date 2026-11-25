@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import subprocess
+import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -257,3 +260,180 @@ def test_scaffold_gitops_repo_ssm_provider(
 def test_scaffold_gitops_repo_rejects_unknown_provider(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unsupported provider"):
         scaffold_gitops_repo(tmp_path, provider="bitbucket")
+
+
+def test_scaffold_gitops_repo_rejects_unknown_model(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Unsupported model"):
+        scaffold_gitops_repo(tmp_path, model="gitflow")
+
+
+def test_scaffold_gitops_repo_day1_extras_default_tags_model(
+    tmp_path: Path,
+) -> None:
+    """Verify PR title lint, bump-version.py, contracts docs, and cxaslint.yaml."""
+    scaffold_gitops_repo(
+        tmp_path,
+        provider="github",
+        model="tags",
+        project_id="my-proj",
+        location="us",
+    )
+
+    # Contracts starter & commented cxaslint.yaml
+    assert (tmp_path / "docs" / "contracts" / "README.md").is_file()
+    assert (tmp_path / "docs" / "contracts" / "_template.md").is_file()
+    lint_cfg_path = tmp_path / "cxaslint.yaml"
+    assert lint_cfg_path.is_file()
+    lint_data = yaml.safe_load(lint_cfg_path.read_text(encoding="utf-8"))
+    assert lint_data["app_dir"] == "src/agent"
+    assert not lint_data.get("require_agent_contracts")
+    assert not lint_data.get("allowed_variable_prefixes")
+
+    # bump-version.py is executable; promote.sh / cxas_promote.yml absent in tags
+    bump = tmp_path / "scripts" / "bump-version.py"
+    assert bump.is_file()
+    assert os.access(bump, os.X_OK)
+    assert not (tmp_path / "scripts" / "promote.sh").exists()
+    assert not (
+        tmp_path / ".github" / "workflows" / "cxas_promote.yml"
+    ).exists()
+
+    # PR title lint job present in cxas_ci.yml
+    ci_data = yaml.safe_load(
+        (tmp_path / ".github" / "workflows" / "cxas_ci.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "pr-title-lint" in ci_data["jobs"]
+    assert ci_data["jobs"]["pr-title-lint"]["permissions"] == {
+        "contents": "read"
+    }
+
+
+def test_scaffold_gitops_repo_branches_model_all_providers(
+    tmp_path: Path,
+) -> None:
+    """Verify --model branches scaffolds promote.sh + weekly workflow per provider."""
+    # 1. GitHub
+    gh_dir = tmp_path / "gh"
+    scaffold_gitops_repo(gh_dir, provider="github", model="branches")
+    promote_sh = gh_dir / "scripts" / "promote.sh"
+    assert promote_sh.is_file()
+    assert os.access(promote_sh, os.X_OK)
+    syntax = subprocess.run(
+        ["bash", "-n", str(promote_sh)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert syntax.returncode == 0, syntax.stderr
+
+    wf_path = gh_dir / ".github" / "workflows" / "cxas_promote.yml"
+    assert wf_path.is_file()
+    wf_data = yaml.safe_load(wf_path.read_text(encoding="utf-8"))
+    assert wf_data["permissions"] == {
+        "contents": "read",
+        "pull-requests": "write",
+    }
+    on_block = wf_data.get("on", wf_data.get(True))
+    assert on_block["schedule"] == [{"cron": "0 9 * * 1"}]
+    for step in wf_data["jobs"]["promote"]["steps"]:
+        uses = step.get("uses")
+        if uses:
+            assert _SHA_RE.search(uses), f"Action not SHA-pinned: {uses}"
+            if uses.startswith("actions/checkout@"):
+                assert step.get("with", {}).get("persist-credentials") is False
+    assert "gh pr create" in wf_path.read_text(encoding="utf-8")
+
+    # 2. GitLab
+    gl_dir = tmp_path / "gl"
+    scaffold_gitops_repo(gl_dir, provider="gitlab", model="branches")
+    assert (gl_dir / "scripts" / "promote.sh").is_file()
+    gl_data = yaml.safe_load(
+        (gl_dir / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    )
+    assert "mr-title-lint" in gl_data
+    assert "promote-dev-to-qa" in gl_data
+    assert gl_data["promote-dev-to-qa"]["stage"] == "release"
+
+    # 3. SSM / Cloud Build
+    ssm_dir = tmp_path / "ssm"
+    scaffold_gitops_repo(ssm_dir, provider="ssm", model="branches")
+    assert (ssm_dir / "scripts" / "promote.sh").is_file()
+    cb_ci = yaml.safe_load(
+        (ssm_dir / "cloudbuild-ci.yaml").read_text(encoding="utf-8")
+    )
+    assert "_PR_TITLE" in cb_ci["substitutions"]
+    assert any(s.get("id") == "pr-title-lint" for s in cb_ci["steps"])
+
+    cb_promote_path = ssm_dir / "cloudbuild-promote.yaml"
+    assert cb_promote_path.is_file()
+    cb_promote_raw = cb_promote_path.read_text(encoding="utf-8")
+    cb_promote = yaml.safe_load(cb_promote_raw)
+    assert cb_promote["substitutions"]["_SOURCE_BRANCH"] == "dev"
+    assert cb_promote["substitutions"]["_TARGET_BRANCH"] == "qa"
+    assert "$${SRC}" in cb_promote_raw
+    assert "$${DST}" in cb_promote_raw
+
+
+def test_bump_version_script_patch_minor_major_and_apply(
+    tmp_path: Path,
+) -> None:
+    """Run generated scripts/bump-version.py against a real temp git repo."""
+    scaffold_gitops_repo(tmp_path, provider="github")
+    script = tmp_path / "scripts" / "bump-version.py"
+
+    def _git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return res.stdout.strip()
+
+    _git("init")
+    _git("config", "user.email", "test@example.com")
+    _git("config", "user.name", "Test User")
+    (tmp_path / "README.md").write_text("init\n", encoding="utf-8")
+    _git("add", "README.md")
+    _git("commit", "-m", "fix: initial setup")
+
+    # Patch bump from 0.0.0 -> v0.0.1 and apply tag
+    out = subprocess.run(
+        [sys.executable, str(script), "--apply"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert out.stdout.strip() == "v0.0.1"
+    assert _git("tag", "-l", "v0.0.1") == "v0.0.1"
+
+    # Minor bump on feat:
+    (tmp_path / "README.md").write_text("feat\n", encoding="utf-8")
+    _git("add", "README.md")
+    _git("commit", "-m", "feat(billing): add refund flow")
+    out = subprocess.run(
+        [sys.executable, str(script), "--apply"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert out.stdout.strip() == "v0.1.0"
+    assert _git("tag", "-l", "v0.1.0") == "v0.1.0"
+
+    # Major bump on feat!:
+    (tmp_path / "README.md").write_text("breaking\n", encoding="utf-8")
+    _git("add", "README.md")
+    _git("commit", "-m", "feat!: remove legacy v1 handoff")
+    out = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert out.stdout.strip() == "v1.0.0"

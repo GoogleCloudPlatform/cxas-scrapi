@@ -190,6 +190,34 @@ Per-file overrides take precedence over both the top-level `rules` and the rule'
 
 ---
 
+### `require_agent_contracts` and `contracts_dir`
+
+**Type:** boolean / string  
+**Default:** `false` / `"docs/contracts"`
+
+Opt-in governance for rule `S014` (`require-agent-contracts`). When `require_agent_contracts: true`, `cxas lint` verifies that every non-root sub-agent under `agents/` has a matching `<agent_name>.md` contract file in `contracts_dir` (resolved relative to the project root or app directory). Emits zero findings when `false` (default).
+
+```yaml
+require_agent_contracts: true
+contracts_dir: docs/contracts
+```
+
+### `allowed_variable_prefixes`
+
+**Type:** list of strings  
+**Default:** `[]` (disabled)
+
+Opt-in governance for rule `V105` (`allowed-variable-prefixes`). When non-empty, `cxas lint` verifies that every variable declared in `app.json`/`app.yaml` `variableDeclarations` starts with one of the listed prefixes. Emits zero findings when empty (default).
+
+```yaml
+allowed_variable_prefixes:
+  - user_
+  - session_
+  - flow_
+```
+
+---
+
 ## Annotated complete example
 
 Here's a realistic `cxaslint.yaml` for a production project:

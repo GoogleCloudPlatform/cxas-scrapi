@@ -957,3 +957,117 @@ class ToolsetFileReferences(Rule):
             )
 
         return results
+
+
+def _is_root_agent_dir(agent_dir: Path, root_identifiers: set[str]) -> bool:
+    """Return True if ``agent_dir`` corresponds to the app's root agent."""
+    if not root_identifiers:
+        return agent_dir.name.lower() in ("root", "root_agent")
+
+    candidates = {
+        agent_dir.name.lower(),
+        agent_dir.name.replace("_", " ").lower(),
+    }
+    cfg, _ = _load_resource_dir_config(agent_dir)
+    if isinstance(cfg, dict):
+        for key in ("displayName", "display_name", "name"):
+            val = cfg.get(key)
+            if isinstance(val, str) and val:
+                candidates.add(val.lower())
+                candidates.add(val.rsplit("/", 1)[-1].lower())
+                candidates.add(val.replace(" ", "_").lower())
+
+    return bool(candidates & root_identifiers)
+
+
+@rule("structure")
+class AgentContractDoc(Rule):
+    """Opt-in rule: require a contract doc for every non-root sub-agent."""
+
+    id = "S014"
+    name = "require-agent-contracts"
+    description = (
+        "Every non-root sub-agent must have a matching <agent_name>.md "
+        "contract document in contracts_dir (opt-in via "
+        "require_agent_contracts: true)"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if not context.require_agent_contracts:
+            return []
+
+        app_root = _find_app_root_for_path(file_path, context)
+        agents_dir = app_root / "agents"
+        if not agents_dir.exists() or not agents_dir.is_dir():
+            return []
+
+        app_data: dict = {}
+        try:
+            parsed = (
+                yaml.safe_load(content)
+                if file_path.suffix in (".yaml", ".yml")
+                else json.loads(content)
+            )
+            if isinstance(parsed, dict):
+                app_data = (
+                    parsed["app"]
+                    if isinstance(parsed.get("app"), dict)
+                    else parsed
+                )
+        except Exception:
+            app_data = {}
+
+        root_identifiers: set[str] = set()
+        root_agent = app_data.get("rootAgent") or app_data.get("root_agent")
+        if isinstance(root_agent, str) and root_agent.strip():
+            raw = root_agent.strip()
+            root_identifiers.add(raw.lower())
+            root_identifiers.add(raw.rsplit("/", 1)[-1].lower())
+            root_identifiers.add(raw.replace(" ", "_").lower())
+
+        contracts_rel = Path(context.contracts_dir or "docs/contracts")
+        if contracts_rel.is_absolute():
+            candidate_dirs = [contracts_rel]
+        else:
+            candidate_dirs = [
+                context.project_root / contracts_rel,
+                app_root / contracts_rel,
+                context.app_dir / contracts_rel,
+            ]
+
+        try:
+            rel_file = str(file_path.relative_to(context.project_root))
+        except ValueError:
+            rel_file = str(file_path)
+
+        results: list[LintResult] = []
+        for agent_dir in sorted(agents_dir.iterdir()):
+            if not agent_dir.is_dir() or agent_dir.name.startswith("."):
+                continue
+            if _is_root_agent_dir(agent_dir, root_identifiers):
+                continue
+
+            doc_name = f"{agent_dir.name}.md"
+            if any((cdir / doc_name).is_file() for cdir in candidate_dirs):
+                continue
+
+            expected = f"{context.contracts_dir.rstrip('/')}/{doc_name}"
+            results.append(
+                self.make_result(
+                    rel_file,
+                    (
+                        f"Sub-agent '{agent_dir.name}' is missing contract "
+                        f"doc '{expected}'"
+                    ),
+                    fix=(
+                        f"Create '{expected}' (copy from "
+                        f"{context.contracts_dir.rstrip('/')}/_template.md)."
+                    ),
+                )
+            )
+
+        return results

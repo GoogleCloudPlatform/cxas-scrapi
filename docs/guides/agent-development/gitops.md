@@ -38,14 +38,28 @@ This creates:
 │   ├── env-dev.example.json                # Committed schema template
 │   ├── env-qa.example.json
 │   └── env-prod.example.json
+├── docs/contracts/
+│   ├── README.md                           # Sub-agent interface contract guide
+│   └── _template.md                        # Contract starter template
+├── scripts/
+│   ├── bump-version.py                     # Conventional-Commit SemVer tag helper
+│   └── promote.sh                          # (--model branches) dev->qa / qa->main helper
+├── cxaslint.yaml                           # Commented opt-in governance rules
 ├── CODEOWNERS
 └── .github/
     ├── PULL_REQUEST_TEMPLATE/release.md
     └── workflows/
-        ├── cxas_ci.yml                     # PR gate (lint + snapshot ci-test)
+        ├── cxas_ci.yml                     # PR title lint + lint + snapshot ci-test
         ├── cxas_release.yml                # SemVer tag promotion (locked + drift-gated)
-        └── cxas_cleanup.yml                # PR-close & nightly workspace sweep
+        ├── cxas_cleanup.yml                # PR-close & nightly workspace sweep
+        └── cxas_promote.yml                # (--model branches) weekly dev->qa PR
 ```
+
+### Conventional Commits, Promotion Models & Opt-In Governance
+
+- **PR/MR title lint & SemVer helper:** Every provider CI pipeline validates PR/MR titles against Conventional Commits, and `scripts/bump-version.py` computes (and with `--apply`, tags) the next `vX.Y.Z` release from commit history.
+- **Tag vs. branch promotion (`--model tags|branches`):** Default `--model tags` uses SemVer tag releases. Teams using long-lived `dev`/`qa`/`main` branches can pass `--model branches` to also scaffold `scripts/promote.sh` and a weekly scheduled promotion workflow (`cxas_promote.yml`, GitLab `promote-dev-to-qa`, or `cloudbuild-promote.yaml`).
+- **Opt-in contract & variable governance:** Uncomment `require_agent_contracts: true` (rule `S014`) or `allowed_variable_prefixes` (rule `V105`) in `cxaslint.yaml` when your team is ready to enforce sub-agent contract docs or session variable naming conventions. Both rules are completely silent by default.
 
 ---
 

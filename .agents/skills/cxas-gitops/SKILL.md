@@ -22,6 +22,7 @@ or test model settings — use `.cxas/profiles/*.local.yml` and `CXAS_PROFILE`.
 ```bash
 cxas init-gitops \
   --provider github \   # or gitlab | ssm (GCP Secure Source Manager + Cloud Build)
+  --model tags \        # or branches (adds scripts/promote.sh + weekly dev->qa workflow)
   --project-id <gcp-project> \
   --location <ces-location> \
   --agent-name <agent-slug>
@@ -29,7 +30,10 @@ cxas init-gitops \
 
 Scaffolds `src/agent/`, `evals/contracts/`, `.cxas/profiles/{dev,qa,prod}.yml`
 (`protected: true` on `qa`/`prod`), `envs/*.example.json`, `CODEOWNERS`,
-`.gitignore`, release checklist, and provider-specific CI/CD pipelines
+`.gitignore`, `docs/contracts/{README,_template}.md`, commented `cxaslint.yaml`
+(opt-in `S014` contract-doc & `V105` variable-prefix rules),
+`scripts/bump-version.py` (SemVer tag-bump helper), release checklist, and
+provider-specific CI/CD pipelines with Conventional Commit PR/MR title linting
 (SHA-pinned GitHub Actions, `.gitlab-ci.yml`, or Cloud Build `cloudbuild-*.yaml`).
 
 Validate profiles immediately:

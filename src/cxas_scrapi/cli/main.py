@@ -2482,6 +2482,16 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     parser_init_gitops.add_argument(
+        "--model",
+        choices=["tags", "branches"],
+        default="tags",
+        help=(
+            "Release promotion model: tags (SemVer tag-driven, default) or "
+            "branches (adds scripts/promote.sh and weekly dev->qa promotion "
+            "workflow)."
+        ),
+    )
+    parser_init_gitops.add_argument(
         "--target-dir",
         default=".",
         help="Target directory to scaffold into (default: current directory).",
