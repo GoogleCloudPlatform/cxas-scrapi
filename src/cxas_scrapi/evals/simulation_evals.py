@@ -333,6 +333,13 @@ class LLMUserConversation(Conversation):
         )
         return prompt
 
+    def _opens_with_event(self) -> bool:
+        """True if the scenario's first step is a static `event:` utterance."""
+        if not self.steps_progress:
+            return False
+        first = self.steps_progress[0].step.static_utterance or ""
+        return first.strip().startswith("event:")
+
     def _next_user_utterance(self) -> tuple[str, dict[str, Any]]:
         """Generates the next user utterance and variables to inject based
         on the conversation history.
@@ -350,7 +357,8 @@ class LLMUserConversation(Conversation):
         if not self._check_conversation_status():
             return "", {}
 
-        if self.current_turn == 0:
+        # Skip default initial_utterance so an opening event step starts once.
+        if self.current_turn == 0 and not self._opens_with_event():
             session_params = self.test_case.get("session_parameters", {})
             return self.initial_utterance, session_params
 
@@ -365,6 +373,8 @@ class LLMUserConversation(Conversation):
                 )
 
                 utterance = active_step_prog.step.static_utterance
+                if utterance.strip().startswith(("event:", "dtmf:")):
+                    utterance = utterance.strip()
                 session_params = self.test_case.get("session_parameters", {})
                 inject_vars = self.test_case["steps"][active_idx].get(
                     "inject_variables", {}
