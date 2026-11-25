@@ -177,7 +177,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
     | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
     | C024 | `voice-before-model-request-mutation` | Warning | Voice apps ignore `before_model` `llm_request` mutations |
-    | C025 | `shared-python-bundle-integrity` | Error | Validates `python_lib/` syntax and `CXAS_SHARED_BUNDLE` / `pythonEnvFiles` bundling |
 
     ---
 
@@ -262,16 +261,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* A `before_model_callbacks` Python file mutates the `llm_request` argument (assignments, deletions, `hide_tool()`, or list/dict mutators such as `append`/`extend`/`insert`/`pop`/`remove`/`clear`/`update`/`setdefault`) in an app with `audioProcessingConfig` or a voice/telephony deployment YAML.
 
     *Fix:* Configure channel-specific tools and prompts statically or move dynamic gating into `before_tool_callback`.
-
-    ---
-
-    **C025 — shared-python-bundle-integrity**
-
-    Validates shared Python modules under `python_lib/` and `pythonEnvFiles/content/` for UTF-8 readability and valid Python syntax, and ensures every callback/tool entrypoint that imports `python_lib.*` (excluding `if TYPE_CHECKING:` blocks) has either a well-formed `# === BEGIN CXAS_SHARED_BUNDLE` ... `# === END CXAS_SHARED_BUNDLE ===` block or matching modules in `pythonEnvFiles/content/`.
-
-    *Triggers:* Syntax/UTF-8 error in `python_lib/` or `pythonEnvFiles/content/`, truncated/mismatched `CXAS_SHARED_BUNDLE` markers, or a `python_lib.*` import with missing `pythonEnvFiles` module or missing `python_lib/` (`Error`); unbundled `python_lib.*` import when local `python_lib/` exists (`Warning`).
-
-    *Fix:* Fix syntax errors or run `cxas build` / `cxas package` before deploying to CES.
 
 === "T — Tools"
 

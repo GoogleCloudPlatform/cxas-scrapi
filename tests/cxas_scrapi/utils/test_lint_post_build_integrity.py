@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for post-build integrity lint rules (T020-T021, C025, A018, S018-S020)."""
+"""Unit tests for post-build integrity lint rules (T020-T021, A018, S018-S020)."""
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ from typing import Any
 
 import yaml
 
-from cxas_scrapi.utils.lint_rules.callbacks import SharedPythonBundleIntegrity
 from cxas_scrapi.utils.lint_rules.config import VoiceLanguageTtsParity
 from cxas_scrapi.utils.lint_rules.structure import (
     AgentRefSelfOrOrphan,
@@ -312,148 +311,6 @@ def test_t021_openapi_schema_valid_and_invalid_cases(tmp_path: Path) -> None:
     assert len(ts_msgs) == 4  # empty paths + 3 invalid server URLs
 
 
-# ── C025: Shared Python (python_lib/) Bundle & Syntax Integrity ─────────
-
-
-def test_c025_syntax_bundle_native_env_type_checking_and_warnings(
-    tmp_path: Path,
-) -> None:
-    app_json = _write_json(
-        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
-    )
-
-    # 1. TYPE_CHECKING-only import should PASS even without bundle/python_lib
-    cb_tc = (
-        tmp_path
-        / "agents"
-        / "root"
-        / "before_model_callbacks"
-        / "cb_tc"
-        / "python_code.py"
-    )
-    cb_tc.parent.mkdir(parents=True)
-    cb_tc.write_text(
-        "import typing\n"
-        "from typing import TYPE_CHECKING\n"
-        "if TYPE_CHECKING:\n"
-        "    from python_lib.types import BrandCtx\n"
-        "if typing.TYPE_CHECKING:\n"
-        "    import python_lib.more_types\n"
-        "def before_model_callback(cb, req):\n"
-        "    return None\n",
-        encoding="utf-8",
-    )
-    assert (
-        SharedPythonBundleIntegrity().check(app_json, "", _ctx(tmp_path)) == []
-    )
-
-    # 2. Properly bundled callback -> PASS
-    cb_ok = (
-        tmp_path
-        / "agents"
-        / "root"
-        / "before_model_callbacks"
-        / "cb_ok"
-        / "python_code.py"
-    )
-    cb_ok.parent.mkdir(parents=True)
-    cb_ok.write_text(
-        "# === BEGIN CXAS_SHARED_BUNDLE (sha256: abc) ===\n"
-        "_BUNDLE = {}\n"
-        "# === END CXAS_SHARED_BUNDLE ===\n"
-        "from python_lib.helpers import greet\n"
-        "def before_model_callback(cb, req):\n"
-        "    return greet()\n",
-        encoding="utf-8",
-    )
-    assert (
-        SharedPythonBundleIntegrity().check(app_json, "", _ctx(tmp_path)) == []
-    )
-
-    # 3. Unbundled import with NO python_lib/ and NO pythonEnvFiles -> ERROR
-    tool_err = tmp_path / "tools" / "t1" / "python_function" / "python_code.py"
-    tool_err.parent.mkdir(parents=True)
-    tool_err.write_text(
-        "from python_lib.helpers import greet\n"
-        "def t1() -> dict:\n"
-        "    return {'msg': greet()}\n",
-        encoding="utf-8",
-    )
-    res_err = _run_specific(tmp_path, {"C025"}).results
-    assert len(res_err) == 1
-    assert res_err[0].severity == Severity.ERROR
-    assert "ModuleNotFoundError" in res_err[0].message
-
-    # 4. Adding local python_lib/ turns unbundled import into WARNING (+ catches syntax error in python_lib/)
-    py_lib_helper = tmp_path / "python_lib" / "helpers.py"
-    py_lib_helper.parent.mkdir(parents=True)
-    py_lib_helper.write_text(
-        "def greet():\n    return 'hi'\n", encoding="utf-8"
-    )
-    rep_warn = _run_specific(tmp_path, {"C025"})
-    assert len(rep_warn.results) == 1
-    assert rep_warn.results[0].severity == Severity.WARNING
-    assert "cxas build/package" in rep_warn.results[0].message
-
-    # Syntax error inside python_lib/ -> ERROR
-    bad_lib = tmp_path / "python_lib" / "broken.py"
-    bad_lib.write_text("def broken(:\n    pass\n", encoding="utf-8")
-    rep_syn = _run_specific(tmp_path, {"C025"})
-    assert any(
-        r.file == "python_lib/broken.py" and r.severity == Severity.ERROR
-        for r in rep_syn.results
-    )
-    bad_lib.unlink()
-
-    # 5. Truncated bundle marker -> ERROR
-    cb_trunc = (
-        tmp_path
-        / "agents"
-        / "root"
-        / "before_model_callbacks"
-        / "cb_trunc"
-        / "python_code.py"
-    )
-    cb_trunc.parent.mkdir(parents=True)
-    cb_trunc.write_text(
-        "# === BEGIN CXAS_SHARED_BUNDLE ===\n"
-        "def before_model_callback(cb, req):\n"
-        "    return None\n",
-        encoding="utf-8",
-    )
-    rep_trunc = _run_specific(tmp_path, {"C025"})
-    assert any(
-        "cb_trunc" in r.file and r.severity == Severity.ERROR
-        for r in rep_trunc.results
-    )
-    cb_trunc.unlink()
-
-    # 6. Native pythonEnvFiles mode: present module passes, missing module errors
-    (tmp_path / "pythonEnvFiles" / "content" / "python_lib").mkdir(parents=True)
-    (tmp_path / "pythonEnvFiles" / "pythonEnvFiles.yaml").write_text(
-        "files: []\n", encoding="utf-8"
-    )
-    (
-        tmp_path / "pythonEnvFiles" / "content" / "python_lib" / "helpers.py"
-    ).write_text("def greet():\n    return 'hi'\n", encoding="utf-8")
-    assert _run_specific(tmp_path, {"C025"}).results == []
-
-    # Missing module in pythonEnvFiles/content/ -> ERROR
-    tool_err.write_text(
-        "from python_lib.missing_mod import nope\n"
-        "def t1() -> dict:\n"
-        "    return {'msg': nope()}\n",
-        encoding="utf-8",
-    )
-    rep_missing_mod = _run_specific(tmp_path, {"C025"})
-    assert len(rep_missing_mod.results) == 1
-    assert rep_missing_mod.results[0].severity == Severity.ERROR
-    assert (
-        "missing from pythonEnvFiles/content/"
-        in rep_missing_mod.results[0].message
-    )
-
-
 # ── A018: Standard Voice / Language / TTS Parity ────────────────────────
 
 
@@ -661,7 +518,7 @@ def test_s020_self_transfer_and_orphaned_agent_target(tmp_path: Path) -> None:
 # ── Sample_Support_Agent Regression Guard ───────────────────────────────
 
 
-def test_sample_support_agent_clean_with_all_121_rules() -> None:
+def test_sample_support_agent_clean_with_all_120_rules() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     template_root = (
         repo_root
@@ -675,7 +532,7 @@ def test_sample_support_agent_clean_with_all_121_rules() -> None:
     discovery = Discovery(template_root / "cxas_app", template_root / "evals")
     ctx = build_context(template_root, cfg, discovery)
     registry = build_registry()
-    assert len(registry.all_rules()) >= 121  # noqa: PLR2004
+    assert len(registry.all_rules()) >= 120  # noqa: PLR2004
     report = LintReport()
     run_rules(registry, cfg, ctx, discovery, report)
     assert report.errors == []
