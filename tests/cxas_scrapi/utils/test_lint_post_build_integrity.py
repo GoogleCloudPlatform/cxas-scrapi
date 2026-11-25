@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for post-build integrity lint rules (T020-T021, A018, S018-S020)."""
+"""Unit tests for post-build integrity lint rules (T020-T021, A018, S018-S019)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,6 @@ from cxas_scrapi.utils.lint_rules.config import VoiceLanguageTtsParity
 from cxas_scrapi.utils.lint_rules.structure import (
     AgentRefSelfOrOrphan,
     DeploymentEntryAgentParity,
-    ProdUrlSafety,
 )
 from cxas_scrapi.utils.lint_rules.tools import (
     OpenApiSchemaValidity,
@@ -404,68 +403,10 @@ def test_s018_deployment_entry_agent_missing_and_divergent(
     )
 
 
-# ── S019: Non-Prod / Cleartext URLs in prod Builds ──────────────────────
+# ── S019: {@AGENT:} Self-Transfer or Orphaned-Agent Target ──────────────
 
 
-def test_s019_prod_url_safety_cleartext_loopback_and_forbidden_patterns(
-    tmp_path: Path,
-) -> None:
-    app_json = _write_json(tmp_path / "app.json", {"displayName": "app"})
-    _write_yaml(tmp_path / "deployments" / "dev.yaml", {"environment": "dev"})
-    _write_json(
-        tmp_path / "environment.json",
-        {
-            "tools": {
-                "api_clear": {"url": "http://api.example.com/v1"},
-                "api_local": {"url": "https://localhost:8443/v1"},
-                "api_ipv6": {"url": "https://[::1]/v1"},
-                "api_dotlocal": {"url": "https://svc.internal.local/v1"},
-                "api_staging": {"url": "https://staging.example.com/v1"},
-                "api_device_ok": {"url": "https://device.example.com/v1"},
-            }
-        },
-    )
-    _write_yaml(
-        tmp_path / "tools" / "t1" / "open_api_tool" / "open_api_schema.yaml",
-        {
-            "openapi": "3.0.0",
-            "servers": [
-                {"url": "$env_var"},
-                {"url": "http://127.0.0.1:9000/api"},
-            ],
-            "paths": {
-                "/x": {"get": {"responses": {"200": {"description": "ok"}}}}
-            },
-        },
-    )
-
-    opts = {"S019": {"forbidden_url_patterns": ["staging.", "dev.", "uat."]}}
-
-    # Inactive when only dev deployment exists
-    assert (
-        ProdUrlSafety().check(app_json, "", _ctx(tmp_path, options=opts)) == []
-    )
-
-    # Active when prod deployment exists
-    _write_yaml(tmp_path / "deployments" / "prod.yml", {"environment": "PROD"})
-    results = ProdUrlSafety().check(app_json, "", _ctx(tmp_path, options=opts))
-    assert all(r.severity == Severity.ERROR for r in results)
-    msgs = "\n".join(r.message for r in results)
-    assert "http://api.example.com/v1" in msgs
-    assert "https://localhost:8443/v1" in msgs
-    assert "https://[::1]/v1" in msgs
-    assert "https://svc.internal.local/v1" in msgs
-    assert "https://staging.example.com/v1" in msgs
-    assert "http://127.0.0.1:9000/api" in msgs
-    # "dev." literal pattern must NOT false-positive on "device.example.com"!
-    assert "device.example.com" not in msgs
-    assert "$env_var" not in msgs
-
-
-# ── S020: {@AGENT:} Self-Transfer or Orphaned-Agent Target ──────────────
-
-
-def test_s020_self_transfer_and_orphaned_agent_target(tmp_path: Path) -> None:
+def test_s019_self_transfer_and_orphaned_agent_target(tmp_path: Path) -> None:
     app_json = _write_json(
         tmp_path / "app.json", {"displayName": "app", "rootAgent": "root_agent"}
     )
@@ -498,7 +439,7 @@ def test_s020_self_transfer_and_orphaned_agent_target(tmp_path: Path) -> None:
     results = AgentRefSelfOrOrphan().check(app_json, "", _ctx(tmp_path))
     assert len(results) == 2
     assert all(
-        r.rule_id == "S020" and r.severity == Severity.WARNING for r in results
+        r.rule_id == "S019" and r.severity == Severity.WARNING for r in results
     )
     by_line = {r.line: r.message for r in results}
     assert "self-transfer" in by_line[2]
@@ -523,7 +464,7 @@ def test_sample_support_agent_clean_with_all_rules() -> None:
     discovery = Discovery(template_root / "cxas_app", template_root / "evals")
     ctx = build_context(template_root, cfg, discovery)
     registry = build_registry()
-    assert len(registry.all_rules()) == 119  # noqa: PLR2004
+    assert len(registry.all_rules()) == 118  # noqa: PLR2004
     report = LintReport()
     run_rules(registry, cfg, ctx, discovery, report)
     assert report.errors == []
@@ -763,50 +704,7 @@ def test_s018_omitted_entry_and_ces_resource_path(tmp_path: Path) -> None:
     )
 
 
-def test_s019_schemeless_loopback_malformed_ipv6_and_regex_patterns(
-    tmp_path: Path,
-) -> None:
-    app_json = _write_json(tmp_path / "app.json", {"displayName": "app"})
-    _write_yaml(
-        tmp_path / "deployments" / "prod.yml", {"environment": "PRODUCTION"}
-    )
-    _write_json(
-        tmp_path / "environment.json",
-        {
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "_comment": "http://localhost/ignored",
-            "tools": {
-                "a": {
-                    "url": "localhost:8080/api",
-                    "endpoint": "127.0.0.1:5000/v1",
-                },
-                "b": {"url": "http://[::1/bad"},
-                "c": {"url": "[your-host]:8080/v1"},
-                "d": {"url": "https://api-dev.example.com/v1"},
-                "e": {"url": "https://0.0.0.0:8080/v1"},
-            },
-        },
-    )
-    opts = {
-        "S019": {
-            "forbidden_url_patterns": [r"-dev\.", "[unclosed-regex-fallback"]
-        }
-    }
-    res = ProdUrlSafety().check(app_json, "", _ctx(tmp_path, options=opts))
-    msgs = "\n".join(r.message for r in res)
-    for expected in (
-        "localhost:8080/api",
-        "127.0.0.1:5000/v1",
-        "http://[::1/bad",
-        "api-dev.example.com",
-        "0.0.0.0:8080",
-    ):
-        assert expected in msgs
-    assert "json-schema.org" not in msgs
-    assert "localhost/ignored" not in msgs
-
-
-def test_s020_inline_instruction_and_traversal_fallback(tmp_path: Path) -> None:
+def test_s019_inline_instruction_and_traversal_fallback(tmp_path: Path) -> None:
     (tmp_path / "secret.txt").write_text("{@AGENT: root}\n", encoding="utf-8")
     app = tmp_path / "app"
     app_json = _write_json(
@@ -863,7 +761,6 @@ def test_cli_list_rules_exit_codes_and_sample_template(tmp_path: Path) -> None:
         "S018",
         "S019",
         "S020",
-        "S021",
     ):
         assert rule_id in listed.stdout
 

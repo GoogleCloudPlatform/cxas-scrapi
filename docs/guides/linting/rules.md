@@ -528,9 +528,8 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S016 | `unused-toolset` | Warning | Toolset under `toolsets/` is not attached to any reachable agent |
     | S017 | `unused-guardrail` | Warning | Guardrail under `guardrails/` is not attached to the app or any reachable agent |
     | S018 | `deployment-entry-agent` | Error | Deployment `entryAgent` must exist under `agents/` (`Warning` if it diverges from `app.rootAgent`) |
-    | S019 | `prod-url-safety` | Error | Prod deployments must not contain cleartext `http://`, loopback/local hosts, or configured non-prod URL patterns |
-    | S020 | `agent-ref-self-or-orphan` | Warning | Instruction `{@AGENT:}` targets the current agent (self-transfer) or an orphaned/unreachable agent |
-    | S021 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
+    | S019 | `agent-ref-self-or-orphan` | Warning | Instruction `{@AGENT:}` targets the current agent (self-transfer) or an orphaned/unreachable agent |
+    | S020 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 
@@ -620,17 +619,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **S019 — prod-url-safety**
-
-    Activates when any `deployments/*.{yaml,yml}` specifies `environment: prod` or `production`. Scans endpoint URLs in `environment.json`, `tools/`, `toolsets/`, and OpenAPI `servers[].url` (ignoring `"$env_var"` placeholders).
-
-    *Triggers:* Cleartext `http://` URLs, loopback/local-only hosts (`localhost`, `127.0.0.1`, `0.0.0.0`, `[::1]`, `*.local`), or URLs matching configured `options.S019.forbidden_url_patterns` in `cxaslint.yaml`.
-
-    *Fix:* Use `https://` production endpoints before deploying to production.
-
-    ---
-
-    **S020 — agent-ref-self-or-orphan**
+    **S019 — agent-ref-self-or-orphan**
 
     Scans agent instructions (custom `instruction` path or `instruction.txt`) for `{@AGENT: ...}` references targeting either the current agent itself (self-transfer) or an orphaned/unreachable agent.
 
@@ -640,7 +629,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **S021 — guardrail-jinja-syntax**
+    **S020 — guardrail-jinja-syntax**
 
     *Triggers:* When a JSON or YAML guardrail's `llmPolicy.prompt` or `llmPromptSecurity.customPolicy.prompt` contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`).
 
