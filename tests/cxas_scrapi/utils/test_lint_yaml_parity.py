@@ -14,7 +14,10 @@
 
 """Unit tests for YAML/YML config parity and cross-file ignore filtering."""
 
+import ast
 from pathlib import Path
+from typing import Any
+from unittest import mock
 
 from cxas_scrapi.utils.lint_rules.config import (
     AgentMissingInstruction,
@@ -25,6 +28,10 @@ from cxas_scrapi.utils.lint_rules.config import (
     MissingRequiredFields,
     RootAgentMissingEndSession,
 )
+from cxas_scrapi.utils.lint_rules.runtime_traps import (
+    AsyncToolMissingInactivityTimeout,
+    LlmPolicyGuardrailLimit,
+)
 from cxas_scrapi.utils.lint_rules.schema import _strip_v1main_only_fields
 from cxas_scrapi.utils.lint_rules.structure import (
     AgentResourceReferences,
@@ -33,6 +40,8 @@ from cxas_scrapi.utils.lint_rules.structure import (
     CallbackFileReferences,
     ChildAgentReferences,
     StrictAgentPathLayout,
+    ToolFileReferences,
+    ToolsetFileReferences,
 )
 from cxas_scrapi.utils.linter import (
     Discovery,
@@ -449,13 +458,10 @@ def test_yaml_app_with_guided_agent_passes_full_lint_without_false_errors(
     assert report.errors == []
 
 
-# ── QA Reproduction Tests (expected to fail until defects are fixed) ─────
-
-
-def test_qa_001_schema_v001_v002_yml_config_and_malformed_yaml(
+def test_schema_v001_v002_yml_config_and_malformed_yaml(
     tmp_path: Path,
 ) -> None:
-    """QA-001: V001/V002 must load .yml configs and not crash on malformed YAML."""
+    """V001/V002 load .yml configs and do not crash on malformed YAML."""
     _write_yaml_app(tmp_path, app_filename="app.yml")
     root_dir = tmp_path / "agents" / "root_agent"
     (root_dir / "root_agent.yaml").rename(root_dir / "root_agent.yml")
@@ -474,7 +480,9 @@ def test_qa_001_schema_v001_v002_yml_config_and_malformed_yaml(
     # Malformed YAML agent must not crash V002 with unhandled yaml.YAMLError
     bad_dir = tmp_path / "agents" / "broken_yaml"
     bad_dir.mkdir(parents=True)
-    (bad_dir / "broken_yaml.yaml").write_text("a: [unclosed\n", encoding="utf-8")
+    (bad_dir / "broken_yaml.yaml").write_text(
+        "a: [unclosed\n", encoding="utf-8"
+    )
     disc2 = Discovery(tmp_path, tmp_path / "evals")
     ctx2 = build_context(tmp_path, cfg, disc2)
     rep_bad = LintReport()
@@ -482,10 +490,10 @@ def test_qa_001_schema_v001_v002_yml_config_and_malformed_yaml(
     assert isinstance(rep_bad.results, list)
 
 
-def test_qa_002_s004_accepts_ces_resource_path_uuid_child_agent(
+def test_s004_accepts_ces_resource_path_uuid_child_agent(
     tmp_path: Path,
 ) -> None:
-    """QA-002: S004 must resolve childAgents referencing an agent by CES name UUID."""
+    """S004 resolves childAgents referencing an agent by CES name UUID."""
     _write_yaml_app(tmp_path)
     billing_yaml = tmp_path / "agents" / "billing_agent" / "billing_agent.yml"
     billing_yaml.write_text(
@@ -510,10 +518,10 @@ def test_qa_002_s004_accepts_ces_resource_path_uuid_child_agent(
     assert res == [], [str(r) for r in res]
 
 
-def test_qa_003_per_file_override_not_clobbered_by_global_rules_and_dot_ignore(
+def test_per_file_override_not_clobbered_by_global_rules_and_dot_ignore(
     tmp_path: Path,
 ) -> None:
-    """QA-003: per_file overrides must beat global rules on S004, and ./ ignore works."""
+    """per_file overrides beat global rules on S004, and ./ ignore works."""
     _write_yaml_app(tmp_path)
     root_yaml = tmp_path / "agents" / "root_agent" / "root_agent.yaml"
     root_yaml.write_text(
@@ -536,17 +544,8 @@ def test_qa_003_per_file_override_not_clobbered_by_global_rules_and_dot_ignore(
     assert cfg_dot.is_ignored("tools/lookup_order/lookup_order.yaml") is True
 
 
-def test_qa_004_yml_parity_a014_a016_s011_s012_s013(tmp_path: Path) -> None:
-    """QA-004: A014, A016, S011, S012, S013 must discover and parse .yml resources."""
-    from cxas_scrapi.utils.lint_rules.runtime_traps import (
-        AsyncToolMissingInactivityTimeout,
-        LlmPolicyGuardrailLimit,
-    )
-    from cxas_scrapi.utils.lint_rules.structure import (
-        ToolFileReferences,
-        ToolsetFileReferences,
-    )
-
+def test_yml_parity_a014_a016_s011_s012_s013(tmp_path: Path) -> None:
+    """A014, A016, S011, S012, S013 discover and parse .yml resources."""
     (tmp_path / "app.yml").write_text(
         "name: demo\ndisplayName: Demo\nrootAgent: root\n"
         "guardrails:\n" + "".join(f"  - gr_{i}\n" for i in range(11)),
@@ -556,26 +555,30 @@ def test_qa_004_yml_parity_a014_a016_s011_s012_s013(tmp_path: Path) -> None:
     t_async.mkdir(parents=True)
     (t_async / "async_tool.yml").write_text(
         "displayName: async_tool\nexecutionType: ASYNCHRONOUS\n"
-        "pythonFunction:\n  name: async_tool\n  pythonCode: tools/async_tool/missing.py\n",
+        "pythonFunction:\n  name: async_tool\n"
+        "  pythonCode: tools/async_tool/missing.py\n",
         encoding="utf-8",
     )
     for i in range(11):
         gd = tmp_path / "guardrails" / f"gr_{i}"
         gd.mkdir(parents=True)
         (gd / f"gr_{i}.yml").write_text(
-            f"displayName: GR {i}\nenabled: true\nllmPolicy:\n  prompt: Safe {i}\n",
+            f"displayName: GR {i}\nenabled: true\n"
+            f"llmPolicy:\n  prompt: Safe {i}\n",
             encoding="utf-8",
         )
     ts_dir = tmp_path / "toolsets" / "my_ts"
     ts_dir.mkdir(parents=True)
     (ts_dir / "my_ts.yml").write_text(
-        "displayName: My TS\nopenApiToolset:\n  openApiSchema: toolsets/my_ts/missing.yaml\n",
+        "displayName: My TS\nopenApiToolset:\n"
+        "  openApiSchema: toolsets/my_ts/missing.yaml\n",
         encoding="utf-8",
     )
     r_dir = tmp_path / "agents" / "root"
     r_dir.mkdir(parents=True)
     (r_dir / "root.yml").write_text(
-        "displayName: Root\nguardrails:\n  - GR 0\ntoolsets:\n  - toolset: My TS\n",
+        "displayName: Root\nguardrails:\n  - GR 0\n"
+        "toolsets:\n  - toolset: My TS\n",
         encoding="utf-8",
     )
 
@@ -583,32 +586,58 @@ def test_qa_004_yml_parity_a014_a016_s011_s012_s013(tmp_path: Path) -> None:
     ctx = build_context(tmp_path, LintConfig(), disc)
     app_text = (tmp_path / "app.yml").read_text(encoding="utf-8")
 
-    assert len(AsyncToolMissingInactivityTimeout().check(tmp_path / "app.yml", app_text, ctx)) == 1
-    assert len(LlmPolicyGuardrailLimit().check(tmp_path / "app.yml", app_text, ctx)) == 1
-    assert AgentResourceReferences().check(r_dir / "root.yml", (r_dir / "root.yml").read_text(encoding="utf-8"), ctx) == []
+    assert (
+        len(
+            AsyncToolMissingInactivityTimeout().check(
+                tmp_path / "app.yml", app_text, ctx
+            )
+        )
+        == 1
+    )
+    assert (
+        len(
+            LlmPolicyGuardrailLimit().check(tmp_path / "app.yml", app_text, ctx)
+        )
+        == 1
+    )
+    assert (
+        AgentResourceReferences().check(
+            r_dir / "root.yml",
+            (r_dir / "root.yml").read_text(encoding="utf-8"),
+            ctx,
+        )
+        == []
+    )
     assert len(ToolFileReferences().check(t_async, "", ctx)) == 1
     assert len(ToolsetFileReferences().check(ts_dir, "", ctx)) == 1
 
 
-def test_qa_005_py310_null_byte_ast_parse_value_error_all_rules(
+def test_py310_null_byte_ast_parse_value_error_all_rules(
     tmp_path: Path,
 ) -> None:
-    """QA-005: Simulated Py3.10/3.11 ast.parse ValueError on null bytes must not crash rules."""
-    import ast
-    from unittest import mock
-
+    """Simulated Py3.10/3.11 ast.parse ValueError on null bytes never crashes."""
     _write_yaml_app(tmp_path)
-    cb_dir = tmp_path / "agents" / "root_agent" / "before_model_callbacks" / "cb1"
+    cb_dir = (
+        tmp_path / "agents" / "root_agent" / "before_model_callbacks" / "cb1"
+    )
     cb_dir.mkdir(parents=True)
     (cb_dir / "python_code.py").write_bytes(
         b"def before_model_callback(ctx, req):\n    return None\x00\n"
     )
-    tool_py = tmp_path / "tools" / "lookup_order" / "python_function" / "python_code.py"
-    tool_py.write_bytes(b"def lookup_order(order_id: str) -> dict:\n    return {}\x00\n")
+    tool_py = (
+        tmp_path
+        / "tools"
+        / "lookup_order"
+        / "python_function"
+        / "python_code.py"
+    )
+    tool_py.write_bytes(
+        b"def lookup_order(order_id: str) -> dict:\n    return {}\x00\n"
+    )
 
     orig_parse = ast.parse
 
-    def _py310_parse(source, *args, **kwargs):
+    def _py310_parse(source: Any, *args: Any, **kwargs: Any) -> ast.AST:
         if isinstance(source, str) and "\x00" in source:
             raise ValueError("source code string cannot contain null bytes")
         return orig_parse(source, *args, **kwargs)
@@ -624,8 +653,8 @@ def test_qa_005_py310_null_byte_ast_parse_value_error_all_rules(
     assert isinstance(report.results, list)
 
 
-def test_qa_006_a003_dict_in_tools_list_does_not_crash(tmp_path: Path) -> None:
-    """QA-006: A003 must not crash with TypeError on non-string entries in tools list."""
+def test_a003_dict_in_tools_list_does_not_crash(tmp_path: Path) -> None:
+    """A003 does not crash with TypeError on non-string entries in tools list."""
     _write_yaml_app(tmp_path)
     root_yaml = tmp_path / "agents" / "root_agent" / "root_agent.yaml"
     disc = Discovery(tmp_path, tmp_path / "evals")
