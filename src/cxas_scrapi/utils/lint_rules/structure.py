@@ -31,6 +31,8 @@ from urllib.parse import urlparse
 import yaml
 
 from cxas_scrapi.utils.linter import (
+    _CONFIG_EXTENSIONS,
+    AgentGraph,
     LintContext,
     LintResult,
     LocalResource,
@@ -46,23 +48,13 @@ from cxas_scrapi.utils.linter import (
     discover_openapi_schema_paths,
     get_toolset_tools,
     match_local_resources,
+    parse_config_content,
+    rel_to_project,
     resolve_agent_graph,
+    resolve_app_root,
     resolve_safe_app_file,
     rule,
 )
-
-
-def _parse_agent_content(file_path: Path, content: str) -> dict | None:
-    """Parse JSON or YAML agent config content into a dict, or None."""
-    try:
-        data = (
-            yaml.safe_load(content)
-            if file_path.suffix.lower() in (".yaml", ".yml")
-            else json.loads(content)
-        )
-    except (json.JSONDecodeError, yaml.YAMLError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 @rule("structure")
@@ -204,7 +196,7 @@ class CallbackFileReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        agent_config = _parse_agent_content(file_path, content)
+        agent_config = parse_config_content(file_path, content)
         if agent_config is None:
             return []
 
@@ -247,7 +239,7 @@ class ChildAgentReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        agent_config = _parse_agent_content(file_path, content)
+        agent_config = parse_config_content(file_path, content)
         if agent_config is None:
             return []
 
@@ -289,7 +281,7 @@ class StrictAgentPathLayout(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         agent_name = file_path.stem
-        agent_config = _parse_agent_content(file_path, content)
+        agent_config = parse_config_content(file_path, content)
         if agent_config is None:
             return []
 
@@ -542,37 +534,6 @@ class SingletonGuardrailTypes(Rule):
         return results
 
 
-def _find_app_root_for_path(file_path: Path, context: LintContext) -> Path:
-    """Resolve the app root directory from context or file_path hierarchy."""
-    if context.app_root and context.app_root.exists():
-        return context.app_root
-    if any(
-        (context.app_dir / name).exists()
-        for name in ("app.json", "app.yaml", "app.yml")
-    ):
-        return context.app_dir
-    if file_path.name in ("app.json", "app.yaml", "app.yml"):
-        return file_path.parent
-    if file_path.parent.parent.name in (
-        "agents",
-        "tools",
-        "toolsets",
-        "guardrails",
-    ):
-        return file_path.parent.parent.parent
-    if file_path.parent.name in ("agents", "tools", "toolsets", "guardrails"):
-        return file_path.parent.parent
-    return context.app_dir
-
-
-def _rel_path(path: Path, context: LintContext) -> str:
-    """Format ``path`` relative to ``context.project_root`` when possible."""
-    try:
-        return str(path.relative_to(context.project_root))
-    except ValueError:
-        return str(path)
-
-
 def _load_resource_dir_config(
     resource_dir: Path,
 ) -> tuple[dict | None, Path | None]:
@@ -691,18 +652,11 @@ class AppResourceReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        try:
-            app_config = (
-                json.loads(content)
-                if file_path.suffix == ".json"
-                else yaml.safe_load(content)
-            )
-        except Exception:
-            return []
-        if not isinstance(app_config, dict):
+        app_config = parse_config_content(file_path, content)
+        if app_config is None:
             return []
 
-        app_root = _find_app_root_for_path(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         known_guardrails = _collect_known_resource_names(app_root, "guardrails")
         results: list[LintResult] = []
 
@@ -767,11 +721,11 @@ class AgentResourceReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        agent_config = _parse_agent_content(file_path, content)
+        agent_config = parse_config_content(file_path, content)
         if agent_config is None:
             return []
 
-        app_root = _find_app_root_for_path(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         known_guardrails = _collect_known_resource_names(app_root, "guardrails")
         known_toolsets = _collect_known_resource_names(app_root, "toolsets")
         results: list[LintResult] = []
@@ -865,7 +819,7 @@ class ToolFileReferences(Rule):
         if not config_data or not target_path:
             return []
 
-        app_root = _find_app_root_for_path(tool_dir, context)
+        app_root = resolve_app_root(tool_dir, context)
         results: list[LintResult] = []
 
         py_fn = config_data.get("pythonFunction") or config_data.get(
@@ -951,7 +905,7 @@ class ToolsetFileReferences(Rule):
         if not _is_file_path_ref(schema_path):
             return []
 
-        app_root = _find_app_root_for_path(toolset_dir, context)
+        app_root = resolve_app_root(toolset_dir, context)
         results: list[LintResult] = []
 
         expected_prefix = f"toolsets/{toolset_name}/"
@@ -1004,12 +958,12 @@ class AgentTreeCycle(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_root = _find_app_root_for_path(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         graph = resolve_agent_graph(app_root)
         if not graph.cycles:
             return []
 
-        rel = _rel_path(file_path, context)
+        rel = rel_to_project(file_path, context)
         return [
             self.make_result(
                 file=rel,
@@ -1036,7 +990,7 @@ class OrphanedAgent(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_root = _find_app_root_for_path(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         graph = resolve_agent_graph(app_root)
         if graph.root_agent_dir is None:
             return []
@@ -1057,7 +1011,7 @@ class OrphanedAgent(Rule):
             )
             results.append(
                 self.make_result(
-                    file=_rel_path(target_path, context),
+                    file=rel_to_project(target_path, context),
                     message=(
                         f"Agent {label} is unreachable from rootAgent "
                         f"'{root_label}'."
@@ -1070,6 +1024,59 @@ class OrphanedAgent(Rule):
                 )
             )
         return results
+
+
+def _report_unused_resources(
+    rule_obj: Rule,
+    resources: list[LocalResource],
+    agent_refs: dict[LocalResource, set[str]],
+    graph: AgentGraph,
+    context: LintContext,
+    *,
+    label: str,
+    subdir: str,
+    app_referenced: set[LocalResource] | frozenset[LocalResource] = frozenset(),
+) -> list[LintResult]:
+    """Emit warnings for resources unattached or attached only to orphans."""
+    results: list[LintResult] = []
+    app_scope = "the app or " if subdir == "guardrails" else ""
+    for res in resources:
+        if res in app_referenced:
+            continue
+        referencing = sorted(agent_refs.get(res, set()))
+        if not referencing:
+            results.append(
+                rule_obj.make_result(
+                    file=rel_to_project(res.report_path, context),
+                    message=(
+                        f"{label} '{res.key}' is not attached to "
+                        f"{app_scope}any agent."
+                    ),
+                    fix=(
+                        f"Attach '{res.key}' in {app_scope}an agent's "
+                        f"{subdir} list, or remove {subdir}/{res.key}."
+                    ),
+                )
+            )
+        elif graph.root_agent_dir is not None and not any(
+            a in graph.reachable for a in referencing
+        ):
+            unreachable_str = ", ".join(referencing)
+            results.append(
+                rule_obj.make_result(
+                    file=rel_to_project(res.report_path, context),
+                    message=(
+                        f"{label} '{res.key}' is only attached to "
+                        f"unreachable agent(s): {unreachable_str}."
+                    ),
+                    fix=(
+                        f"Attach '{res.key}' to {app_scope}a reachable agent, "
+                        f"connect {unreachable_str} to rootAgent, or remove "
+                        f"the unused {label.lower()}."
+                    ),
+                )
+            )
+    return results
 
 
 @rule("structure")
@@ -1088,7 +1095,7 @@ class UnusedToolset(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_root = _find_app_root_for_path(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         resources = discover_local_resources(app_root, "toolsets")
         if not resources:
             return []
@@ -1111,41 +1118,15 @@ class UnusedToolset(Rule):
                     ):
                         refs_by_resource[matched].add(agent_name)
 
-        results: list[LintResult] = []
-        for res in resources:
-            referencing_agents = sorted(refs_by_resource.get(res, set()))
-            if not referencing_agents:
-                results.append(
-                    self.make_result(
-                        file=_rel_path(res.report_path, context),
-                        message=(
-                            f"Toolset '{res.key}' is not attached to any agent."
-                        ),
-                        fix=(
-                            f"Attach '{res.key}' in an agent's toolsets list, "
-                            f"or remove toolsets/{res.key}."
-                        ),
-                    )
-                )
-            elif graph.root_agent_dir is not None and not any(
-                a in graph.reachable for a in referencing_agents
-            ):
-                unreachable_str = ", ".join(referencing_agents)
-                results.append(
-                    self.make_result(
-                        file=_rel_path(res.report_path, context),
-                        message=(
-                            f"Toolset '{res.key}' is only attached to "
-                            f"unreachable agent(s): {unreachable_str}."
-                        ),
-                        fix=(
-                            f"Attach '{res.key}' to a reachable agent, connect "
-                            f"{unreachable_str} to rootAgent, or remove the "
-                            "unused toolset."
-                        ),
-                    )
-                )
-        return results
+        return _report_unused_resources(
+            self,
+            resources,
+            refs_by_resource,
+            graph,
+            context,
+            label="Toolset",
+            subdir="toolsets",
+        )
 
 
 @rule("structure")
@@ -1164,7 +1145,7 @@ class UnusedGuardrail(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_root = _find_app_root_for_path(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         resources = discover_local_resources(app_root, "guardrails")
         if not resources:
             return []
@@ -1173,45 +1154,16 @@ class UnusedGuardrail(Rule):
         app_referenced, agent_refs = collect_attached_guardrails(
             graph, resources
         )
-
-        results: list[LintResult] = []
-        for res in resources:
-            if res in app_referenced:
-                continue
-            referencing_agents = sorted(agent_refs.get(res, set()))
-            if not referencing_agents:
-                results.append(
-                    self.make_result(
-                        file=_rel_path(res.report_path, context),
-                        message=(
-                            f"Guardrail '{res.key}' is not attached to the app "
-                            "or any agent."
-                        ),
-                        fix=(
-                            f"Add '{res.key}' to guardrails in app config or "
-                            f"an agent config, or remove guardrails/{res.key}."
-                        ),
-                    )
-                )
-            elif graph.root_agent_dir is not None and not any(
-                a in graph.reachable for a in referencing_agents
-            ):
-                unreachable_str = ", ".join(referencing_agents)
-                results.append(
-                    self.make_result(
-                        file=_rel_path(res.report_path, context),
-                        message=(
-                            f"Guardrail '{res.key}' is only attached to "
-                            f"unreachable agent(s): {unreachable_str}."
-                        ),
-                        fix=(
-                            f"Attach '{res.key}' to the app or a reachable "
-                            f"agent, connect {unreachable_str} to rootAgent, "
-                            "or remove the unused guardrail."
-                        ),
-                    )
-                )
-        return results
+        return _report_unused_resources(
+            self,
+            resources,
+            agent_refs,
+            graph,
+            context,
+            label="Guardrail",
+            subdir="guardrails",
+            app_referenced=app_referenced,
+        )
 
 
 @rule("structure")
@@ -1229,7 +1181,7 @@ class DeploymentEntryAgentParity(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_root = _find_app_root_for_path(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         dep_files = discover_deployment_files(app_root, context)
         if not dep_files:
             return []
@@ -1254,7 +1206,7 @@ class DeploymentEntryAgentParity(Rule):
 
             entry_ref = raw_entry.strip()
             resolved = resolve_ref(entry_ref)
-            dep_rel = _rel_path(dep_path, context)
+            dep_rel = rel_to_project(dep_path, context)
 
             if resolved is None:
                 results.append(
@@ -1400,7 +1352,7 @@ class ProdUrlSafety(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_root = _find_app_root_for_path(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         dep_files = discover_deployment_files(app_root, context)
         is_prod = False
         for dep_path in dep_files:
@@ -1467,7 +1419,7 @@ class ProdUrlSafety(Rule):
         seen: set[tuple[str, str, str]] = set()
 
         for src_path, url in url_sources:
-            rel = _rel_path(src_path, context)
+            rel = rel_to_project(src_path, context)
             try:
                 if "://" in url:
                     parsed = urlparse(url)
@@ -1565,7 +1517,7 @@ class AgentRefSelfOrOrphan(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_root = _find_app_root_for_path(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         graph = resolve_agent_graph(app_root)
         if not graph.agent_dirs:
             return []
@@ -1591,11 +1543,11 @@ class AgentRefSelfOrOrphan(Rule):
                     inst_text = inst_path.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError):
                     continue
-                report_rel = _rel_path(inst_path, context)
+                report_rel = rel_to_project(inst_path, context)
             elif isinstance(raw_inst, str) and raw_inst.strip():
                 inst_text = raw_inst
                 cfg_path = graph.agent_config_paths.get(agent_name, agent_dir)
-                report_rel = _rel_path(cfg_path, context)
+                report_rel = rel_to_project(cfg_path, context)
             else:
                 continue
 
@@ -1691,38 +1643,27 @@ class GuardrailJinjaSyntax(Rule):
     description = "Detects Jinja tokens inside guardrail policy prompts."
     default_severity = Severity.ERROR
 
-    _GUARDRAIL_SUFFIXES = frozenset({".json", ".yaml", ".yml"})
-
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         config_paths: list[Path] = []
         if file_path.is_dir():
-            for ext in ("*.json", "*.yaml", "*.yml"):
-                config_paths.extend(sorted(file_path.glob(ext)))
-        elif file_path.suffix.lower() in self._GUARDRAIL_SUFFIXES:
+            for ext in _CONFIG_EXTENSIONS:
+                config_paths.extend(sorted(file_path.glob(f"*{ext}")))
+        elif file_path.suffix.lower() in _CONFIG_EXTENSIONS:
             config_paths.append(file_path)
 
         results: list[LintResult] = []
         for cfg_path in config_paths:
-            rel = str(cfg_path.relative_to(context.project_root))
-            try:
-                raw_text = cfg_path.read_text("utf-8")
-                data = (
-                    json.loads(raw_text)
-                    if cfg_path.suffix.lower() == ".json"
-                    else yaml.safe_load(raw_text)
-                )
-            except (ValueError, OSError, yaml.YAMLError):
-                continue
-            if not isinstance(data, dict):
+            data = _load_config_dict(cfg_path)
+            if data is None:
                 continue
 
             prompts = _extract_guardrail_prompts(data)
             if any("{{" in p or "{%" in p or "{#" in p for p in prompts):
                 results.append(
                     self.make_result(
-                        file=rel,
+                        file=rel_to_project(cfg_path, context),
                         message=(
                             "Jinja tokens {{...}}, {% ... %}, or {# ... #}"
                             " found inside guardrail policy prompt."

@@ -30,6 +30,8 @@ from cxas_scrapi.utils.env_vars import (
     validate_value_for_schema,
 )
 from cxas_scrapi.utils.linter import (
+    _APP_CONFIG_NAMES,
+    _CONFIG_EXTENSIONS,
     LintContext,
     LintResult,
     Rule,
@@ -37,27 +39,10 @@ from cxas_scrapi.utils.linter import (
     _find_dir_config,
     _load_config_dict,
     is_voice_app,
+    parse_config_content,
+    rel_to_project,
     rule,
 )
-
-_APP_CONFIG_NAMES: tuple[str, ...] = ("app.json", "app.yaml", "app.yml")
-_CONFIG_EXTS: tuple[str, ...] = (".json", ".yaml", ".yml")
-
-
-def _parse_config_content(
-    file_path: Path, content: str
-) -> dict[str, Any] | None:
-    """Parse JSON or YAML config content into a dict, or None on error."""
-    suffix = file_path.suffix.lower()
-    try:
-        data = (
-            yaml.safe_load(content)
-            if suffix in (".yaml", ".yml")
-            else json.loads(content)
-        )
-    except (json.JSONDecodeError, yaml.YAMLError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def _find_agent_config_file(
@@ -67,7 +52,7 @@ def _find_agent_config_file(
     cfg = _find_dir_config(agent_dir)
     if cfg is not None:
         return cfg
-    for ext in _CONFIG_EXTS:
+    for ext in _CONFIG_EXTENSIONS:
         candidate = agent_dir / f"{root_agent_name}{ext}"
         if candidate.is_file() and not candidate.is_symlink():
             return candidate
@@ -127,7 +112,7 @@ class MissingRequiredFields(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
-        data = _parse_config_content(file_path, content)
+        data = parse_config_content(file_path, content)
         if data is None:
             return []
 
@@ -159,7 +144,7 @@ class AgentToolNotExists(Rule):
         if file_path.name in _APP_CONFIG_NAMES:
             return []
 
-        data = _parse_config_content(file_path, content)
+        data = parse_config_content(file_path, content)
         if data is None:
             return []
 
@@ -247,7 +232,7 @@ class AgentMissingInstruction(Rule):
         if file_path.name in _APP_CONFIG_NAMES:
             return []
 
-        data = _parse_config_content(file_path, content)
+        data = parse_config_content(file_path, content)
         if data is not None and (_NON_LLM_AGENT_KEYS & data.keys()):
             return []
 
@@ -287,7 +272,7 @@ class RootAgentMissingEndSession(Rule):
         if file_path.name not in _APP_CONFIG_NAMES:
             return []
 
-        data = _parse_config_content(file_path, content)
+        data = parse_config_content(file_path, content)
         if data is None:
             return []
 
@@ -353,7 +338,7 @@ class AppRootAgentValidation(Rule):
         if file_path.name not in _APP_CONFIG_NAMES:
             return []
 
-        data = _parse_config_content(file_path, content)
+        data = parse_config_content(file_path, content)
         if data is None:
             return []
 
@@ -982,13 +967,6 @@ class CompositeSamplingTemperature(Rule):
         return results
 
 
-def _rel_or_str(path: Path, root: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(root.resolve()))
-    except ValueError:
-        return str(path)
-
-
 @rule("config")
 class AppVariableDefaultsAndEnvVars(Rule):
     id = "A017"
@@ -1005,8 +983,8 @@ class AppVariableDefaultsAndEnvVars(Rule):
         if file_path.name not in _APP_CONFIG_NAMES:
             return []
 
-        rel = _rel_or_str(file_path, context.project_root)
-        data = _parse_config_content(file_path, content)
+        rel = rel_to_project(file_path, context)
+        data = parse_config_content(file_path, content)
         if data is None:
             return []
 
@@ -1058,7 +1036,7 @@ class AppVariableDefaultsAndEnvVars(Rule):
         env_path: Path | None = None
         if context.env_file is not None:
             env_path = context.env_file
-            env_rel = _rel_or_str(env_path, context.project_root)
+            env_rel = rel_to_project(env_path, context)
             if not env_path.is_file():
                 results.append(
                     self.make_result(
@@ -1072,7 +1050,7 @@ class AppVariableDefaultsAndEnvVars(Rule):
             candidate = file_path.parent / "environment.json"
             if candidate.is_file():
                 env_path = candidate
-                env_rel = _rel_or_str(env_path, context.project_root)
+                env_rel = rel_to_project(env_path, context)
 
         if env_path is None:
             return results
@@ -1216,7 +1194,7 @@ class VoiceLanguageTtsParity(Rule):
         if file_path.name not in _APP_CONFIG_NAMES:
             return []
 
-        data = _parse_config_content(file_path, content)
+        data = parse_config_content(file_path, content)
         if data is None:
             return []
 
@@ -1224,7 +1202,7 @@ class VoiceLanguageTtsParity(Rule):
         if not isinstance(ls, dict):
             return []
 
-        rel = _rel_or_str(file_path, context.project_root)
+        rel = rel_to_project(file_path, context)
         raw_default = ls.get("defaultLanguageCode") or ls.get(
             "default_language_code"
         )

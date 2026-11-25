@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +89,7 @@ def _run_specific(
     return report
 
 
-# ── Item 0: deployments/*.yml discovery ─────────────────────────────────
+# ── Deployment YAML (.yml) discovery ───────────────────────────────────
 
 
 def test_run_rules_discovers_deployments_yml_and_skips_symlinks(
@@ -537,3 +539,398 @@ def test_sample_support_agent_clean_with_all_120_rules() -> None:
     run_rules(registry, cfg, ctx, discovery, report)
     assert report.errors == []
     assert report.warnings == []
+
+
+# ── Edge-case & CLI integration coverage ────────────────────────────────
+
+
+def test_category_dispatch_and_cxaslint_severity_overrides(
+    tmp_path: Path,
+) -> None:
+    _write_json(
+        tmp_path / "app.json",
+        {
+            "displayName": "app",
+            "rootAgent": "root",
+            "languageSettings": {
+                "defaultLanguageCode": "fr-FR",
+                "supportedLanguageCodes": ["en-US"],
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "agents" / "root" / "root.json", {"displayName": "root"}
+    )
+    _write_json(
+        tmp_path / "tools" / "api" / "api.json",
+        {"displayName": "api", "openApiTool": {"url": "$env_var"}},
+    )
+    _write_yaml(
+        tmp_path / "deployments" / "prod.yml",
+        {"environment": "prod", "entryAgent": "missing_agent"},
+    )
+    (tmp_path / "cxaslint.yaml").write_text(
+        "rules:\n  T020: warning\n  S018: off\n", encoding="utf-8"
+    )
+    cfg = LintConfig.load(tmp_path)
+    disc = Discovery(tmp_path, tmp_path / "evals")
+    ctx = build_context(tmp_path, cfg, disc)
+    reg = build_registry()
+
+    for category, expected_id in [
+        ("tools", "T020"),
+        ("config", "A018"),
+        ("structure", None),
+    ]:
+        rep = LintReport()
+        run_rules(reg, cfg, ctx, disc, rep, categories=[category])
+        ids = {r.rule_id for r in rep.results}
+        if expected_id:
+            assert expected_id in ids
+        else:
+            assert "S018" not in ids
+        if category == "tools":
+            t020 = [r for r in rep.results if r.rule_id == "T020"]
+            assert all(r.severity == Severity.WARNING for r in t020)
+
+
+def test_t020_nested_empty_env_var_not_masked_and_env_file_override(
+    tmp_path: Path,
+) -> None:
+    app_json = _write_json(
+        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
+    )
+    _write_json(
+        tmp_path / "tools" / "api_tool" / "api_tool.json",
+        {
+            "displayName": "api_tool",
+            "openApiTool": {"url": "$env_var", "auth": {"url": "$env_var"}},
+        },
+    )
+    _write_json(
+        tmp_path / "tools" / "ds_faq" / "ds_faq.json",
+        {
+            "displayName": "ds_faq",
+            "dataStoreTool": {
+                "name": "ds_faq",
+                "dataStoreSource": {"dataStore": {"name": "$env_var"}},
+            },
+        },
+    )
+    custom_env = _write_json(
+        tmp_path / "custom_env.json",
+        {
+            "tools": {
+                "api_tool": {
+                    "openApiTool": {
+                        "url": "https://api.example.com",
+                        "auth": {"url": ""},
+                    }
+                },
+                "ds_faq": {"name": "ds_faq"},
+            }
+        },
+    )
+    res = ToolToolsetEnvVarParity().check(
+        app_json, "", _ctx(tmp_path, env_file=custom_env)
+    )
+    assert {r.file for r in res if r.severity == Severity.ERROR} == {
+        "tools/api_tool/api_tool.json",
+        "tools/ds_faq/ds_faq.json",
+    }
+
+    # Non-dict environment.json is ignored without crashing
+    (tmp_path / "list_env.json").write_text("[]", encoding="utf-8")
+    assert (
+        ToolToolsetEnvVarParity().check(
+            app_json, "", _ctx(tmp_path, env_file=tmp_path / "list_env.json")
+        )
+        == []
+    )
+
+
+def test_t021_uppercase_scheme_path_traversal_and_malformed_shapes(
+    tmp_path: Path,
+) -> None:
+    outside = _write_yaml(tmp_path / "outside.yaml", {"bad": True})
+    app = tmp_path / "app"
+    app_json = _write_json(app / "app.json", {"displayName": "app"})
+
+    # Uppercase HTTPS:// accepted (RFC 3986)
+    _write_yaml(
+        app / "tools" / "upper" / "open_api_tool" / "open_api_schema.yaml",
+        {
+            "openapi": "3.0.0",
+            "servers": [{"url": "HTTPS://API.EXAMPLE.COM/v1"}],
+            "paths": {"/ping": {"get": {}}},
+        },
+    )
+    # Path traversal openApiSchema ref must be ignored safely
+    _write_json(
+        app / "tools" / "escape" / "escape.json",
+        {"openApiTool": {"openApiSchema": f"../{outside.name}"}},
+    )
+    assert OpenApiSchemaValidity().check(app_json, "", _ctx(app)) == []
+
+    # Non-mapping YAML, non-list servers, non-dict server item, malformed IPv6
+    (app / "tools" / "list_doc" / "open_api_tool").mkdir(parents=True)
+    (
+        app / "tools" / "list_doc" / "open_api_tool" / "open_api_schema.yaml"
+    ).write_text("- not-a-mapping\n", encoding="utf-8")
+    _write_yaml(
+        app / "tools" / "bad_srv" / "open_api_tool" / "open_api_schema.yaml",
+        {"servers": "not-a-list", "paths": {"/x": {"get": {}}}},
+    )
+    _write_yaml(
+        app / "tools" / "bad_item" / "open_api_tool" / "open_api_schema.yaml",
+        {
+            "servers": ["str-item", {"url": "https://[::1"}],
+            "paths": {"/x": {"get": {}}},
+        },
+    )
+    res = OpenApiSchemaValidity().check(app_json, "", _ctx(app))
+    assert len(res) == 4
+
+
+def test_a018_voice_missing_audio_empty_tts_and_digital_override(
+    tmp_path: Path,
+) -> None:
+    # Voice deployment omitting audioProcessingConfig warns per language
+    app_a = tmp_path / "no_audio"
+    cfg_a = _write_json(
+        app_a / "app.json",
+        {
+            "displayName": "a",
+            "languageSettings": {
+                "defaultLanguageCode": "en-US",
+                "supportedLanguageCodes": ["en-US", "de-DE"],
+                "enableMultilingualSupport": True,
+            },
+        },
+    )
+    _write_yaml(
+        app_a / "deployments" / "voice.yaml", {"channel": "VOICE_TELEPHONY"}
+    )
+    assert (
+        len(
+            VoiceLanguageTtsParity().check(
+                cfg_a, cfg_a.read_text(), _ctx(app_a)
+            )
+        )
+        == 2
+    )
+
+    # Null / empty {} TTS entries still warn
+    app_b = tmp_path / "empty_tts"
+    cfg_b = _write_json(
+        app_b / "app.json",
+        {
+            "displayName": "b",
+            "languageSettings": {
+                "defaultLanguageCode": "en-US",
+                "supportedLanguageCodes": ["en-US", "de-DE"],
+                "enableMultilingualSupport": True,
+            },
+            "audioProcessingConfig": {
+                "synthesizeSpeechConfigs": {"en-US": None, "de-DE": {}}
+            },
+        },
+    )
+    _write_yaml(
+        app_b / "deployments" / "voice.yml", {"channel": "VOICE_TELEPHONY"}
+    )
+    assert (
+        len(
+            VoiceLanguageTtsParity().check(
+                cfg_b, cfg_b.read_text(), _ctx(app_b)
+            )
+        )
+        == 2
+    )
+
+    # Digital deployment overrides retained audioProcessingConfig -> 0 warnings
+    _write_yaml(app_b / "deployments" / "voice.yml", {"channel": "WEB"})
+    assert (
+        VoiceLanguageTtsParity().check(cfg_b, cfg_b.read_text(), _ctx(app_b))
+        == []
+    )
+
+
+def test_s018_omitted_entry_and_ces_resource_path(tmp_path: Path) -> None:
+    app_json = _write_json(
+        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
+    )
+    _write_json(
+        tmp_path / "agents" / "root" / "root.json",
+        {"name": "projects/p/locations/us/apps/a/agents/root-id"},
+    )
+    _write_yaml(tmp_path / "deployments" / "no_entry.yaml", {"channel": "WEB"})
+    _write_yaml(
+        tmp_path / "deployments" / "ces_ref.yaml",
+        {"entryAgent": "projects/p/locations/us/apps/a/agents/root-id"},
+    )
+    assert (
+        DeploymentEntryAgentParity().check(app_json, "", _ctx(tmp_path)) == []
+    )
+
+
+def test_s019_schemeless_loopback_malformed_ipv6_and_regex_patterns(
+    tmp_path: Path,
+) -> None:
+    app_json = _write_json(tmp_path / "app.json", {"displayName": "app"})
+    _write_yaml(
+        tmp_path / "deployments" / "prod.yml", {"environment": "PRODUCTION"}
+    )
+    _write_json(
+        tmp_path / "environment.json",
+        {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "_comment": "http://localhost/ignored",
+            "tools": {
+                "a": {
+                    "url": "localhost:8080/api",
+                    "endpoint": "127.0.0.1:5000/v1",
+                },
+                "b": {"url": "http://[::1/bad"},
+                "c": {"url": "[your-host]:8080/v1"},
+                "d": {"url": "https://api-dev.example.com/v1"},
+                "e": {"url": "https://0.0.0.0:8080/v1"},
+            },
+        },
+    )
+    opts = {
+        "S019": {
+            "forbidden_url_patterns": [r"-dev\.", "[unclosed-regex-fallback"]
+        }
+    }
+    res = ProdUrlSafety().check(app_json, "", _ctx(tmp_path, options=opts))
+    msgs = "\n".join(r.message for r in res)
+    for expected in (
+        "localhost:8080/api",
+        "127.0.0.1:5000/v1",
+        "http://[::1/bad",
+        "api-dev.example.com",
+        "0.0.0.0:8080",
+    ):
+        assert expected in msgs
+    assert "json-schema.org" not in msgs
+    assert "localhost/ignored" not in msgs
+
+
+def test_s020_inline_instruction_and_traversal_fallback(tmp_path: Path) -> None:
+    (tmp_path / "secret.txt").write_text("{@AGENT: root}\n", encoding="utf-8")
+    app = tmp_path / "app"
+    app_json = _write_json(
+        app / "app.json", {"displayName": "app", "rootAgent": "root"}
+    )
+    _write_json(
+        app / "agents" / "root" / "root.json",
+        {
+            "displayName": "root",
+            "instruction": "Inline self ref {@AGENT: root}.",
+            "childAgents": ["sub"],
+        },
+    )
+    _write_json(
+        app / "agents" / "sub" / "sub.json",
+        {"displayName": "sub", "instruction": "../secret.txt"},
+    )
+    res = AgentRefSelfOrOrphan().check(app_json, "", _ctx(app))
+    assert len(res) == 1
+    assert res[0].file == "agents/root/root.json"
+    assert "self-transfer" in res[0].message
+
+
+def _run_cli_lint(*args: str) -> subprocess.CompletedProcess[str]:
+    repo_root = Path(__file__).resolve().parents[3]
+    env = dict(os.environ)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(repo_root / "src")
+    return subprocess.run(
+        [sys.executable, "-m", "cxas_scrapi.cli.main", "lint", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
+def test_cli_list_rules_exit_codes_and_sample_template(tmp_path: Path) -> None:
+    listed = _run_cli_lint("--list-rules")
+    assert listed.returncode == 0, listed.stderr
+    for rule_id in (
+        "T017",
+        "T018",
+        "T019",
+        "T020",
+        "T021",
+        "G001",
+        "G002",
+        "A015",
+        "A018",
+        "C024",
+        "S014",
+        "S015",
+        "S016",
+        "S017",
+        "S018",
+        "S019",
+        "S020",
+    ):
+        assert rule_id in listed.stdout
+
+    # Cycle ERROR exits 1
+    cyc = tmp_path / "cyc"
+    _write_json(
+        cyc / "app.json",
+        {"name": "cyc", "displayName": "cyc", "rootAgent": "a"},
+    )
+    _write_json(
+        cyc / "agents" / "a" / "a.json",
+        {
+            "displayName": "a",
+            "instruction": "agents/a/instruction.txt",
+            "tools": ["end_session"],
+            "childAgents": ["a"],
+        },
+    )
+    (cyc / "agents" / "a" / "instruction.txt").write_text("<role>A</role>\n")
+    assert (
+        _run_cli_lint("--app-dir", str(cyc), "--rule", "S014").returncode == 1
+    )
+
+    # Orphan WARNING-only exits 0
+    orph = tmp_path / "orph"
+    _write_json(
+        orph / "app.json",
+        {"name": "orph", "displayName": "orph", "rootAgent": "root"},
+    )
+    for name in ("root", "orphan"):
+        _write_json(
+            orph / "agents" / name / f"{name}.json",
+            {
+                "displayName": name,
+                "instruction": f"agents/{name}/instruction.txt",
+                "tools": ["end_session"],
+            },
+        )
+        (orph / "agents" / name / "instruction.txt").write_text(
+            "<role>Hi</role>\n"
+        )
+    res_orph = _run_cli_lint("--app-dir", str(orph), "--rule", "S015")
+    assert res_orph.returncode == 0
+    assert "S015" in res_orph.stdout
+
+    # Sample_Support_Agent CLI exits 0 cleanly
+    repo_root = Path(__file__).resolve().parents[3]
+    sample_dir = (
+        repo_root
+        / ".agents"
+        / "skills"
+        / "cxas-agent-foundry"
+        / "assets"
+        / "project-template"
+        / "cxas_app"
+    )
+    res_sample = _run_cli_lint("--app-dir", str(sample_dir))
+    assert res_sample.returncode == 0, res_sample.stdout + res_sample.stderr

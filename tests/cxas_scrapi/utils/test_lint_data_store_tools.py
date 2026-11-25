@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from cxas_scrapi.utils.lint_rules.tools import (
     DataStoreFilterParameterBehavior,
@@ -51,11 +52,18 @@ def _context(app_root: Path) -> LintContext:
     )
 
 
-def _write_tool(app_root: Path, name: str, data: dict[str, Any]) -> Path:
+def _write_tool(
+    app_root: Path, name: str, data: dict[str, Any], ext: str = ".json"
+) -> Path:
     tool_dir = app_root / "tools" / name
     tool_dir.mkdir(parents=True, exist_ok=True)
-    path = tool_dir / f"{name}.json"
-    path.write_text(json.dumps(data))
+    path = tool_dir / f"{name}{ext}"
+    text = (
+        json.dumps(data)
+        if ext == ".json"
+        else yaml.safe_dump(data, sort_keys=False)
+    )
+    path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -293,3 +301,241 @@ def test_rules_registered_and_dispatched(tmp_path: Path) -> None:
         specific_rules={"T017", "T018", "T019"},
     )
     assert {r.rule_id for r in report.results} == {"T017", "T018", "T019"}
+
+
+# ── CES schema paths, YAML configs, voice channel variants ──────────────
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"dataStoreTool": {"dataStoreSource": {"filter": "b = {{brand}}"}}},
+        {"data_store_tool": {"data_store_source": {"filter": "b = {brand}"}}},
+        {
+            "dataStoreTool": {
+                "engineSource": {
+                    "dataStoreSources": [{"filter": "{% if x %}a{% endif %}"}]
+                }
+            }
+        },
+        {
+            "data_store_tool": {
+                "engine_source": {
+                    "data_store_sources": [{"filter": "region = {r}"}]
+                }
+            }
+        },
+    ],
+)
+@pytest.mark.parametrize("ext", [".json", ".yaml", ".yml"])
+def test_t017_ces_source_paths_and_yaml_configs(
+    tmp_path: Path, payload: dict[str, Any], ext: str
+) -> None:
+    path = _write_tool(tmp_path, "ds_search", payload, ext=ext)
+    res = DataStoreFilterTemplateSyntax().check(
+        path, path.read_text(), _context(tmp_path)
+    )
+    assert [r.rule_id for r in res] == ["T017"]
+
+
+@pytest.mark.parametrize("behavior", ["NEVER_INCLUDE", 3])
+def test_t018_snake_case_and_yaml_never_include_pass(
+    tmp_path: Path, behavior: str | int
+) -> None:
+    path = _write_tool(
+        tmp_path,
+        "ds_kb",
+        {
+            "data_store_tool": {
+                "data_store_source": {"filter": "brand = 'a'"},
+                "filter_parameter_behavior": behavior,
+            }
+        },
+        ext=".yaml",
+    )
+    assert (
+        DataStoreFilterParameterBehavior().check(
+            path, path.read_text(), _context(tmp_path)
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "behavior",
+    [None, "UNSPECIFIED", "INCLUDE", "never_include", 0, 1, 2],
+)
+def test_t018_rejects_unsafe_or_non_canonical_behaviors(
+    tmp_path: Path, behavior: Any
+) -> None:
+    ds_cfg: dict[str, Any] = {"dataStoreSource": {"filter": "brand = 'a'"}}
+    if behavior is not None:
+        ds_cfg["filterParameterBehavior"] = behavior
+    path = _write_tool(tmp_path, "kb_search", {"dataStoreTool": ds_cfg})
+    res = DataStoreFilterParameterBehavior().check(
+        path, path.read_text(), _context(tmp_path)
+    )
+    assert [r.rule_id for r in res] == ["T018"]
+    assert "with static filter" in res[0].message
+
+
+def test_t018_ces_engine_source_and_ds_prefix_reason(tmp_path: Path) -> None:
+    p_eng = _write_tool(
+        tmp_path,
+        "kb_eng",
+        {
+            "dataStoreTool": {
+                "engineSource": {
+                    "dataStoreSources": [{"filter": "brand = 'a'"}]
+                }
+            }
+        },
+    )
+    p_ds = _write_tool(
+        tmp_path,
+        "ds_only",
+        {"dataStoreTool": {"dataStoreSources": [{"dataStore": "cat"}]}},
+        ext=".yaml",
+    )
+    rule = DataStoreFilterParameterBehavior()
+    res_eng = rule.check(p_eng, p_eng.read_text(), _context(tmp_path))
+    res_ds = rule.check(p_ds, p_ds.read_text(), _context(tmp_path))
+    assert [r.rule_id for r in res_eng] == ["T018"]
+    assert "with static filter" in res_eng[0].message
+    assert [r.rule_id for r in res_ds] == ["T018"]
+    assert "with ds_ prefix" in res_ds[0].message
+
+
+def test_t019_snake_case_int_enum_yaml_and_empty_audio_dict(
+    tmp_path: Path,
+) -> None:
+    _write_voice_deployment(tmp_path)
+    rule = DataStoreVoiceModality()
+    ctx = _context(tmp_path)
+
+    # Snake-case + integer enum modalityType=2 in list and dict forms pass
+    snake_ok = _write_tool(
+        tmp_path,
+        "ds_snake",
+        {
+            "data_store_tool": {
+                "modality_configs": [
+                    {
+                        "modality_type": 2,
+                        "snippets_config": {"enable_snippets": True},
+                        "rewriter_config": {"disabled": True},
+                        "summarization_config": {"disabled": True},
+                    }
+                ]
+            }
+        },
+        ext=".yaml",
+    )
+    assert rule.check(snake_ok, snake_ok.read_text(), ctx) == []
+
+    dict_int_ok = _write_tool(
+        tmp_path,
+        "ds_dict_int",
+        {"dataStoreTool": {"modalityConfigs": {2: _CLEAN_AUDIO_CONFIG}}},
+        ext=".yaml",
+    )
+    assert rule.check(dict_int_ok, dict_int_ok.read_text(), ctx) == []
+
+    # TEXT-only warns missing AUDIO; empty {"AUDIO": {}} warns all 3 sub-gaps
+    text_only = _write_tool(
+        tmp_path,
+        "ds_text",
+        {"dataStoreTool": {"modalityConfigs": [{"modalityType": "TEXT"}]}},
+    )
+    res_text = rule.check(text_only, text_only.read_text(), ctx)
+    assert len(res_text) == 1
+    assert "missing AUDIO" in res_text[0].message
+
+    empty_audio = _write_tool(
+        tmp_path,
+        "ds_empty_audio",
+        {"dataStoreTool": {"modalityConfigs": {"AUDIO": {}}}},
+    )
+    assert len(rule.check(empty_audio, empty_audio.read_text(), ctx)) == 3
+
+
+@pytest.mark.parametrize(
+    "deployment_yaml",
+    [
+        "channel: VOICE\n",
+        "channel: TELEPHONY\n",
+        "channel: TWILIO\n",
+        "channel: FIVE9\n",
+        "channelProfile:\n  channelType: AUDIO\n",
+    ],
+)
+def test_t019_detects_voice_channels_and_app_audio_config(
+    tmp_path: Path, deployment_yaml: str
+) -> None:
+    deps = tmp_path / "deployments"
+    deps.mkdir()
+    (deps / "voice.yaml").write_text(deployment_yaml, encoding="utf-8")
+    tool = _write_tool(tmp_path, "ds_kb", {"dataStoreTool": {}})
+    res = DataStoreVoiceModality().check(
+        tool, tool.read_text(), _context(tmp_path)
+    )
+    assert [r.rule_id for r in res] == ["T019"]
+
+
+def test_t019_detects_voice_via_app_audio_processing_config(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.json").write_text(
+        json.dumps({"audioProcessingConfig": {"inactivityTimeout": "20s"}}),
+        encoding="utf-8",
+    )
+    tool = _write_tool(tmp_path, "ds_kb", {"dataStoreTool": {}})
+    res = DataStoreVoiceModality().check(
+        tool, tool.read_text(), _context(tmp_path)
+    )
+    assert [r.rule_id for r in res] == ["T019"]
+
+
+def test_v003_valid_ces_data_store_tool_catches_t017_t018_without_schema_error(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.json").write_text(
+        json.dumps({"name": "demo", "displayName": "Demo"}), encoding="utf-8"
+    )
+    _write_tool(
+        tmp_path,
+        "kb_ces",
+        {
+            "displayName": "kb_ces",
+            "dataStoreTool": {
+                "name": "kb_ces",
+                "description": "Search knowledge base",
+                "engineSource": {
+                    "engine": "projects/p/locations/global/collections/c/engines/e",
+                    "dataStoreSources": [
+                        {
+                            "filter": "brand = '{{brand}}'",
+                            "dataStore": {
+                                "name": "projects/p/locations/global/collections/c/dataStores/d"
+                            },
+                        }
+                    ],
+                },
+            },
+        },
+    )
+    disc = Discovery(tmp_path, tmp_path / "evals")
+    ctx = _context(tmp_path)
+    ctx.all_tool_names = {"kb_ces"}
+    report = LintReport()
+    run_rules(
+        build_registry(),
+        LintConfig(),
+        ctx,
+        disc,
+        report,
+        specific_rules={"V003", "T017", "T018"},
+    )
+    ids = {r.rule_id for r in report.results}
+    assert "V003" not in ids
+    assert {"T017", "T018"} <= ids

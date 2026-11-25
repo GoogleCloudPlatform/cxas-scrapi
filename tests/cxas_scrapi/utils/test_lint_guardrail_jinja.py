@@ -16,8 +16,10 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 from cxas_scrapi.utils.lint_rules.structure import GuardrailJinjaSyntax
 from cxas_scrapi.utils.linter import (
@@ -107,3 +109,45 @@ def test_g001_dispatched_via_registry(tmp_path: Path) -> None:
         specific_rules={"G001"},
     )
     assert [r.rule_id for r in report.results] == ["G001"]
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ["{% for x in items %}{{ x }}{% endfor %}", "{# internal note #}"],
+)
+def test_g001_flags_for_loops_and_jinja_comments(
+    tmp_path: Path, prompt: str
+) -> None:
+    gr_dir = _write_guardrail(tmp_path, "llmPolicy", prompt)
+    res = GuardrailJinjaSyntax().check(gr_dir, "", _context(tmp_path))
+    assert [r.rule_id for r in res] == ["G001"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"llmPromptSecurity": {"customPolicy": {"prompt": "Hi {{ user }}"}}},
+        {
+            "llm_prompt_security": {
+                "custom_policy": {"prompt": "{% if x %}y{% endif %}"}
+            }
+        },
+        {"customPolicy": {"prompt": "{# comment #}"}},
+    ],
+)
+@pytest.mark.parametrize("ext", [".json", ".yaml", ".yml"])
+def test_g001_detects_jinja_in_custom_policy_and_yaml_guardrails(
+    tmp_path: Path, payload: dict[str, Any], ext: str
+) -> None:
+    gr_dir = tmp_path / "guardrails" / "sec"
+    gr_dir.mkdir(parents=True)
+    cfg = gr_dir / f"sec{ext}"
+    text = (
+        json.dumps(payload)
+        if ext == ".json"
+        else yaml.safe_dump(payload, sort_keys=False)
+    )
+    cfg.write_text(text, encoding="utf-8")
+    res = GuardrailJinjaSyntax().check(gr_dir, "", _context(tmp_path))
+    assert [r.rule_id for r in res] == ["G001"]
+    assert res[0].file == f"guardrails/sec/sec{ext}"

@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 import yaml
 
 from cxas_scrapi.utils.linter import (
+    _CONFIG_EXTENSIONS,
     AgentGraph,
     LintContext,
     LintResult,
@@ -43,7 +44,10 @@ from cxas_scrapi.utils.linter import (
     extract_resource_ref_candidates,
     is_voice_app,
     match_local_resources,
+    parse_config_content,
+    rel_to_project,
     resolve_agent_graph,
+    resolve_app_root,
     rule,
 )
 
@@ -623,10 +627,7 @@ class ToolDisplayNameUnreferenced(Rule):
         ):
             return []
 
-        try:
-            rel = str(cfg_path.relative_to(context.project_root))
-        except ValueError:
-            rel = str(cfg_path)
+        rel = rel_to_project(cfg_path, context)
 
         if unreachable_attaching:
             unreachable_str = ", ".join(unreachable_attaching)
@@ -1165,21 +1166,12 @@ def _load_data_store_tool_config(
     file_path: Path, content: str
 ) -> dict[str, typing.Any] | None:
     """Parse a JSON or YAML tool config file under tools/, else return None."""
-    suffix = file_path.suffix.lower()
     if (
-        suffix not in {".json", ".yaml", ".yml"}
+        file_path.suffix.lower() not in _CONFIG_EXTENSIONS
         or "tools" not in file_path.parts
     ):
         return None
-    try:
-        data = (
-            json.loads(content)
-            if suffix == ".json"
-            else yaml.safe_load(content)
-        )
-    except (ValueError, OSError, yaml.YAMLError):
-        return None
-    return data if isinstance(data, dict) else None
+    return parse_config_content(file_path, content)
 
 
 def _extract_data_store_filters(data: dict[str, typing.Any]) -> list[str]:
@@ -1457,21 +1449,6 @@ class DataStoreVoiceModality(Rule):
         return results
 
 
-def _resolve_app_root(file_path: Path, context: LintContext) -> Path:
-    if file_path.name in ("app.json", "app.yaml", "app.yml"):
-        return file_path.parent
-    if context.app_root and context.app_root.exists():
-        return context.app_root
-    return context.app_dir
-
-
-def _rel_or_str(path: Path, project_root: Path) -> str:
-    try:
-        return str(path.relative_to(project_root))
-    except ValueError:
-        return str(path)
-
-
 def _camel_snake_variants(key: str) -> set[str]:
     snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key).lower()
     parts = snake.split("_")
@@ -1610,7 +1587,7 @@ class ToolToolsetEnvVarParity(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_root = _resolve_app_root(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         env_path = (
             context.env_file
             if context.env_file is not None
@@ -1619,15 +1596,9 @@ class ToolToolsetEnvVarParity(Rule):
 
         env_data: dict[str, typing.Any] | None = None
         if env_path.exists():
-            if env_path.is_symlink() or not env_path.is_file():
+            env_data = _load_config_dict(env_path)
+            if env_data is None:
                 return []
-            try:
-                raw_env = json.loads(env_path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-                return []
-            if not isinstance(raw_env, dict):
-                return []
-            env_data = raw_env
 
         env_tools = (
             env_data.get("tools")
@@ -1695,45 +1666,37 @@ class ToolToolsetEnvVarParity(Rule):
                         continue
                     seen_paths.add((src_path, field_path))
                     field_desc = ".".join(field_path) or "$env_var"
-                    src_rel = _rel_or_str(src_path, context.project_root)
-                    if env_data is None:
-                        results.append(
-                            self.make_result(
-                                file=src_rel,
-                                severity=Severity.ERROR,
-                                message=(
-                                    f"{label} '{res.key}' uses '$env_var' at "
-                                    f"'{field_desc}' but environment.json is "
-                                    "missing."
-                                ),
-                                fix=(
-                                    f"Add a '{subdir}.{res.key}' entry to "
-                                    "environment.json resolving this value."
-                                ),
-                            )
-                        )
-                    elif not _env_entry_resolves_placeholder(
+                    src_rel = rel_to_project(src_path, context)
+                    if env_data is not None and _env_entry_resolves_placeholder(
                         env_entry, field_path
                     ):
-                        results.append(
-                            self.make_result(
-                                file=src_rel,
-                                severity=Severity.ERROR,
-                                message=(
-                                    f"{label} '{res.key}' uses '$env_var' at "
-                                    f"'{field_desc}' but environment.json "
-                                    f"'{subdir}' has no non-empty value for it."
-                                ),
-                                fix=(
-                                    f"Set '{subdir}.{res.key}' in "
-                                    "environment.json to a non-empty value."
-                                ),
-                            )
+                        continue
+                    reason = (
+                        "environment.json is missing."
+                        if env_data is None
+                        else (
+                            f"environment.json '{subdir}' has no non-empty "
+                            "value for it."
                         )
+                    )
+                    results.append(
+                        self.make_result(
+                            file=src_rel,
+                            severity=Severity.ERROR,
+                            message=(
+                                f"{label} '{res.key}' uses '$env_var' at "
+                                f"'{field_desc}' but {reason}"
+                            ),
+                            fix=(
+                                f"Set '{subdir}.{res.key}' in "
+                                "environment.json to a non-empty value."
+                            ),
+                        )
+                    )
 
             # Dangling keys in environment.json
             if env_data is not None and env_section:
-                env_rel = _rel_or_str(env_path, context.project_root)
+                env_rel = rel_to_project(env_path, context)
                 for env_key in sorted(env_section.keys()):
                     if not isinstance(env_key, str):
                         continue
@@ -1799,11 +1762,11 @@ class OpenApiSchemaValidity(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_root = _resolve_app_root(file_path, context)
+        app_root = resolve_app_root(file_path, context)
         results: list[LintResult] = []
 
         for _kind, _key, schema_path in discover_openapi_schema_paths(app_root):
-            rel = _rel_or_str(schema_path, context.project_root)
+            rel = rel_to_project(schema_path, context)
             try:
                 raw = schema_path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as e:

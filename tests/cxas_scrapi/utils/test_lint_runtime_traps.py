@@ -503,10 +503,44 @@ def test_a015_global_option_lowers_limit(tmp_path: Path) -> None:
 
 def test_a015_invalid_option_falls_back_to_default(tmp_path: Path) -> None:
     app_file = _write_app_with_vars(tmp_path, 85)
-    for invalid in (True, False, "80", 0, -10):
+    for invalid in (
+        True,
+        False,
+        "80",
+        0,
+        -10,
+        0.5,
+        None,
+        {},
+        float("inf"),
+        float("-inf"),
+        float("nan"),
+    ):
         ctx = _ctx(tmp_path)
         ctx.options = {"A015": {"max_variables_per_app": invalid}}
         assert (
             VariableCountLimit().check(app_file, app_file.read_text(), ctx)
             == []
         )
+
+
+def test_a015_exact_boundaries_and_option_precedence(tmp_path: Path) -> None:
+    rule = VariableCountLimit()
+    for count, opts, expected in [
+        (95, {}, 0),
+        (96, {}, 1),
+        (190, {"A015": {"max_variables_per_app": 200}}, 0),
+        (191, {"A015": {"max_variables_per_app": 200}}, 1),
+        (
+            85,
+            {
+                "max_variables_per_app": 50,
+                "A015": {"max_variables_per_app": 200},
+            },
+            0,
+        ),
+    ]:
+        app_file = _write_app_with_vars(tmp_path, count)
+        ctx = _ctx(tmp_path)
+        ctx.options = opts
+        assert len(rule.check(app_file, app_file.read_text(), ctx)) == expected

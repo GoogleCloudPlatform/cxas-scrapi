@@ -14,7 +14,10 @@
 
 """Unit tests for the C024 voice before_model mutation lint rule."""
 
+import os
 from pathlib import Path
+
+import pytest
 
 from cxas_scrapi.utils.lint_rules.callbacks import VoiceBeforeModelToolMutation
 from cxas_scrapi.utils.lint_rules.tools import DataStoreVoiceModality
@@ -314,3 +317,94 @@ def test_run_rules_ignores_non_utf8_deployment_file_without_crashing(
         report,
     )
     assert isinstance(report.results, list)
+
+
+@pytest.mark.parametrize(
+    ("code", "expected_count"),
+    [
+        # AugAssign, subscript, and all collection mutators
+        (
+            "def before_model_callback(cb, req):\n"
+            "    req.tools += ['a']\n"
+            "    req.tools[0] = 'b'\n"
+            "    req.tools.append('c')\n"
+            "    req.tools.insert(0, 'd')\n"
+            "    req.tools.pop()\n"
+            "    req.tools.remove('a')\n"
+            "    req.tools.clear()\n"
+            "    req.config.update({'k': 1})\n"
+            "    req.config.setdefault('m', 2)\n",
+            9,
+        ),
+        # posonlyargs, tuple unpack, chained assign (1 finding), AnnAssign w/ & w/o value
+        (
+            "def before_model_callback(cb, req, /):\n"
+            "    req.a, other = 1, 2\n"
+            "    x = req.b = 3\n"
+            "    req.c: int = 4\n"
+            "    req.d: int\n",
+            3,
+        ),
+        # Alias tracking & setattr/delattr; copies and rebinds must NOT flag
+        (
+            "def before_model_callback(cb, req):\n"
+            "    t = req.tools\n"
+            "    t.append('x')\n"
+            "    setattr(req, 'x', 1)\n"
+            "    delattr(req, 'y')\n"
+            "    copy_t = list(req.tools)\n"
+            "    copy_t.append('safe')\n"
+            "    t = []\n"
+            "    t.append('safe_after_rebind')\n"
+            "    setattr(copy_t, 'z', 1)\n",
+            3,
+        ),
+        # Read-only callback and invalid syntax must not flag or crash
+        (
+            "def before_model_callback(cb, req):\n"
+            "    names = [t.name for t in req.tools]\n"
+            "    return None\n",
+            0,
+        ),
+        ("def before_model_callback(cb, req:\n    pass\n", 0),
+    ],
+)
+def test_c024_ast_edge_cases_and_alias_safety(
+    tmp_path: Path, code: str, expected_count: int
+) -> None:
+    (tmp_path / "app.json").write_text('{"audioProcessingConfig": {"x": 1}}')
+    cb_file = _callback(tmp_path, code=code)
+    res = VoiceBeforeModelToolMutation().check(
+        cb_file, code, _context(tmp_path)
+    )
+    assert len(res) == expected_count
+    assert all(r.rule_id == "C024" for r in res)
+
+
+@pytest.mark.parametrize(
+    "folder", ["before_agent_callbacks", "after_model_callbacks"]
+)
+def test_c024_ignores_non_before_model_callbacks(
+    tmp_path: Path, folder: str
+) -> None:
+    (tmp_path / "app.json").write_text('{"audioProcessingConfig": {"x": 1}}')
+    cb_file = _callback(tmp_path, folder=folder)
+    assert (
+        VoiceBeforeModelToolMutation().check(
+            cb_file, _MUTATING, _context(tmp_path)
+        )
+        == []
+    )
+
+
+def test_is_voice_app_skips_symlinked_deployments_dir(tmp_path: Path) -> None:
+    outside = tmp_path / "outside_deps"
+    outside.mkdir()
+    (outside / "voice.yaml").write_text(
+        "channel: VOICE_TELEPHONY\n", encoding="utf-8"
+    )
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "app.json").write_text('{"displayName": "web"}', encoding="utf-8")
+    os.symlink(outside, app / "deployments")
+    assert is_voice_app(_context(app)) is False

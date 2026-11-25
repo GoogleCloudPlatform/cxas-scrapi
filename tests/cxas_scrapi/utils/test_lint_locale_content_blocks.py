@@ -17,14 +17,19 @@
 import json
 from pathlib import Path
 
+import pytest
+import yaml
+
 from cxas_scrapi.utils.lint_rules.structure import (
     CrosscheckLocalesContentBlocks,
+    _LocaleYamlLoader,
 )
 from cxas_scrapi.utils.linter import (
     Discovery,
     LintConfig,
     LintContext,
     LintReport,
+    build_context,
     build_registry,
     run_rules,
 )
@@ -128,3 +133,57 @@ def test_g002_dispatched_for_deployment_yaml(tmp_path: Path) -> None:
         specific_rules={"G002"},
     )
     assert [r.rule_id for r in report.results] == ["G002"]
+
+
+def test_g002_nested_app_layout_discovers_project_root_deployments(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "cxas_app"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(json.dumps({"displayName": "nested"}))
+    _setup(
+        tmp_path,
+        "brandId: brand_a\nsupportedCountries: [US]\nsupportedLanguages: [es]\n",
+    )
+    cfg = LintConfig(app_dir="cxas_app")
+    disc = Discovery(app_dir, tmp_path / "evals")
+    ctx = build_context(tmp_path, cfg, disc)
+    report = LintReport()
+    run_rules(build_registry(), cfg, ctx, disc, report, specific_rules={"G002"})
+    assert [r.rule_id for r in report.results] == ["G002"]
+    assert "lang=es" in report.results[0].message
+
+
+def test_g002_snake_case_keys_and_norway_unquoted_codes(
+    tmp_path: Path,
+) -> None:
+    dep = _setup(
+        tmp_path,
+        "brand_id: brand_a\nsupported_countries: [NO]\n"
+        "supported_languages: [no, nb]\n",
+        blocks="blocks:\n  brand_a:\n    NO:\n      no: {greeting: Hei}\n",
+    )
+    messages = _check(tmp_path, dep)
+    assert len(messages) == 1
+    assert "country=NO" in messages[0]
+    assert "lang=nb" in messages[0]
+
+
+def test_locale_yaml_loader_safety_and_malformed_yaml(tmp_path: Path) -> None:
+    # Keeps unquoted NO/no as strings while rejecting unsafe Python tags
+    loaded = yaml.load("country: NO\nlang: no\n", Loader=_LocaleYamlLoader)
+    assert loaded == {"country": "NO", "lang": "no"}
+    with pytest.raises(yaml.YAMLError):
+        yaml.load(
+            "!!python/object/apply:os.system ['echo hi']",
+            Loader=_LocaleYamlLoader,
+        )
+
+    # Malformed YAML syntax in either file must not crash G002
+    dep = _setup(tmp_path, "brandId: [unclosed", blocks=_BLOCKS)
+    assert _check(tmp_path, dep) == []
+    dep.write_text("brandId: brand_a\nsupportedCountries: [US]\n")
+    (tmp_path / "manifests" / "locales" / "content_blocks.yaml").write_text(
+        "blocks: [unclosed"
+    )
+    assert _check(tmp_path, dep) == []

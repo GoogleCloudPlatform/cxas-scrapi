@@ -417,19 +417,76 @@ _CES_AGENT_REF_RE = re.compile(
 )
 
 
+def parse_config_content(
+    file_path: Path, content: str
+) -> dict[str, typing.Any] | None:
+    """Parse JSON or YAML config content into a dict, or None on error."""
+    suffix = file_path.suffix.lower()
+    try:
+        data = (
+            yaml.safe_load(content)
+            if suffix in (".yaml", ".yml")
+            else json.loads(content)
+        )
+    except (ValueError, yaml.YAMLError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _load_config_dict(path: Path) -> dict[str, typing.Any] | None:
     """Load a JSON or YAML mapping from ``path``, returning None on error."""
     if path.is_symlink() or not path.is_file():
         return None
-    suffix = path.suffix.lower()
-    if suffix not in _CONFIG_EXTENSIONS:
+    if path.suffix.lower() not in _CONFIG_EXTENSIONS:
         return None
     try:
         raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw) if suffix == ".json" else yaml.safe_load(raw)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, yaml.YAMLError):
+    except (OSError, UnicodeDecodeError):
         return None
-    return data if isinstance(data, dict) else None
+    return parse_config_content(path, raw)
+
+
+def resolve_app_root(file_path: Path, context: LintContext) -> Path:
+    """Resolve the app root directory from ``file_path`` or ``context``."""
+    if file_path.name in _APP_CONFIG_NAMES:
+        return file_path.parent
+    if context.app_root and context.app_root.exists():
+        return context.app_root
+    if any((context.app_dir / name).exists() for name in _APP_CONFIG_NAMES):
+        return context.app_dir
+    resource_dirs = ("agents", "tools", "toolsets", "guardrails")
+    if file_path.parent.parent.name in resource_dirs:
+        return file_path.parent.parent.parent
+    if file_path.parent.name in resource_dirs:
+        return file_path.parent.parent
+    return context.app_dir
+
+
+def rel_to_project(path: Path, context: LintContext) -> str:
+    """Format ``path`` relative to ``context.project_root`` when possible."""
+    try:
+        return str(path.relative_to(context.project_root))
+    except ValueError:
+        try:
+            return str(
+                path.resolve().relative_to(context.project_root.resolve())
+            )
+        except (OSError, ValueError):
+            return str(path)
+
+
+def _iter_subdirs(parent: Path) -> list[Path]:
+    """Return sorted non-hidden, non-symlink subdirectories under ``parent``."""
+    if parent.is_symlink() or not parent.is_dir():
+        return []
+    return [
+        entry
+        for entry in sorted(parent.iterdir())
+        if not entry.is_symlink()
+        and entry.is_dir()
+        and not entry.name.startswith(".")
+        and entry.name != "__pycache__"
+    ]
 
 
 @dataclass(frozen=True)
@@ -641,173 +698,63 @@ def _build_agent_ref_resolver(
     return _resolve
 
 
-def _tarjan_sccs(
-    nodes: list[str], adj: dict[str, list[str]]
-) -> list[list[str]]:
-    """Return strongly connected components via iterative Tarjan's algorithm."""
-    index_counter = 0
-    indices: dict[str, int] = {}
-    lowlink: dict[str, int] = {}
-    on_stack: set[str] = set()
-    tarjan_stack: list[str] = []
-    sccs: list[list[str]] = []
-
-    for start in nodes:
-        if start in indices:
-            continue
-        indices[start] = lowlink[start] = index_counter
-        index_counter += 1
-        tarjan_stack.append(start)
-        on_stack.add(start)
-        call_stack: list[list[typing.Any]] = [[start, 0]]
-
-        while call_stack:
-            frame = call_stack[-1]
-            v: str = frame[0]
-            idx: int = frame[1]
-            nbrs = adj.get(v, [])
-
-            if idx < len(nbrs):
-                frame[1] = idx + 1
-                w = nbrs[idx]
-                if w not in indices:
-                    indices[w] = lowlink[w] = index_counter
-                    index_counter += 1
-                    tarjan_stack.append(w)
-                    on_stack.add(w)
-                    call_stack.append([w, 0])
-                elif w in on_stack:
-                    lowlink[v] = min(lowlink[v], indices[w])
-            else:
-                call_stack.pop()
-                if call_stack:
-                    parent: str = call_stack[-1][0]
-                    lowlink[parent] = min(lowlink[parent], lowlink[v])
-                if lowlink[v] == indices[v]:
-                    comp: list[str] = []
-                    while True:
-                        member = tarjan_stack.pop()
-                        on_stack.remove(member)
-                        comp.append(member)
-                        if member == v:
-                            break
-                    sccs.append(sorted(comp))
-
-    return sccs
-
-
-def _unblock_johnson(
-    node: str,
-    blocked: set[str],
-    blocked_map: dict[str, set[str]],
-) -> None:
-    """Iteratively unblock vertices in Johnson's elementary cycle search."""
-    work = [node]
-    while work:
-        cur = work.pop()
-        if cur in blocked:
-            blocked.remove(cur)
-            work.extend(blocked_map.pop(cur, ()))
-
-
-def _find_elementary_cycles(
+def _find_cycles(
     adjacency: dict[str, list[str]],
     root_agent_dir: str | None = None,
     max_cycles: int = _MAX_AGENT_CYCLES,
 ) -> list[list[str]]:
-    """Find deduplicated, canonicalized elementary cycles in ``adjacency``."""
-    nodes = sorted(adjacency.keys())
+    """Detect cycles via iterative 3-color DFS (WHITE=0, GRAY=1, BLACK=2)."""
+    color: dict[str, int] = {}
+    seen: set[tuple[str, ...]] = set()
     cycles: list[list[str]] = []
 
-    # 1. Self-loops (u -> u)
-    for u in nodes:
-        if u in adjacency.get(u, ()):
-            cycles.append([u, u])
-            if len(cycles) >= max_cycles:
-                break
+    order = sorted(adjacency)
+    if root_agent_dir in adjacency:
+        order = [root_agent_dir, *(n for n in order if n != root_agent_dir)]
 
-    # 2. Multi-node cycles via iterative Johnson's algorithm
-    no_self_adj: dict[str, list[str]] = {
-        u: [v for v in adjacency.get(u, ()) if v != u and v in adjacency]
-        for u in nodes
-    }
-    top_sccs = [
-        c
-        for c in _tarjan_sccs(nodes, no_self_adj)
-        if len(c) >= 2  # noqa: PLR2004
-    ]
-    for scc in top_sccs:
-        for start_idx, start in enumerate(scc):
-            if len(cycles) >= max_cycles:
-                break
-            tail_nodes = scc[start_idx:]
-            tail_set = set(tail_nodes)
-            tail_adj = {
-                u: [v for v in no_self_adj[u] if v in tail_set]
-                for u in tail_nodes
-            }
-            start_scc: set[str] | None = None
-            for comp in _tarjan_sccs(tail_nodes, tail_adj):
-                if len(comp) >= 2 and start in comp:  # noqa: PLR2004
-                    start_scc = set(comp)
-                    break
-            if not start_scc:
-                continue
+    for start in order:
+        if color.get(start, 0) != 0 or len(cycles) >= max_cycles:
+            continue
+        color[start] = 1
+        path: list[str] = [start]
+        pos_in_path: dict[str, int] = {start: 0}
+        stack: list[tuple[str, int]] = [(start, 0)]
 
-            sub_adj = {
-                u: [v for v in tail_adj[u] if v in start_scc] for u in start_scc
-            }
-            blocked: set[str] = {start}
-            blocked_map: dict[str, set[str]] = defaultdict(set)
-            path: list[str] = [start]
-            stack: list[list[typing.Any]] = [[start, 0, False]]
+        while stack and len(cycles) < max_cycles:
+            node, idx = stack[-1]
+            nbrs = adjacency.get(node, ())
+            if idx < len(nbrs):
+                stack[-1] = (node, idx + 1)
+                nxt = nbrs[idx]
+                if nxt not in adjacency:
+                    continue
+                nxt_color = color.get(nxt, 0)
+                if nxt_color == 0:
+                    color[nxt] = 1
+                    pos_in_path[nxt] = len(path)
+                    path.append(nxt)
+                    stack.append((nxt, 0))
+                elif nxt_color == 1:
+                    core = path[pos_in_path[nxt] :]
+                    pivot = (
+                        root_agent_dir
+                        if root_agent_dir and root_agent_dir in core
+                        else min(core)
+                    )
+                    rot = core.index(pivot)
+                    full = [*core[rot:], *core[:rot], pivot]
+                    key = tuple(full)
+                    if key not in seen:
+                        seen.add(key)
+                        cycles.append(full)
+            else:
+                stack.pop()
+                path.pop()
+                pos_in_path.pop(node, None)
+                color[node] = 2
 
-            while stack and len(cycles) < max_cycles:
-                frame = stack[-1]
-                v: str = frame[0]
-                idx: int = frame[1]
-                nbrs = sub_adj[v]
-
-                if idx < len(nbrs):
-                    frame[1] = idx + 1
-                    w = nbrs[idx]
-                    if w == start:
-                        cycles.append([*path, start])
-                        frame[2] = True
-                    elif w not in blocked:
-                        blocked.add(w)
-                        path.append(w)
-                        stack.append([w, 0, False])
-                else:
-                    _, _, found = stack.pop()
-                    path.pop()
-                    if found:
-                        _unblock_johnson(v, blocked, blocked_map)
-                        if stack:
-                            stack[-1][2] = True
-                    else:
-                        for w in nbrs:
-                            blocked_map[w].add(v)
-
-    canonical: list[list[str]] = []
-    seen: set[tuple[str, ...]] = set()
-    for cyc in cycles:
-        core = cyc[:-1]
-        if root_agent_dir and root_agent_dir in core:
-            pos = core.index(root_agent_dir)
-            core = core[pos:] + core[:pos]
-        elif len(core) > 1:
-            min_val = min(core)
-            pos = core.index(min_val)
-            core = core[pos:] + core[:pos]
-        full = [*core, core[0]]
-        key = tuple(full)
-        if key not in seen:
-            seen.add(key)
-            canonical.append(full)
-
-    canonical.sort()
-    return canonical
+    cycles.sort()
+    return cycles
 
 
 def resolve_agent_graph(app_root: Path) -> AgentGraph:
@@ -826,26 +773,17 @@ def resolve_agent_graph(app_root: Path) -> AgentGraph:
     agent_config_paths: dict[str, Path] = {}
     agent_display_names: dict[str, str] = {}
 
-    agents_dir = app_root / "agents"
-    if agents_dir.is_dir() and not agents_dir.is_symlink():
-        for entry in sorted(agents_dir.iterdir()):
-            if (
-                entry.is_symlink()
-                or not entry.is_dir()
-                or entry.name.startswith(".")
-                or entry.name == "__pycache__"
-            ):
-                continue
-            agent_dirs[entry.name] = entry
-            cfg_path = _find_dir_config(entry)
-            if cfg_path is not None:
-                agent_config_paths[entry.name] = cfg_path
-                cfg = _load_config_dict(cfg_path)
-                if cfg is not None:
-                    agent_configs[entry.name] = cfg
-                    disp = cfg.get("displayName") or cfg.get("display_name")
-                    if isinstance(disp, str) and disp.strip():
-                        agent_display_names[entry.name] = disp.strip()
+    for entry in _iter_subdirs(app_root / "agents"):
+        agent_dirs[entry.name] = entry
+        cfg_path = _find_dir_config(entry)
+        if cfg_path is not None:
+            agent_config_paths[entry.name] = cfg_path
+            cfg = _load_config_dict(cfg_path)
+            if cfg is not None:
+                agent_configs[entry.name] = cfg
+                disp = cfg.get("displayName") or cfg.get("display_name")
+                if isinstance(disp, str) and disp.strip():
+                    agent_display_names[entry.name] = disp.strip()
 
     resolve_ref = _build_agent_ref_resolver(
         set(agent_dirs.keys()), agent_configs
@@ -889,7 +827,7 @@ def resolve_agent_graph(app_root: Path) -> AgentGraph:
                     reachable.add(nxt)
                     queue.append(nxt)
 
-    cycles = _find_elementary_cycles(adjacency, root_agent_dir=root_agent_dir)
+    cycles = _find_cycles(adjacency, root_agent_dir=root_agent_dir)
 
     return AgentGraph(
         app_config=app_config,
@@ -911,32 +849,11 @@ def collect_attached_guardrails(
     resources: list[LocalResource],
 ) -> tuple[set[LocalResource], dict[LocalResource, set[str]]]:
     """Return ``(app_referenced, agent_refs_by_resource)`` for guardrails."""
-    app_referenced: set[LocalResource] = set()
-    agent_refs: dict[LocalResource, set[str]] = defaultdict(set)
 
-    if isinstance(graph.app_config, dict):
-        raw_app_grs = graph.app_config.get("guardrails")
-        if isinstance(raw_app_grs, list):
-            for entry in raw_app_grs:
-                gr_ref = (
-                    entry
-                    if isinstance(entry, str)
-                    else (
-                        entry.get("guardrail")
-                        if isinstance(entry, dict)
-                        else None
-                    )
-                )
-                if isinstance(gr_ref, str) and gr_ref.strip():
-                    for matched in match_local_resources(
-                        gr_ref, "guardrails", resources
-                    ):
-                        app_referenced.add(matched)
-
-    for agent_name, cfg in sorted(graph.agent_configs.items()):
-        raw_grs = cfg.get("guardrails")
+    def _matched_guardrails(raw_grs: typing.Any) -> list[LocalResource]:
         if not isinstance(raw_grs, list):
-            continue
+            return []
+        matched: list[LocalResource] = []
         for entry in raw_grs:
             gr_ref = (
                 entry
@@ -946,10 +863,21 @@ def collect_attached_guardrails(
                 )
             )
             if isinstance(gr_ref, str) and gr_ref.strip():
-                for matched in match_local_resources(
-                    gr_ref, "guardrails", resources
-                ):
-                    agent_refs[matched].add(agent_name)
+                matched.extend(
+                    match_local_resources(gr_ref, "guardrails", resources)
+                )
+        return matched
+
+    app_referenced: set[LocalResource] = set()
+    if isinstance(graph.app_config, dict):
+        app_referenced.update(
+            _matched_guardrails(graph.app_config.get("guardrails"))
+        )
+
+    agent_refs: dict[LocalResource, set[str]] = defaultdict(set)
+    for agent_name, cfg in sorted(graph.agent_configs.items()):
+        for res in _matched_guardrails(cfg.get("guardrails")):
+            agent_refs[res].add(agent_name)
 
     return app_referenced, agent_refs
 
@@ -990,36 +918,31 @@ def discover_deployment_files(
     context: LintContext | None = None,
 ) -> list[Path]:
     """Return sorted ``deployments/*.yaml`` and ``*.yml`` skipping symlinks."""
-    roots: list[Path] = []
-    seen_roots: set[Path] = set()
     candidates = [app_root]
     if context is not None:
         candidates.extend(
             [context.app_root, context.app_dir, context.project_root]
         )
+    found: list[Path] = []
+    seen_roots: set[Path] = set()
+    seen_files: set[Path] = set()
     for root in candidates:
         if root is None or root in seen_roots:
             continue
         seen_roots.add(root)
-        roots.append(root)
-
-    found: list[Path] = []
-    seen_files: set[Path] = set()
-    for root in roots:
         deps_dir = root / "deployments"
         if deps_dir.is_symlink() or not deps_dir.is_dir():
             continue
-        dep_files = sorted(
+        for p in sorted(
             {
-                p
+                f
                 for ext in ("*.yaml", "*.yml")
-                for p in deps_dir.glob(ext)
-                if p.is_file()
-                and not p.is_symlink()
-                and not p.name.startswith(".")
+                for f in deps_dir.glob(ext)
+                if f.is_file()
+                and not f.is_symlink()
+                and not f.name.startswith(".")
             }
-        )
-        for p in dep_files:
+        ):
             if p not in seen_files:
                 seen_files.add(p)
                 found.append(p)
@@ -1033,7 +956,7 @@ def _looks_like_schema_file_ref(val: typing.Any) -> bool:
         and "://" not in val
         and "\n" not in val
         and not any(c.isspace() for c in val)
-        and val.strip().lower().endswith((".yaml", ".yml", ".json"))
+        and val.strip().lower().endswith(_CONFIG_EXTENSIONS)
     )
 
 
@@ -1043,53 +966,30 @@ def discover_openapi_schema_paths(
     """Discover OpenAPI schemas as ``(kind, resource_key, schema_path)``."""
     results: list[tuple[str, str, Path]] = []
     seen_paths: set[Path] = set()
-
     specs = (
-        (
-            "tools",
-            "open_api_tool",
-            ("openApiTool", "open_api_tool"),
-        ),
+        ("tools", "open_api_tool", ("openApiTool", "open_api_tool")),
         (
             "toolsets",
             "open_api_toolset",
             ("openApiToolset", "open_api_toolset"),
         ),
     )
-
     for subdir, default_folder, block_keys in specs:
-        parent = app_root / subdir
-        if parent.is_symlink() or not parent.is_dir():
-            continue
-        for entry in sorted(parent.iterdir()):
-            if (
-                entry.is_symlink()
-                or entry.name.startswith(".")
-                or entry.name == "__pycache__"
-            ):
-                continue
-
-            cfg: dict[str, typing.Any] | None = None
-            res_key = entry.name if entry.is_dir() else entry.stem
+        for res in discover_local_resources(app_root, subdir):
             candidates: list[Path] = []
+            for ext in (".yaml", ".yml"):
+                rel_default = (
+                    f"{subdir}/{res.key}/{default_folder}/open_api_schema{ext}"
+                )
+                safe = resolve_safe_app_file(app_root, rel_default)
+                if safe is not None:
+                    candidates.append(safe)
 
-            if entry.is_dir():
-                cfg_path = _find_dir_config(entry)
-                if cfg_path is not None:
-                    cfg = _load_config_dict(cfg_path)
-                for ext in (".yaml", ".yml"):
-                    rel_default = (
-                        f"{subdir}/{entry.name}/{default_folder}/"
-                        f"open_api_schema{ext}"
-                    )
-                    safe = resolve_safe_app_file(app_root, rel_default)
-                    if safe is not None:
-                        candidates.append(safe)
-            elif entry.is_file() and entry.suffix.lower() in _CONFIG_EXTENSIONS:
-                cfg = _load_config_dict(entry)
-            else:
-                continue
-
+            cfg = (
+                _load_config_dict(res.report_path)
+                if res.report_path.is_file()
+                else None
+            )
             if isinstance(cfg, dict):
                 for bk in block_keys:
                     block = cfg.get(bk)
@@ -1106,8 +1006,7 @@ def discover_openapi_schema_paths(
             for sp in candidates:
                 if sp not in seen_paths:
                     seen_paths.add(sp)
-                    results.append((subdir, res_key, sp))
-
+                    results.append((subdir, res.key, sp))
     return results
 
 
@@ -1315,52 +1214,31 @@ class Discovery:
         p = self.app_root / "global_instruction.txt"
         return p if p.exists() else None
 
+    def _iter_agent_dirs(self) -> list[Path]:
+        if not self.app_root:
+            return []
+        return [
+            d
+            for d in _iter_subdirs(self.app_root / "agents")
+            if self.limit_agents is None or d.name in self.limit_agents
+        ]
+
     def discover_agents(self) -> dict[str, Path]:
         """Return ``{dir_name: instruction_or_config_path}`` for all agents."""
-        if not self.app_root:
-            return {}
-        agents_dir = self.app_root / "agents"
-        if not agents_dir.exists() or agents_dir.is_symlink():
-            return {}
         result = {}
-        for d in sorted(agents_dir.iterdir()):
-            if (
-                d.is_symlink()
-                or not d.is_dir()
-                or d.name.startswith(".")
-                or d.name == "__pycache__"
-            ):
-                continue
-            if (
-                self.limit_agents is not None
-                and d.name not in self.limit_agents
-            ):
-                continue
+        for d in self._iter_agent_dirs():
             inst = d / "instruction.txt"
-            if inst.exists():
-                result[d.name] = inst
-            else:
-                cfg_file = _find_dir_config(d)
-                if cfg_file is not None:
-                    result[d.name] = cfg_file
+            target = inst if inst.exists() else _find_dir_config(d)
+            if target is not None:
+                result[d.name] = target
         return result
 
     def discover_tools(self) -> dict[str, Path]:
         """Return ``{tool_name: code_path}`` for all tools."""
         if not self.app_root:
             return {}
-        tools_dir = self.app_root / "tools"
-        if tools_dir.is_symlink() or not tools_dir.is_dir():
-            return {}
         result = {}
-        for d in sorted(tools_dir.iterdir()):
-            if (
-                d.is_symlink()
-                or not d.is_dir()
-                or d.name.startswith(".")
-                or d.name == "__pycache__"
-            ):
-                continue
+        for d in _iter_subdirs(self.app_root / "tools"):
             if self.limit_tools is not None and d.name not in self.limit_tools:
                 continue
             py_fn_dir = d / "python_function"
@@ -1376,97 +1254,48 @@ class Discovery:
             if dir_cfg is not None:
                 result[d.name] = dir_cfg
                 continue
-            config_files = (
-                [
+            for ext in _CONFIG_EXTENSIONS:
+                cfg_files = [
                     p
-                    for p in sorted(d.glob("*.json"))
+                    for p in sorted(d.glob(f"*{ext}"))
                     if p.is_file() and not p.is_symlink()
                 ]
-                or [
-                    p
-                    for p in sorted(d.glob("*.yaml"))
-                    if p.is_file() and not p.is_symlink()
-                ]
-                or [
-                    p
-                    for p in sorted(d.glob("*.yml"))
-                    if p.is_file() and not p.is_symlink()
-                ]
-            )
-            if config_files:
-                result[d.name] = config_files[0]
+                if cfg_files:
+                    result[d.name] = cfg_files[0]
+                    break
         return result
 
     def discover_callbacks(self) -> list[tuple[str, str, str, Path]]:
         """Return ``[(agent_name, cb_type, cb_name, code_path), ...]``."""
-        if not self.app_root:
-            return []
-        agents_dir = self.app_root / "agents"
-        if agents_dir.is_symlink() or not agents_dir.is_dir():
-            return []
-        result = []
+        result: list[tuple[str, str, str, Path]] = []
         seen_paths: set[Path] = set()
-        cb_types = [
+        cb_types = (
             "before_model_callbacks",
             "after_model_callbacks",
             "before_agent_callbacks",
             "after_agent_callbacks",
             "before_tool_callbacks",
             "after_tool_callbacks",
-        ]
-        for agent_dir in sorted(agents_dir.iterdir()):
+        )
+
+        def _add_cb(agent_name: str, cb_type: str, cb_dir: Path) -> None:
+            code = cb_dir / "python_code.py"
             if (
-                agent_dir.is_symlink()
-                or not agent_dir.is_dir()
-                or agent_dir.name.startswith(".")
-                or agent_dir.name == "__pycache__"
+                code.is_file()
+                and not code.is_symlink()
+                and code not in seen_paths
             ):
-                continue
-            if (
-                self.limit_agents is not None
-                and agent_dir.name not in self.limit_agents
-            ):
-                continue
+                seen_paths.add(code)
+                result.append((agent_name, cb_type, cb_dir.name, code))
+
+        for agent_dir in self._iter_agent_dirs():
             for cb_type in cb_types:
-                cb_dir = agent_dir / cb_type
-                if cb_dir.is_symlink() or not cb_dir.is_dir():
-                    continue
-                for cb in sorted(cb_dir.iterdir()):
-                    if (
-                        cb.is_symlink()
-                        or not cb.is_dir()
-                        or cb.name.startswith(".")
-                        or cb.name == "__pycache__"
-                    ):
-                        continue
-                    code = cb / "python_code.py"
-                    if (
-                        code.is_file()
-                        and not code.is_symlink()
-                        and code not in seen_paths
-                    ):
-                        seen_paths.add(code)
-                        result.append((agent_dir.name, cb_type, cb.name, code))
-            for d in sorted(agent_dir.iterdir()):
-                if (
-                    d.is_symlink()
-                    or not d.is_dir()
-                    or d.name.startswith(".")
-                    or d.name == "__pycache__"
-                ):
-                    continue
+                for cb in _iter_subdirs(agent_dir / cb_type):
+                    _add_cb(agent_dir.name, cb_type, cb)
+            for d in _iter_subdirs(agent_dir):
                 for cb_type in cb_types:
                     if d.name.startswith(f"{cb_type}_"):
-                        code = d / "python_code.py"
-                        if (
-                            code.is_file()
-                            and not code.is_symlink()
-                            and code not in seen_paths
-                        ):
-                            seen_paths.add(code)
-                            result.append(
-                                (agent_dir.name, cb_type, d.name, code)
-                            )
+                        _add_cb(agent_dir.name, cb_type, d)
                         break
         return result
 
@@ -1507,25 +1336,8 @@ class Discovery:
 
     def discover_agent_configs(self) -> dict[str, Path]:
         """Return ``{agent_name: config_path}`` for all agent configs."""
-        if not self.app_root:
-            return {}
-        agents_dir = self.app_root / "agents"
-        if not agents_dir.exists() or agents_dir.is_symlink():
-            return {}
         result = {}
-        for d in sorted(agents_dir.iterdir()):
-            if (
-                d.is_symlink()
-                or not d.is_dir()
-                or d.name.startswith(".")
-                or d.name == "__pycache__"
-            ):
-                continue
-            if (
-                self.limit_agents is not None
-                and d.name not in self.limit_agents
-            ):
-                continue
+        for d in self._iter_agent_dirs():
             cfg_file = _find_dir_config(d)
             if cfg_file is not None:
                 result[d.name] = cfg_file
