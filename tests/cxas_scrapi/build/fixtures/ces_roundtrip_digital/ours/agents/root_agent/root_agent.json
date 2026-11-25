@@ -1,0 +1,184 @@
+{
+  "childAgents": [
+    "authentication_agent",
+    "credit_cards_agent",
+    "sepa_transfer_agent",
+    "branch_information_agent",
+    "human_interaction_agent",
+    "guide_agent"
+  ],
+  "description": "Flat-star orchestrator for Cymbal Bank (Digital Multimodal).",
+  "displayName": "root_agent",
+  "instruction": "agents/root_agent/instruction.txt",
+  "modelSettings": {
+    "model": "gemini-2.5-flash-001",
+    "temperature": 1.0
+  },
+  "tools": [
+    "end_session"
+  ],
+  "transferRules": [
+    {
+      "childAgent": "authentication_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "session_ctx.disabled_agents.authentication_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "authentication_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "disabled_agent_authentication_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "credit_cards_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "session_ctx.disabled_agents.credit_cards_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "credit_cards_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "disabled_agent_credit_cards_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "sepa_transfer_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "session_ctx.disabled_agents.sepa_transfer_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "sepa_transfer_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "disabled_agent_sepa_transfer_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "branch_information_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "session_ctx.disabled_agents.branch_information_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "branch_information_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "disabled_agent_branch_information_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "human_interaction_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "session_ctx.disabled_agents.human_interaction_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "human_interaction_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "disabled_agent_human_interaction_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "guide_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "session_ctx.disabled_agents.guide_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "guide_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "disabled_agent_guide_agent == true"
+        }
+      }
+    },
+    {
+      "childAgent": "credit_cards_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "session_ctx.surface_id == 'public-web'"
+        }
+      }
+    },
+    {
+      "childAgent": "credit_cards_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "surface_id == 'public-web'"
+        }
+      }
+    },
+    {
+      "childAgent": "sepa_transfer_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "session_ctx.surface_id == 'public-web'"
+        }
+      }
+    },
+    {
+      "childAgent": "sepa_transfer_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "surface_id == 'public-web'"
+        }
+      }
+    },
+    {
+      "childAgent": "credit_cards_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "session_ctx.segment == 'employee'"
+        }
+      }
+    },
+    {
+      "childAgent": "credit_cards_agent",
+      "direction": "PARENT_TO_CHILD",
+      "disablePlannerTransfer": {
+        "expressionCondition": {
+          "expression": "segment == 'employee'"
+        }
+      }
+    }
+  ]
+}

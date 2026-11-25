@@ -1,0 +1,157 @@
+{
+  "name": "b689a10c-e2b2-4ce8-abc4-1deb98395811",
+  "displayName": "root_agent",
+  "description": "Flat-star orchestrator for Cymbal Bank (Digital Multimodal).",
+  "modelSettings": {
+    "model": "gemini-2.5-flash-001",
+    "temperature": 1.0
+  },
+  "instruction": "agents/root_agent/instruction.txt",
+  "tools": ["end_session"],
+  "childAgents": ["authentication_agent", "branch_information_agent", "credit_cards_agent", "guide_agent", "human_interaction_agent", "sepa_transfer_agent"],
+  "transferRules": [{
+    "childAgent": "authentication_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "session_ctx.disabled_agents.authentication_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "authentication_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "disabled_agent_authentication_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "credit_cards_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "session_ctx.disabled_agents.credit_cards_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "credit_cards_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "disabled_agent_credit_cards_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "sepa_transfer_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "session_ctx.disabled_agents.sepa_transfer_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "sepa_transfer_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "disabled_agent_sepa_transfer_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "branch_information_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "session_ctx.disabled_agents.branch_information_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "branch_information_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "disabled_agent_branch_information_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "human_interaction_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "session_ctx.disabled_agents.human_interaction_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "human_interaction_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "disabled_agent_human_interaction_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "guide_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "session_ctx.disabled_agents.guide_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "guide_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "disabled_agent_guide_agent \u003d\u003d true"
+      }
+    }
+  }, {
+    "childAgent": "credit_cards_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "session_ctx.surface_id \u003d\u003d \u0027public-web\u0027"
+      }
+    }
+  }, {
+    "childAgent": "credit_cards_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "surface_id \u003d\u003d \u0027public-web\u0027"
+      }
+    }
+  }, {
+    "childAgent": "sepa_transfer_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "session_ctx.surface_id \u003d\u003d \u0027public-web\u0027"
+      }
+    }
+  }, {
+    "childAgent": "sepa_transfer_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "surface_id \u003d\u003d \u0027public-web\u0027"
+      }
+    }
+  }, {
+    "childAgent": "credit_cards_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "session_ctx.segment \u003d\u003d \u0027employee\u0027"
+      }
+    }
+  }, {
+    "childAgent": "credit_cards_agent",
+    "direction": "PARENT_TO_CHILD",
+    "disablePlannerTransfer": {
+      "expressionCondition": {
+        "expression": "segment \u003d\u003d \u0027employee\u0027"
+      }
+    }
+  }]
+}

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CLI subcommands for Profile-Based Build (`cxas build`) and `cxas package`."""
+"""CLI subcommands for Profile-Based Build (`build`, `package`, `lock`, `drift`)."""
 
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ from cxas_scrapi.build.builder import (
     build_all,
     build_app,
 )
+from cxas_scrapi.build.bundle_io import BuildGateError
+from cxas_scrapi.build.drift import check_drift, write_lockfile
 from cxas_scrapi.build.manifests import ManifestError
 from cxas_scrapi.core.packaging import package_app_archive
 from cxas_scrapi.core.python_bundler import PythonBundlerError
@@ -49,6 +51,7 @@ def _run_all_builds(args: argparse.Namespace) -> None:
         environment=args.env,
         package_zip=args.zip,
         native_python_env=getattr(args, "native_python_env", False),
+        write_locks=getattr(args, "write_locks", False),
     )
     if args.json:
         print(json.dumps([r.model_dump(mode="json") for r in reports]))
@@ -75,6 +78,7 @@ def _run_single_build(args: argparse.Namespace) -> None:
         out_dir=args.out,
         package_zip=args.zip,
         native_python_env=getattr(args, "native_python_env", False),
+        write_lock=getattr(args, "write_locks", False),
     )
     if args.json:
         print(report.model_dump_json())
@@ -89,8 +93,63 @@ def app_build(args: argparse.Namespace) -> None:
             _run_all_builds(args)
         else:
             _run_single_build(args)
-    except (BuildError, ManifestError, PythonBundlerError) as exc:
+    except (
+        BuildError,
+        BuildGateError,
+        ManifestError,
+        PythonBundlerError,
+    ) as exc:
         print(f"Build Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def app_lock(args: argparse.Namespace) -> None:
+    """Writes a normalized SHA-256 `<app>.lock.json` for a built bundle."""
+    try:
+        out_lock = write_lockfile(
+            Path(args.bundle), lockfile_path=getattr(args, "lockfile", None)
+        )
+    except (BuildGateError, PythonBundlerError) as exc:
+        print(f"Lock Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"LOCKED {Path(args.bundle).resolve().name} -> {out_lock}")
+
+
+def app_drift(args: argparse.Namespace) -> None:
+    """Runs the 3-way (`base` vs. `ours` vs. `live`) CES-to-Git drift check."""
+    json_output = bool(getattr(args, "json", False))
+    try:
+        report = check_drift(
+            args.app,
+            args.dist,
+            args.live,
+            lockfile_path=getattr(args, "lockfile", None),
+            conflicts_dir=getattr(args, "conflicts_dir", None),
+            accept_live=tuple(getattr(args, "accept_live", None) or ()),
+            force_ours=tuple(getattr(args, "force_ours", None) or ()),
+            git_mirror=getattr(args, "git_mirror", None),
+        )
+    except (BuildGateError, PythonBundlerError) as exc:
+        if json_output:
+            print(json.dumps({"error": str(exc), "passed": False}, indent=2))
+        else:
+            print(f"Drift Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if json_output:
+        payload = {**report.to_dict(), "passed": not report.has_unresolved}
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for res in report.resources:
+            line = f"{res.status:<8} {res.resource_id}"
+            if res.resolved_by:
+                line += f" (resolved_by={res.resolved_by})"
+            if res.conflict_path:
+                line += f" [conflict={res.conflict_path}]"
+            print(line)
+        if report.git_mirror_commit:
+            print(f"GIT_MIRROR {report.git_mirror_commit}")
+    if report.has_unresolved:
         sys.exit(1)
 
 
@@ -119,7 +178,7 @@ def app_package(args: argparse.Namespace) -> None:
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
-    """Register `build` and `package` subcommands on the root CLI parser."""
+    """Register `build`, `lock`, `drift`, and `package` subcommands."""
     parser_build = subparsers.add_parser(
         "build",
         help="Build profile/channel CES apps from a core app and manifests.",
@@ -150,7 +209,66 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Synthesize pythonEnvFiles.yaml without mutating python_code.py.",
     )
+    parser_build.add_argument(
+        "--write-locks",
+        action="store_true",
+        help="Write <app>.lock.json lockfiles next to built bundles.",
+    )
     parser_build.set_defaults(func=app_build)
+
+    parser_lock = subparsers.add_parser(
+        "lock", help="Write a normalized SHA-256 <app>.lock.json lockfile."
+    )
+    parser_lock.add_argument(
+        "--bundle", required=True, help="Built app bundle directory."
+    )
+    parser_lock.add_argument(
+        "--lockfile", default=None, help="Explicit output lockfile path."
+    )
+    parser_lock.set_defaults(func=app_lock)
+
+    parser_drift = subparsers.add_parser(
+        "drift",
+        help="Run 3-way CES-to-Git drift, conflict, and orphan detection.",
+    )
+    parser_drift.add_argument(
+        "--app", required=True, help="Logical app identifier."
+    )
+    parser_drift.add_argument(
+        "--dist", required=True, help="Built bundle (or dist root)."
+    )
+    parser_drift.add_argument(
+        "--live", required=True, help="Exported live CES app directory."
+    )
+    parser_drift.add_argument(
+        "--lockfile", default=None, help="Baseline <app>.lock.json lockfile."
+    )
+    parser_drift.add_argument(
+        "--conflicts-dir", default=None, help="Directory for .diff markers."
+    )
+    parser_drift.add_argument(
+        "--accept-live",
+        action="extend",
+        nargs="+",
+        default=[],
+        help="Resource IDs to accept from the live export into the lockfile.",
+    )
+    parser_drift.add_argument(
+        "--force-ours",
+        action="extend",
+        nargs="+",
+        default=[],
+        help="Resource IDs to force from the built bundle.",
+    )
+    parser_drift.add_argument(
+        "--git-mirror",
+        default=None,
+        help="Optional local git repo for live/<app> snapshots.",
+    )
+    parser_drift.add_argument(
+        "--json", action="store_true", help="Emit JSON drift report."
+    )
+    parser_drift.set_defaults(func=app_drift)
 
     parser_package = subparsers.add_parser(
         "package", help="Package an app directory into a deterministic ZIP."

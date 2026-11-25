@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 import yaml
 from pydantic import BaseModel, Field
 
+from cxas_scrapi.build.drift import write_lockfile
 from cxas_scrapi.build.manifests import (
     APP_CONFIG_FILENAMES,
     CHANNEL_PROFILE_TYPES,
@@ -119,6 +120,7 @@ class BuildReport(BaseModel):
     environment: str
     out_dir: Path
     zip_path: Path | None = None
+    lockfile_path: Path | None = None
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -2312,6 +2314,7 @@ def _build_app_from_manifests(
     *,
     package_zip: bool = False,
     native_python_env: bool = False,
+    write_lock: bool = False,
 ) -> BuildReport:
     _validate_build_paths(core_dir, manifests_path, out_dir)
     profile = manifests.profile(profile_id)
@@ -2350,12 +2353,14 @@ def _build_app_from_manifests(
         raise
 
     zip_path = out_dir / f"{profile_id}_{slug}.zip" if package_zip else None
+    lockfile_path = write_lockfile(out_dir) if write_lock else None
     return BuildReport(
         profile_id=profile_id,
         channel=channel,
         environment=environment,
         out_dir=out_dir,
         zip_path=zip_path,
+        lockfile_path=lockfile_path,
         warnings=warnings,
     )
 
@@ -2370,6 +2375,7 @@ def build_app(
     *,
     package_zip: bool = False,
     native_python_env: bool = False,
+    write_lock: bool = False,
 ) -> BuildReport:
     """Build one CES app for ``(profile_id, channel, environment)``."""
     core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
@@ -2388,6 +2394,7 @@ def build_app(
         out_path,
         package_zip=package_zip,
         native_python_env=native_python_env,
+        write_lock=write_lock,
     )
 
 
@@ -2399,6 +2406,7 @@ def build_all(
     *,
     package_zip: bool = False,
     native_python_env: bool = False,
+    write_locks: bool = False,
 ) -> list[BuildReport]:
     """Build every ``(profile_id, channel)`` pair declared in manifests."""
     core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
@@ -2434,6 +2442,7 @@ def build_all(
                     channel_out_dir,
                     package_zip=package_zip,
                     native_python_env=native_python_env,
+                    write_lock=write_locks,
                 )
             )
     return reports

@@ -1,0 +1,17 @@
+{
+  "name": "c61438dd-8f75-4b46-bbcf-7af2c64fcab1",
+  "displayName": "pii_account_id_content_filter",
+  "description": "Block unmasked 16-digit payment card numbers and internal secret tokens using pure RE2 patterns.",
+  "enabled": true,
+  "action": {
+    "respondImmediately": {
+      "responses": [{
+        "text": "Aus Sicherheitsgründen dürfen vollständige Kartennummern nicht im Klartext ausgegeben werden."
+      }]
+    }
+  },
+  "contentFilter": {
+    "bannedContents": ["[0-9]{4}[ -]?[0-9]{4}[ -]?[0-9]{4}[ -]?[0-9]{4}", "SECRET_INTERNAL_TOKEN_[A-Z0-9]{8}"],
+    "matchType": "REGEXP_MATCH"
+  }
+}

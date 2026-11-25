@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import argparse
+import inspect
 import io
 import json
 import logging
@@ -27,9 +28,14 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from cxas_scrapi.build.bundle_io import BuildGateError
+from cxas_scrapi.build.drift import enforce_pre_push_gate
 from cxas_scrapi.core.apps import Apps, validate_zip_entry_name
 from cxas_scrapi.core.common import Common
-from cxas_scrapi.core.python_bundler import strip_shared_bundles
+from cxas_scrapi.core.python_bundler import (
+    PythonBundlerError,
+    strip_shared_bundles,
+)
 from cxas_scrapi.core.versions import Versions
 from cxas_scrapi.utils.env_vars import (
     collect_env_var_declaration_names,
@@ -450,6 +456,167 @@ def _app_pull(
         sys.exit(1)
 
 
+def _export_live_app_to_dir(
+    apps_client: Apps,
+    target_app_name: str,
+    temp_root: Path,
+) -> Path:
+    """Exports an existing remote CES app as JSON and unwraps root wrapper."""
+    tmp_zip = temp_root / "live_export.zip"
+    extract_dir = temp_root / "live_extracted"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    raw_bytes: bytes | bytearray | None = None
+    try:
+        sig_params = inspect.signature(apps_client.export_app).parameters
+        if "app_id" in sig_params and "app_name" not in sig_params:
+            call_kwargs: dict[str, Any] = {
+                "app_id": target_app_name,
+                "export_format": "JSON",
+            }
+            if "filepath" in sig_params:
+                call_kwargs["filepath"] = str(tmp_zip)
+            export_res = apps_client.export_app(**call_kwargs)
+        else:
+            export_res = apps_client.export_app(
+                app_name=target_app_name,
+                local_path=str(tmp_zip),
+                export_format="JSON",
+            )
+
+        has_file = tmp_zip.is_file() and tmp_zip.stat().st_size > 0
+        if not has_file:
+            raw_bytes = getattr(export_res, "app_content", None)
+            if not isinstance(raw_bytes, (bytes, bytearray)) and hasattr(
+                export_res, "result"
+            ):
+                lro_resp = export_res.result()
+                raw_bytes = getattr(lro_resp, "app_content", None)
+            if not isinstance(raw_bytes, (bytes, bytearray)):
+                raise BuildGateError(
+                    f"Failed to export live app {target_app_name!r} for drift "
+                    "gate."
+                )
+    except BuildGateError:
+        raise
+    except Exception as exc:
+        raise BuildGateError(
+            f"Failed to export live app {target_app_name!r} for drift gate: "
+            f"{exc}"
+        ) from exc
+
+    abs_extract = extract_dir.resolve()
+    try:
+        zf_source: Path | io.BytesIO = (
+            tmp_zip if has_file else io.BytesIO(bytes(raw_bytes or b""))
+        )
+        with zipfile.ZipFile(zf_source, "r") as zf:
+            for info in zf.infolist():
+                try:
+                    validate_zip_entry_name(info.filename)
+                except ValueError as exc:
+                    raise BuildGateError(
+                        f"Unsafe archive path in live export: {info.filename}"
+                    ) from exc
+                if ((info.external_attr >> 16) & 0o170000) == 0o120000:
+                    raise BuildGateError(
+                        f"Symlink entry not permitted in live export: "
+                        f"{info.filename}"
+                    )
+                dest_member = (abs_extract / info.filename).resolve()
+                if os.path.commonpath(
+                    [str(abs_extract), str(dest_member)]
+                ) != str(abs_extract):
+                    raise BuildGateError(
+                        f"Unsafe archive path in live export: {info.filename}"
+                    )
+            zf.extractall(abs_extract)
+    except BuildGateError:
+        raise
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise BuildGateError(
+            f"Invalid ZIP archive exported from live app "
+            f"{target_app_name!r}: {exc}"
+        ) from exc
+
+    if (
+        (abs_extract / "app.json").is_file()
+        or (abs_extract / "app.yaml").is_file()
+        or (abs_extract / "app.yml").is_file()
+    ):
+        return abs_extract
+
+    subdirs = [
+        p
+        for p in sorted(abs_extract.iterdir())
+        if p.is_dir() and p.name != "__MACOSX"
+    ]
+    files = [p for p in abs_extract.iterdir() if p.is_file()]
+    if len(subdirs) == 1 and not files:
+        return subdirs[0]
+    return abs_extract
+
+
+def _maybe_run_pre_push_gate(
+    app_dir: str,
+    apps_client: Apps | None,
+    target_app_name: str | None,
+    args: argparse.Namespace | None,
+) -> None:
+    """Runs the 3-way drift gate prior to importing (when requested)."""
+    if args is None:
+        return
+
+    live_dir = getattr(args, "live_dir", None)
+    lockfile = getattr(args, "lockfile", None)
+    want_drift = bool(
+        getattr(args, "check_drift", False)
+        or live_dir is not None
+        or lockfile is not None
+    )
+    if not want_drift:
+        return
+
+    conflicts_dir = getattr(args, "conflicts_dir", None)
+    force_ours = tuple(getattr(args, "force_ours", None) or ())
+
+    try:
+        if live_dir is None:
+            if not target_app_name or apps_client is None:
+                raise BuildGateError(
+                    "Pre-push drift check without --live-dir requires an "
+                    "existing target app (--to or --app-name)."
+                )
+            with tempfile.TemporaryDirectory() as tmp_live_root:
+                eff_live_dir = _export_live_app_to_dir(
+                    apps_client, target_app_name, Path(tmp_live_root)
+                )
+                report = enforce_pre_push_gate(
+                    app_dir,
+                    live_dir=eff_live_dir,
+                    lockfile_path=lockfile,
+                    conflicts_dir=conflicts_dir,
+                    force_ours=force_ours,
+                )
+        else:
+            report = enforce_pre_push_gate(
+                app_dir,
+                live_dir=live_dir,
+                lockfile_path=lockfile,
+                conflicts_dir=conflicts_dir,
+                force_ours=force_ours,
+            )
+    except (BuildGateError, PythonBundlerError) as exc:
+        print(f"Pre-push gate failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    if report is not None:
+        n_clean = sum(1 for r in report.resources if r.status == "CLEAN")
+        print(
+            f"Drift gate passed: {n_clean}/{len(report.resources)} "
+            "resource(s) CLEAN, 0 unresolved."
+        )
+
+
 def app_push(args: argparse.Namespace) -> str | None:
     """Handles the 'push' command."""
     if getattr(args, "patch", False):
@@ -465,13 +632,43 @@ def app_push(args: argparse.Namespace) -> str | None:
     app_name_arg = getattr(args, "app_name", None)
     identifier = target_app or app_name_arg
 
+    live_dir_arg = getattr(args, "live_dir", None)
+    lockfile_arg = getattr(args, "lockfile", None)
+    want_drift = bool(
+        getattr(args, "check_drift", False)
+        or live_dir_arg is not None
+        or lockfile_arg is not None
+    )
+    needs_remote_export = want_drift and live_dir_arg is None
+
+    if needs_remote_export and not identifier:
+        print(
+            "Pre-push gate failed: Pre-push drift check without --live-dir "
+            "requires an existing target app (--to or --app-name).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    gate_ran_offline = False
+    if want_drift and not needs_remote_export:
+        _maybe_run_pre_push_gate(
+            app_dir=app_dir,
+            apps_client=None,
+            target_app_name=None,
+            args=args,
+        )
+        gate_ran_offline = True
+
     if identifier:
         apps_client, app_name, display_name = _resolve_app_args(
             identifier, args
         )
         print("Pushing to existing app... Overwriting if supported.")
     else:
-        apps_client = Apps(project_id=args.project_id, location=args.location)
+        apps_client = Apps(
+            project_id=getattr(args, "project_id", None),
+            location=getattr(args, "location", None),
+        )
         app_name = None
         print("No target specified, using existing name if needed.")
         display_name = getattr(args, "display_name", None) or "Pushed Agent"
@@ -484,6 +681,7 @@ def app_push(args: argparse.Namespace) -> str | None:
         display_name=getattr(args, "display_name", None) or display_name,
         env_file=getattr(args, "env_file", None),
         args=args,
+        _skip_pre_push_gate=gate_ran_offline,
     )
 
 
@@ -577,8 +775,18 @@ def _app_push(
     display_name: str | None = None,
     env_file: str | None = None,
     args: argparse.Namespace | None = None,
+    *,
+    _skip_pre_push_gate: bool = False,
 ) -> str | None:
     """Helper to push an app to CXAS."""
+    if not _skip_pre_push_gate:
+        _maybe_run_pre_push_gate(
+            app_dir=app_dir,
+            apps_client=apps_client,
+            target_app_name=target_app_name,
+            args=args,
+        )
+
     from cxas_scrapi.core.packaging import package_app_archive  # noqa: PLC0415
 
     native_python_env = (

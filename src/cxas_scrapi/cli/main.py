@@ -2884,6 +2884,43 @@ def get_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Synthesize pythonEnvFiles.yaml without mutating python_code.py",
     )
+    parser_push.add_argument(
+        "--check-drift",
+        action="store_true",
+        default=False,
+        help="Run 3-way CES-to-Git drift gate before pushing.",
+    )
+    parser_push.add_argument(
+        "--live-dir",
+        default=None,
+        help=(
+            "Pre-exported live app directory for offline 3-way drift check "
+            "before pushing."
+        ),
+    )
+    parser_push.add_argument(
+        "--lockfile",
+        default=None,
+        help="Baseline <app>.lock.json lockfile path for pre-push drift check.",
+    )
+    parser_push.add_argument(
+        "--conflicts-dir",
+        default=None,
+        help=(
+            "Directory for .diff conflict markers when pre-push drift detects "
+            "conflicts."
+        ),
+    )
+    parser_push.add_argument(
+        "--force-ours",
+        action="extend",
+        nargs="+",
+        default=[],
+        help=(
+            "Resource IDs to force from local bundle during pre-push drift "
+            "check."
+        ),
+    )
     parser_push.set_defaults(func=app_push)
 
     # Parser for 'lint'
