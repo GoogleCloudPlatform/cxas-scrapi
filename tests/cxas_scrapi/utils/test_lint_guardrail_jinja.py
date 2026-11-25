@@ -153,10 +153,10 @@ def test_s019_detects_jinja_in_custom_policy_and_yaml_guardrails(
     assert res[0].file == f"guardrails/sec/sec{ext}"
 
 
-def test_qa_007_s019_flat_guardrail_files_dispatched_via_run_rules(
+def test_s019_flat_guardrail_files_dispatched_via_run_rules(
     tmp_path: Path,
 ) -> None:
-    """QA-007: S019 must inspect flat guardrails/*.{json,yaml,yml} via run_rules."""
+    """S019 inspects flat guardrails/*.{json,yaml,yml} via run_rules."""
     (tmp_path / "app.yaml").write_text("displayName: Demo\n", encoding="utf-8")
     gr_root = tmp_path / "guardrails"
     gr_root.mkdir()

@@ -452,10 +452,10 @@ def test_is_voice_app_skips_symlinked_deployments_dir(tmp_path: Path) -> None:
     assert is_voice_app(_context(app)) is False
 
 
-def test_qa_008_is_voice_app_detects_agent_level_voice_model(
+def test_is_voice_app_detects_agent_level_voice_model(
     tmp_path: Path,
 ) -> None:
-    """QA-008: is_voice_app should recognize voice models declared at agent level."""
+    """is_voice_app recognizes voice models declared at agent level."""
     (tmp_path / "app.json").write_text(
         '{"name": "demo", "displayName": "Demo", "rootAgent": "root"}',
         encoding="utf-8",
