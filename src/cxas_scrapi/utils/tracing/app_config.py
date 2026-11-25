@@ -632,18 +632,28 @@ def _iter_component_manifests(cat_dir: str) -> list[tuple[str, str, bool]]:
     return manifests
 
 
+def _load_yaml12(stream: Any) -> Any:
+    from cxas_scrapi.build.manifests import Yaml12SafeLoader  # noqa: PLC0415
+
+    return yaml.load(stream, Loader=Yaml12SafeLoader)
+
+
 def has_bool_env_var_placeholders(agent_dir: str) -> bool:
     """Returns True if any staged manifest in `agent_dir` has a boolean
     `"$env_var"` placeholder.
     """
     app_desc = _RESOURCE_DESCRIPTORS["app"]
-    for fname, is_yaml in (("app.json", False), ("app.yaml", True)):
+    for fname, is_yaml in (
+        ("app.json", False),
+        ("app.yaml", True),
+        ("app.yml", True),
+    ):
         fpath = os.path.join(agent_dir, fname)
         if not os.path.isfile(fpath):
             continue
         try:
             with open(fpath, encoding="utf-8") as f:
-                data = yaml.safe_load(f) if is_yaml else json.load(f)
+                data = _load_yaml12(f) if is_yaml else json.load(f)
             if isinstance(data, dict):
                 target = (
                     data["app"] if isinstance(data.get("app"), dict) else data
@@ -661,7 +671,7 @@ def has_bool_env_var_placeholders(agent_dir: str) -> bool:
         for _, fpath, is_yaml in _iter_component_manifests(cat_dir):
             try:
                 with open(fpath, encoding="utf-8") as f:
-                    comp_data = yaml.safe_load(f) if is_yaml else json.load(f)
+                    comp_data = _load_yaml12(f) if is_yaml else json.load(f)
                 if isinstance(comp_data, dict) and _dict_has_bool_placeholders(
                     comp_data, cat_desc
                 ):
@@ -847,11 +857,13 @@ def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
                 f"Failed to resolve booleans in {app_json_path}: {e}"
             )
 
-    app_yaml_path = os.path.join(agent_dir, "app.yaml")
-    if os.path.isfile(app_yaml_path):
+    for yaml_name in ("app.yaml", "app.yml"):
+        app_yaml_path = os.path.join(agent_dir, yaml_name)
+        if not os.path.isfile(app_yaml_path):
+            continue
         try:
             with open(app_yaml_path, encoding="utf-8") as f:
-                app_yaml_data = yaml.safe_load(f)
+                app_yaml_data = _load_yaml12(f)
             if isinstance(app_yaml_data, dict):
                 target_app = (
                     app_yaml_data["app"]
@@ -878,7 +890,12 @@ def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
                 env_modified |= e_mod
                 if yaml_mod:
                     with open(app_yaml_path, "w", encoding="utf-8") as f:
-                        yaml.safe_dump(app_yaml_data, f, sort_keys=False)
+                        yaml.safe_dump(
+                            app_yaml_data,
+                            f,
+                            sort_keys=False,
+                            allow_unicode=True,
+                        )
                     any_modified = True
         except Exception as e:
             logger.warning(
@@ -895,7 +912,7 @@ def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
         for entry, fpath, is_yaml in _iter_component_manifests(cat_dir):
             try:
                 with open(fpath, encoding="utf-8") as f:
-                    comp_data = yaml.safe_load(f) if is_yaml else json.load(f)
+                    comp_data = _load_yaml12(f) if is_yaml else json.load(f)
                 if not isinstance(comp_data, dict):
                     continue
                 disp = comp_data.get("displayName") or comp_data.get(
@@ -915,7 +932,12 @@ def resolve_env_booleans_in_dir(agent_dir: str) -> bool:
                 if t_mod:
                     with open(fpath, "w", encoding="utf-8") as f:
                         if is_yaml:
-                            yaml.safe_dump(comp_data, f, sort_keys=False)
+                            yaml.safe_dump(
+                                comp_data,
+                                f,
+                                sort_keys=False,
+                                allow_unicode=True,
+                            )
                         else:
                             json.dump(comp_data, f, indent=2)
                     any_modified = True

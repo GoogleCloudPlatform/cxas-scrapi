@@ -93,16 +93,17 @@ def app_build(args: argparse.Namespace) -> None:
 
 def app_package(args: argparse.Namespace) -> None:
     """Package a CES app directory into a deterministic ZIP archive."""
-    app_dir = Path(args.app_dir).resolve()
-    env_file = Path(args.env_file).resolve() if args.env_file else None
+    raw_app_dir = Path(args.app_dir)
+    raw_env_file = Path(args.env_file) if args.env_file else None
+    abs_app_dir = raw_app_dir.absolute()
     zip_path = (
         Path(args.zip).resolve()
         if args.zip
-        else app_dir.with_name(f"{app_dir.name}.zip")
+        else abs_app_dir.parent.resolve() / f"{abs_app_dir.name}.zip"
     )
 
     try:
-        out = package_app_archive(app_dir, zip_path, env_file)
+        out = package_app_archive(raw_app_dir, zip_path, raw_env_file)
         print(f"Packaged app to {out}")
     except (OSError, ValueError) as exc:
         print(f"Package Error: {exc}", file=sys.stderr)

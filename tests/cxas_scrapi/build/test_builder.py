@@ -1389,3 +1389,134 @@ def test_python_token_escaping_fstrings_and_triple_quotes(
     assert rep_a.zip_path is not None
     assert rep_b.zip_path is not None
     assert rep_a.zip_path.read_bytes() == rep_b.zip_path.read_bytes()
+
+
+# Reproduces QA-003: out_dir symlink and regular-file handling in build_app.
+def test_build_rejects_symlink_or_regular_file_out_dir(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # 1. Symlinked out_dir must be rejected without modifying the target dir.
+    victim_dir = tmp_path / "victim_dir"
+    victim_dir.mkdir()
+    precious = victim_dir / "precious.txt"
+    precious.write_text("keep me", encoding="utf-8")
+    out_symlink = tmp_path / "out_symlink"
+    out_symlink.symlink_to(victim_dir)
+    with pytest.raises(BuildError, match="Symlinks are not permitted"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            out_symlink,
+        )
+    assert precious.read_text("utf-8") == "keep me"
+
+    # 2. Existing regular file at out_dir must fail with BuildError cleanly.
+    out_file = tmp_path / "existing_file"
+    out_file.write_text("regular file", encoding="utf-8")
+    with pytest.raises(BuildError, match=r"(?i)not a directory|file"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            out_file,
+        )
+    assert out_file.is_file()
+    assert out_file.read_text("utf-8") == "regular file"
+    leftovers = [
+        p.name
+        for p in out_file.parent.iterdir()
+        if ".tmp-" in p.name or ".bak-" in p.name
+    ]
+    assert leftovers == []
+
+
+def test_env_agents_pruning_tokenized_root_empty_app_yaml_and_unicode_dep(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # Unicode brand display_name + env overrides attempting disabled-agent reinjection.
+    id_path = manifests_dir / "brands" / "brand_1" / "identity.yaml"
+    id_data = yaml.safe_load(id_path.read_text("utf-8"))
+    id_data["display_name"] = "Nordic ÅÄÖ Bank"
+    id_path.write_text(
+        yaml.safe_dump(id_data, sort_keys=False, allow_unicode=True), "utf-8"
+    )
+
+    (core_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "pruned_agent_dir": {"temp": 0.1},
+                    "pruned_agent_display": {"temp": 0.2},
+                    "default_agent": {"temp": 0.5},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "environment": "prod",
+                "templates": {
+                    "api": "https://api.example.com/{brand_slug}/{env}/{service}"
+                },
+                "overrides": {
+                    "agents": {
+                        "pruned_agent_display": {"reinjected": True},
+                        "default_agent": {"kept": True},
+                    }
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    # Comment-only app.yaml must still receive rootAgent & languageSettings.
+    (core_dir / "app.json").unlink()
+    (core_dir / "app.yaml").write_text("# empty app config\n", encoding="utf-8")
+
+    out_ok = tmp_path / "out_ok"
+    build_app(
+        core_dir, manifests_dir, "brand_1", "VOICE_TELEPHONY", "prod", out_ok
+    )
+
+    app_cfg = yaml.safe_load((out_ok / "app.yaml").read_text("utf-8"))
+    assert app_cfg["rootAgent"] == "custom_entry"
+    assert app_cfg["languageSettings"]["supportedLanguageCodes"] == ["en", "es"]
+
+    env_out = json.loads((out_ok / "environment.json").read_text("utf-8"))
+    assert env_out["agents"] == {"default_agent": {"temp": 0.5, "kept": True}}
+
+    dep_raw = (out_ok / "deployments" / "voice-telephony.yaml").read_text(
+        "utf-8"
+    )
+    assert "Nordic ÅÄÖ Bank VOICE_TELEPHONY" in dep_raw
+
+    # Tokenized rootAgent resolving to a disabled agent must fail fast.
+    pol_path = manifests_dir / "brands" / "brand_1" / "channel_policy.yaml"
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["api_routing"]["root_ref"] = "pruned_agent_dir"
+    pol["channels"]["VOICE_TELEPHONY"].pop("entry_agent")
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), "utf-8")
+    (core_dir / "app.yaml").write_text(
+        'rootAgent: "@@routing.root_ref@@"\n', encoding="utf-8"
+    )
+    with pytest.raises(BuildError, match=r"rootAgent.*disabled"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_tok_pruned",
+        )

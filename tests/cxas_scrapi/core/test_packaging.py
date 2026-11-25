@@ -23,6 +23,7 @@ import zipfile
 from typing import TYPE_CHECKING
 
 import pytest
+import yaml
 
 from cxas_scrapi.core.packaging import package_app_archive
 
@@ -287,3 +288,103 @@ def test_package_rejects_symlinks(tmp_path: Path) -> None:
     (app_dir_link / "agents" / "linked_agent").symlink_to(outside_dir)
     with pytest.raises(ValueError, match="Symlinks are not permitted"):
         package_app_archive(app_dir_link, tmp_path / "out5.zip")
+
+
+# Reproduces QA-002: app.yml skips $env_var and boolean env resolution.
+def test_package_app_yml_resolves_env_vars_and_booleans(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "app_yml_env"
+    app_dir.mkdir()
+    (app_dir / "app.yml").write_text(
+        "displayName: YmlEnvApp\n"
+        "variableDeclarations:\n"
+        "  - name: api_host\n"
+        "    schema:\n"
+        "      type: STRING\n"
+        '      default: "$env_var"\n'
+        "languageSettings:\n"
+        "  defaultLanguageCode: en\n"
+        '  enableMultilingualSupport: "$env_var"\n',
+        encoding="utf-8",
+    )
+
+    # Without environment.json, packaging must fail fast on unresolved $env_var.
+    with pytest.raises(ValueError, match=r"environment\.json was not found"):
+        package_app_archive(app_dir, tmp_path / "missing_env.zip")
+
+    env_file = tmp_path / "prod_env.json"
+    env_file.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "api_host",
+                            "schema": {"default": "api.yml.example.com"},
+                        }
+                    ],
+                    "languageSettings": {"enableMultilingualSupport": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    resolved: list[str] = []
+    zip_path = package_app_archive(
+        app_dir,
+        tmp_path / "resolved_yml.zip",
+        env_file,
+        resolved_env_vars=resolved,
+    )
+    assert resolved == ["api_host"]
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        staged = yaml.safe_load(zf.read("app.yml").decode("utf-8"))
+    assert (
+        staged["variableDeclarations"][0]["schema"]["default"]
+        == "api.yml.example.com"
+    )
+    assert staged["languageSettings"]["enableMultilingualSupport"] is True
+
+
+# Reproduces QA-004: package_app_archive corrupts unquoted YAML 1.2 `no` to False.
+def test_package_app_yaml_preserves_yaml12_language_code_no(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "app_yaml12"
+    app_dir.mkdir()
+    (app_dir / "app.yaml").write_text(
+        "displayName: Nordic App\n"
+        "languageSettings:\n"
+        "  defaultLanguageCode: no\n"
+        "  supportedLanguageCodes: [en, no]\n"
+        '  enableMultilingualSupport: "$env_var"\n'
+        "variableDeclarations:\n"
+        "  - name: api_host\n"
+        "    schema:\n"
+        "      type: STRING\n"
+        '      default: "$env_var"\n',
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "prod_env.json"
+    env_file.write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "api_host",
+                            "schema": {"default": "api.no.example.com"},
+                        }
+                    ],
+                    "languageSettings": {"enableMultilingualSupport": True},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    zip_path = package_app_archive(app_dir, tmp_path / "yaml12.zip", env_file)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        staged = yaml.safe_load(zf.read("app.yaml").decode("utf-8"))
+    assert staged["languageSettings"]["defaultLanguageCode"] == "no"
+    assert staged["languageSettings"]["supportedLanguageCodes"] == ["en", "no"]

@@ -233,7 +233,7 @@ def extract_env_variable_defaults(
 
 
 def _find_app_config_file(app_dir: Path) -> Path | None:
-    for name in ("app.json", "app.yaml"):
+    for name in ("app.json", "app.yaml", "app.yml"):
         candidate = app_dir / name
         if candidate.is_file():
             return candidate
@@ -243,13 +243,20 @@ def _find_app_config_file(app_dir: Path) -> Path | None:
 def _load_config_file(path: Path) -> Any:
     text = path.read_text(encoding="utf-8")
     if path.suffix in (".yaml", ".yml"):
-        return yaml.safe_load(text)
+        from cxas_scrapi.build.manifests import (  # noqa: PLC0415
+            Yaml12SafeLoader,
+        )
+
+        return yaml.load(text, Loader=Yaml12SafeLoader)
     return json.loads(text)
 
 
 def _write_config_file(path: Path, data: dict[str, Any]) -> None:
     if path.suffix in (".yaml", ".yml"):
-        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        path.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
     else:
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 

@@ -700,6 +700,28 @@ def _reject_symlinks(root: Path, label: str) -> None:
                 )
 
 
+def _validate_output_target(raw_out: Path, label: str) -> Path:
+    if raw_out.is_symlink():
+        raise BuildError(f"Symlinks are not permitted for {label}: {raw_out}")
+    resolved = raw_out.resolve()
+    if resolved.exists() and not resolved.is_dir():
+        raise BuildError(
+            f"Output {label} '{resolved}' already exists and is not a "
+            "directory."
+        )
+    return resolved
+
+
+def _resolve_input_dirs(
+    core_dir: str | Path, manifests_dir: str | Path
+) -> tuple[Path, Path]:
+    raw_core = Path(core_dir)
+    raw_manifests = Path(manifests_dir)
+    _reject_symlinks(raw_core, "core directory")
+    _reject_symlinks(raw_manifests, "manifests directory")
+    return raw_core.resolve(), raw_manifests.resolve()
+
+
 def _validate_build_paths(
     core_dir: Path, manifests_path: Path, out_dir: Path
 ) -> None:
@@ -708,6 +730,7 @@ def _validate_build_paths(
             f"Core directory '{core_dir}' does not exist or is not a directory."
         )
         raise BuildError(msg)
+    _validate_output_target(out_dir, "directory")
     for label, source in (("core", core_dir), ("manifests", manifests_path)):
         if (
             out_dir == source
@@ -976,28 +999,27 @@ def _render_json_file(
     env_overrides: Mapping[str, JsonValue],
 ) -> None:
     data = _read_json_strict(path)
-    if isinstance(data, dict):
+    if isinstance(data, dict) and path.name == "environment.json":
         # Merge environment overrides before pruning so overrides cannot
-        # re-introduce disabled tools.
-        if path.name == "environment.json" and env_overrides:
+        # re-introduce disabled agents or tools.
+        if env_overrides:
             data = deep_merge(data, env_overrides)
-        _prune_resource_refs(
-            data, renderer.disabled_agents, renderer.disabled_tools
+        _prune_mapping_key(
+            data, "agents", renderer.disabled_agents, "agents", allow_dict=True
         )
-        if path.name == "app.json":
-            _apply_app_manifest_settings(
-                data,
-                brand,
-                renderer.channel,
-                channel_caps,
-                renderer.disabled_agents,
-            )
-    else:
-        _prune_resource_refs(
-            data, renderer.disabled_agents, renderer.disabled_tools
-        )
+    _prune_resource_refs(
+        data, renderer.disabled_agents, renderer.disabled_tools
+    )
 
     rendered = _wrap_path_error(path, lambda: renderer.render_data(data))
+    if path.name == "app.json" and isinstance(rendered, dict):
+        _apply_app_manifest_settings(
+            rendered,
+            brand,
+            renderer.channel,
+            channel_caps,
+            renderer.disabled_agents,
+        )
     path.write_text(json.dumps(rendered, indent=2) + "\n", "utf-8")
 
 
@@ -1092,14 +1114,16 @@ def _render_yaml_file(
     data = _parse_yaml_with_conditionals(
         path, text, renderer, has_tokens=has_tokens
     )
-    modified = _apply_yaml_mutations(
-        data, renderer, brand, channel_caps, is_app_yaml=is_app_yaml
-    )
+    if is_app_yaml and data is None:
+        data = {}
     if has_tokens:
         data = _wrap_path_error(
             path,
             lambda: renderer.render_data(data, evaluate_conditionals=False),
         )
+    modified = _apply_yaml_mutations(
+        data, renderer, brand, channel_caps, is_app_yaml=is_app_yaml
+    )
     if has_tokens or modified:
         path.write_text(
             yaml.safe_dump(data, sort_keys=False, allow_unicode=True), "utf-8"
@@ -1189,7 +1213,7 @@ def _write_deployment_manifest(
     if channel_caps.entry_agent:
         dep_data["entryAgent"] = channel_caps.entry_agent
     with open(deployments_dir / f"{slug}.yaml", "w", encoding="utf-8") as fh:
-        yaml.safe_dump(dep_data, fh, sort_keys=False)
+        yaml.safe_dump(dep_data, fh, sort_keys=False, allow_unicode=True)
     return slug
 
 
@@ -1317,13 +1341,8 @@ def build_app(
     package_zip: bool = False,
 ) -> BuildReport:
     """Build one CES app for ``(brand_id, channel, environment)``."""
-    raw_core = Path(core_dir)
-    raw_manifests = Path(manifests_dir)
-    _reject_symlinks(raw_core, "core directory")
-    _reject_symlinks(raw_manifests, "manifests directory")
-    core_path = raw_core.resolve()
-    manifests_path = raw_manifests.resolve()
-    out_path = Path(out_dir).resolve()
+    core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
+    out_path = _validate_output_target(Path(out_dir), "output directory")
     _validate_build_paths(core_path, manifests_path, out_path)
     manifests = load_manifests(manifests_path)
     return _build_app_from_manifests(
@@ -1347,33 +1366,36 @@ def build_all(
     package_zip: bool = False,
 ) -> list[BuildReport]:
     """Build every ``(brand_id, channel)`` pair declared in manifests."""
-    raw_core = Path(core_dir)
-    raw_manifests = Path(manifests_dir)
-    _reject_symlinks(raw_core, "core directory")
-    _reject_symlinks(raw_manifests, "manifests directory")
-    core_path = raw_core.resolve()
+    core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
     if not core_path.is_dir():
         raise BuildError(
             f"Core directory '{core_path}' does not exist or is not a "
             "directory."
         )
 
-    manifests_path = raw_manifests.resolve()
+    out_root_path = _validate_output_target(Path(out_root), "output root")
     manifests = load_manifests(manifests_path)
     manifests.env(environment)
 
-    out_root_path = Path(out_root).resolve()
-    return [
-        _build_app_from_manifests(
-            core_path,
-            manifests_path,
-            manifests,
-            brand_id,
-            channel,
-            environment,
-            out_root_path / brand_id / channel.lower(),
-            package_zip=package_zip,
+    reports: list[BuildReport] = []
+    for brand_id, policy in sorted(manifests.policies.items()):
+        brand_out_dir = _validate_output_target(
+            out_root_path / brand_id, "brand output directory"
         )
-        for brand_id, policy in sorted(manifests.policies.items())
-        for channel in sorted(policy.channels)
-    ]
+        for channel in sorted(policy.channels):
+            channel_out_dir = _validate_output_target(
+                brand_out_dir / channel.lower(), "output directory"
+            )
+            reports.append(
+                _build_app_from_manifests(
+                    core_path,
+                    manifests_path,
+                    manifests,
+                    brand_id,
+                    channel,
+                    environment,
+                    channel_out_dir,
+                    package_zip=package_zip,
+                )
+            )
+    return reports

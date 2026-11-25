@@ -405,3 +405,47 @@ def test_cli_e2e_user_errors_no_tracebacks_and_help_intact(
     root_help = _run_cli(["--help"]).stdout
     assert "build" in root_help
     assert "package" in root_help
+
+
+# Reproduces QA-001: CLI `cxas package` resolves symlinks before validation.
+def test_cli_package_rejects_symlink_app_dir_and_env_file(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "real_app"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text("{}", encoding="utf-8")
+
+    outside = tmp_path / "outside_secret.json"
+    outside.write_text('{"secret": "leaked"}', encoding="utf-8")
+
+    link_app = tmp_path / "link_app"
+    link_app.symlink_to(app_dir)
+    res_app = _run_cli(
+        [
+            "package",
+            "--app-dir",
+            str(link_app),
+            "--zip",
+            str(tmp_path / "from_link_app.zip"),
+        ]
+    )
+    assert res_app.returncode != 0
+    assert "Symlinks are not permitted" in res_app.stderr
+    assert "Traceback" not in res_app.stderr
+
+    link_env = tmp_path / "link_env.json"
+    link_env.symlink_to(outside)
+    res_env = _run_cli(
+        [
+            "package",
+            "--app-dir",
+            str(app_dir),
+            "--env-file",
+            str(link_env),
+            "--zip",
+            str(tmp_path / "from_link_env.zip"),
+        ]
+    )
+    assert res_env.returncode != 0
+    assert "Symlinks are not permitted" in res_env.stderr
+    assert "Traceback" not in res_env.stderr
