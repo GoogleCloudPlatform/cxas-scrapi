@@ -21,7 +21,12 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from cxas_scrapi.build.builder import BuildError, build_all, build_app
+from cxas_scrapi.build.builder import (
+    BuildError,
+    BuildReport,
+    build_all,
+    build_app,
+)
 from cxas_scrapi.build.manifests import ManifestError
 from cxas_scrapi.core.packaging import package_app_archive
 
@@ -29,63 +34,67 @@ if TYPE_CHECKING:
     import argparse
 
 
+def _print_build_report(report: BuildReport) -> None:
+    print(f"Built {report.brand_id} {report.channel} to {report.out_dir}")
+    for warning in report.warnings:
+        print(f"  Warning: {warning}")
+
+
+def _run_all_builds(args: argparse.Namespace) -> None:
+    reports = build_all(
+        core_dir=args.core_dir,
+        manifests_dir=args.manifests_dir,
+        out_root=args.out,
+        environment=args.env,
+        package_zip=args.zip,
+    )
+    if args.json:
+        print(json.dumps([r.model_dump(mode="json") for r in reports]))
+        return
+    for report in reports:
+        _print_build_report(report)
+
+
+def _run_single_build(args: argparse.Namespace) -> None:
+    if not args.brand or not args.channel:
+        print(
+            "Error: --brand and --channel are required unless "
+            "--all is specified.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    report = build_app(
+        core_dir=args.core_dir,
+        manifests_dir=args.manifests_dir,
+        brand_id=args.brand,
+        channel=args.channel,
+        environment=args.env,
+        out_dir=args.out,
+        package_zip=args.zip,
+    )
+    if args.json:
+        print(report.model_dump_json())
+    else:
+        _print_build_report(report)
+
+
 def app_build(args: argparse.Namespace) -> None:
-    """Handle `cxas build`."""
+    """Build one target or the full brand/channel matrix and emit reports."""
     try:
         if args.all:
-            reports = build_all(
-                core_dir=args.core_dir,
-                manifests_dir=args.manifests_dir,
-                out_root=args.out,
-                environment=args.env,
-                package_zip=args.zip,
-            )
-            if args.json:
-                print(json.dumps([r.model_dump(mode="json") for r in reports]))
-            else:
-                for r in reports:
-                    print(f"Built {r.brand_id} {r.channel} to {r.out_dir}")
-                    if r.warnings:
-                        for w in r.warnings:
-                            print(f"  Warning: {w}")
+            _run_all_builds(args)
         else:
-            if not args.brand or not args.channel:
-                print(
-                    "Error: --brand and --channel are required unless "
-                    "--all is specified.",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-
-            report = build_app(
-                core_dir=args.core_dir,
-                manifests_dir=args.manifests_dir,
-                brand_id=args.brand,
-                channel=args.channel,
-                environment=args.env,
-                out_dir=args.out,
-                package_zip=args.zip,
-            )
-            if args.json:
-                print(report.model_dump_json())
-            else:
-                print(
-                    f"Built {report.brand_id} {report.channel} to "
-                    f"{report.out_dir}"
-                )
-                if report.warnings:
-                    for w in report.warnings:
-                        print(f"  Warning: {w}")
-    except (BuildError, ManifestError) as e:
-        print(f"Build Error: {e}", file=sys.stderr)
+            _run_single_build(args)
+    except (BuildError, ManifestError) as exc:
+        print(f"Build Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
 
 def app_package(args: argparse.Namespace) -> None:
-    """Handle `cxas package`."""
+    """Package a CES app directory into a deterministic ZIP archive."""
     app_dir = Path(args.app_dir).resolve()
     env_file = Path(args.env_file).resolve() if args.env_file else None
-
     zip_path = (
         Path(args.zip).resolve()
         if args.zip
@@ -93,13 +102,10 @@ def app_package(args: argparse.Namespace) -> None:
     )
 
     try:
-        resolved_vars: list[str] = []
-        out = package_app_archive(
-            app_dir, zip_path, env_file, resolved_env_vars=resolved_vars
-        )
+        out = package_app_archive(app_dir, zip_path, env_file)
         print(f"Packaged app to {out}")
-    except (OSError, ValueError) as e:
-        print(f"Package Error: {e}", file=sys.stderr)
+    except (OSError, ValueError) as exc:
+        print(f"Package Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
 

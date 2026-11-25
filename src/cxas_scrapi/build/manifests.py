@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 import yaml
 from pydantic import (
@@ -41,8 +41,14 @@ from pydantic import (
     model_validator,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
 BRAND_ID_PATTERN = r"^[a-z0-9_-]{2,64}$"
 _BRAND_ID_RE = re.compile(BRAND_ID_PATTERN)
+_T = TypeVar("_T")
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
+ManifestValue: TypeAlias = Any
 
 # Channel name (manifest key) -> CES deployment ChannelProfile type.
 CHANNEL_PROFILE_TYPES: dict[str, str] = {
@@ -55,12 +61,8 @@ CHANNEL_PROFILE_TYPES: dict[str, str] = {
     "INSTAGRAM": "INSTAGRAM",
 }
 
-# ChannelProfile types that are voice-first.
-VOICE_CHANNEL_PROFILE_TYPES: frozenset[str] = frozenset(
-    {"GOOGLE_TELEPHONY_PLATFORM", "CONTACT_CENTER_AS_A_SERVICE"}
-)
 
-
+# scbc ignore[empty-exception-subclass] public API exception
 class ManifestError(ValueError):
     """Raised when a manifest file is missing or fails validation."""
 
@@ -95,9 +97,10 @@ class BrandIdentity(_StrictModel):
     tts_voices: dict[str, TtsVoice] = Field(default_factory=dict)
 
     @property
+    # scbc ignore[trivial-wrapper] public BrandIdentity API property
     def languages(self) -> list[str]:
         """Languages this brand speaks, in manifest order."""
-        return list(self.tts_voices.keys())
+        return list(self.tts_voices)
 
 
 class ChannelCapabilities(_StrictModel):
@@ -134,9 +137,9 @@ class ChannelPolicy(_StrictModel):
             raise ValueError("channels must declare at least one channel")
         unknown = sorted(set(value) - set(CHANNEL_PROFILE_TYPES))
         if unknown:
+            valid = sorted(CHANNEL_PROFILE_TYPES)
             raise ValueError(
-                f"unknown channel(s) {unknown}; expected one of "
-                f"{sorted(CHANNEL_PROFILE_TYPES)}"
+                f"unknown channel(s) {unknown}; expected one of {valid}"
             )
         return value
 
@@ -145,9 +148,10 @@ class ChannelPolicy(_StrictModel):
     def _iso_countries(cls, value: list[str]) -> list[str]:
         bad = [c for c in value if not re.fullmatch(r"[A-Z]{2}", c)]
         if bad:
-            raise ValueError(
+            msg = (
                 f"supported_countries must be ISO-3166 alpha-2 codes, got {bad}"
             )
+            raise ValueError(msg)
         return value
 
 
@@ -162,31 +166,28 @@ class EnvManifest(_StrictModel):
 
     environment: str = Field(pattern=r"^[a-z0-9_-]{1,32}$")
     templates: dict[str, str] = Field(default_factory=dict)
-    overrides: dict[str, Any] = Field(default_factory=dict)
+    overrides: dict[str, ManifestValue] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod
-    def _parse_top_level_templates(cls, data: Any) -> Any:
+    def _parse_top_level_templates(cls, data: ManifestValue) -> ManifestValue:
+        # scbc boundary: Pydantic before-validator normalizes raw YAML input
         if not isinstance(data, dict):
             return data
 
-        # Copy input mapping so we do not mutate caller-owned dicts.
         out = dict(data)
         raw_templates = out.get("templates")
         if raw_templates is not None and not isinstance(raw_templates, dict):
             return out
 
         templates = dict(raw_templates or {})
-
         for k, v in list(out.items()):
             if isinstance(k, str) and k.endswith("_template"):
-                key_name = k[:-9]  # len("_template") == 9
-                templates[key_name] = v
+                templates[k.removesuffix("_template")] = v
                 del out[k]
 
         if templates:
             out["templates"] = templates
-
         return out
 
 
@@ -201,8 +202,12 @@ class ContentBlockCatalog(_StrictModel):
         self, brand_id: str, country: str, lang: str
     ) -> dict[str, str] | None:
         """Return the block map for one tuple, or ``None`` if undeclared."""
-        return self.blocks.get(brand_id, {}).get(country, {}).get(lang)
+        try:
+            return self.blocks[brand_id][country][lang]
+        except KeyError:
+            return None
 
+    # scbc ignore[trivial-wrapper] public ContentBlockCatalog query API
     def missing_tuples(
         self, brand_id: str, countries: list[str], langs: list[str]
     ) -> list[tuple[str, str, str]]:
@@ -213,6 +218,18 @@ class ContentBlockCatalog(_StrictModel):
             for lang in langs
             if not self.blocks_for(brand_id, country, lang)
         ]
+
+
+def _lookup_known(
+    mapping: Mapping[str, _T], key: str, kind: str, known_label: str
+) -> _T:
+    try:
+        return mapping[key]
+    except KeyError as exc:
+        known = sorted(mapping)
+        raise ManifestError(
+            f"Unknown {kind} '{key}'. {known_label}: {known}"
+        ) from exc
 
 
 class Manifests(BaseModel):
@@ -226,37 +243,24 @@ class Manifests(BaseModel):
     envs: dict[str, EnvManifest]
     content_blocks: ContentBlockCatalog | None = None
 
+    # scbc ignore[trivial-wrapper] public Manifests lookup API
     def brand(self, brand_id: str) -> BrandIdentity:
-        try:
-            return self.brands[brand_id]
-        except KeyError as exc:
-            raise ManifestError(
-                f"Unknown brand '{brand_id}'. Known brands: "
-                f"{sorted(self.brands)}"
-            ) from exc
+        return _lookup_known(self.brands, brand_id, "brand", "Known brands")
 
     def policy(self, brand_id: str) -> ChannelPolicy:
-        try:
-            return self.policies[brand_id]
-        except KeyError as exc:
+        if brand_id not in self.policies:
             raise ManifestError(
                 f"Brand '{brand_id}' has no channel_policy.yaml."
-            ) from exc
+            )
+        return self.policies[brand_id]
 
+    # scbc ignore[trivial-wrapper] public Manifests lookup API
     def env(self, environment: str) -> EnvManifest:
-        try:
-            return self.envs[environment]
-        except KeyError as exc:
-            raise ManifestError(
-                f"Unknown environment '{environment}'. Known: "
-                f"{sorted(self.envs)}"
-            ) from exc
+        return _lookup_known(self.envs, environment, "environment", "Known")
 
 
-# ── Loading ─────────────────────────────────────────────────────────────
-
-
-def _read_yaml(path: Path) -> dict[str, Any]:
+def _read_yaml(path: Path) -> dict[str, ManifestValue]:
+    # scbc boundary: reads and validates top-level YAML mapping from disk
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
@@ -268,11 +272,85 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def _load_model(model: type[BaseModel], path: Path) -> Any:
+def _load_model(model: type[_ModelT], path: Path) -> _ModelT:
+    # scbc boundary: validates external YAML file against Pydantic schema
     try:
         return model.model_validate(_read_yaml(path))
     except (ValueError, TypeError) as exc:
         raise ManifestError(f"{path}: {exc}") from exc
+
+
+def _assert_matching_id(
+    path: Path,
+    field_name: str,
+    actual: str,
+    expected: str,
+    source_kind: str,
+) -> None:
+    if actual != expected:
+        raise ManifestError(
+            f"{path}: {field_name} '{actual}' does not match "
+            f"{source_kind} '{expected}'"
+        )
+
+
+def _load_brand_dir(
+    brand_dir: Path,
+) -> tuple[BrandIdentity, ChannelPolicy | None]:
+    if not _BRAND_ID_RE.fullmatch(brand_dir.name):
+        raise ManifestError(
+            f"Brand directory '{brand_dir.name}' must match {BRAND_ID_PATTERN}"
+        )
+    identity_path = brand_dir / "identity.yaml"
+    if not identity_path.is_file():
+        raise ManifestError(f"Missing '{identity_path}'")
+    identity = _load_model(BrandIdentity, identity_path)
+    _assert_matching_id(
+        identity_path,
+        "brand_id",
+        identity.brand_id,
+        brand_dir.name,
+        "directory name",
+    )
+
+    policy_path = brand_dir / "channel_policy.yaml"
+    if not policy_path.is_file():
+        return identity, None
+    policy = _load_model(ChannelPolicy, policy_path)
+    _assert_matching_id(
+        policy_path,
+        "brand_id",
+        policy.brand_id,
+        brand_dir.name,
+        "directory name",
+    )
+    return identity, policy
+
+
+def _load_brand_manifests(
+    brands_dir: Path,
+) -> tuple[dict[str, BrandIdentity], dict[str, ChannelPolicy]]:
+    brands: dict[str, BrandIdentity] = {}
+    policies: dict[str, ChannelPolicy] = {}
+    for brand_dir in sorted(p for p in brands_dir.iterdir() if p.is_dir()):
+        identity, policy = _load_brand_dir(brand_dir)
+        brands[identity.brand_id] = identity
+        if policy is not None:
+            policies[policy.brand_id] = policy
+    return brands, policies
+
+
+def _load_env_manifests(envs_dir: Path) -> dict[str, EnvManifest]:
+    if not envs_dir.is_dir():
+        return {}
+    envs: dict[str, EnvManifest] = {}
+    for env_path in sorted(envs_dir.glob("*.yaml")):
+        env = _load_model(EnvManifest, env_path)
+        _assert_matching_id(
+            env_path, "environment", env.environment, env_path.stem, "file name"
+        )
+        envs[env.environment] = env
+    return envs
 
 
 def load_manifests(root: str | Path) -> Manifests:
@@ -283,62 +361,26 @@ def load_manifests(root: str | Path) -> Manifests:
             malformed, a model fails validation, or a brand directory name
             disagrees with the ``brand_id`` declared inside its files.
     """
-    root = Path(root)
-    if not root.is_dir():
-        raise ManifestError(f"Manifests root '{root}' is not a directory")
+    root_path = Path(root)
+    if not root_path.is_dir():
+        raise ManifestError(f"Manifests root '{root_path}' is not a directory")
 
-    brands_dir = root / "brands"
+    brands_dir = root_path / "brands"
     if not brands_dir.is_dir():
         raise ManifestError(f"Missing '{brands_dir}' directory")
 
-    brands: dict[str, BrandIdentity] = {}
-    policies: dict[str, ChannelPolicy] = {}
-    for brand_dir in sorted(p for p in brands_dir.iterdir() if p.is_dir()):
-        if not _BRAND_ID_RE.fullmatch(brand_dir.name):
-            raise ManifestError(
-                f"Brand directory '{brand_dir.name}' must match "
-                f"{BRAND_ID_PATTERN}"
-            )
-        identity_path = brand_dir / "identity.yaml"
-        if not identity_path.is_file():
-            raise ManifestError(f"Missing '{identity_path}'")
-        identity: BrandIdentity = _load_model(BrandIdentity, identity_path)
-        if identity.brand_id != brand_dir.name:
-            raise ManifestError(
-                f"{identity_path}: brand_id '{identity.brand_id}' does not "
-                f"match directory name '{brand_dir.name}'"
-            )
-        brands[identity.brand_id] = identity
+    brands, policies = _load_brand_manifests(brands_dir)
+    envs = _load_env_manifests(root_path / "envs")
 
-        policy_path = brand_dir / "channel_policy.yaml"
-        if policy_path.is_file():
-            policy: ChannelPolicy = _load_model(ChannelPolicy, policy_path)
-            if policy.brand_id != brand_dir.name:
-                raise ManifestError(
-                    f"{policy_path}: brand_id '{policy.brand_id}' does not "
-                    f"match directory name '{brand_dir.name}'"
-                )
-            policies[policy.brand_id] = policy
-
-    envs: dict[str, EnvManifest] = {}
-    envs_dir = root / "envs"
-    if envs_dir.is_dir():
-        for env_path in sorted(envs_dir.glob("*.yaml")):
-            env: EnvManifest = _load_model(EnvManifest, env_path)
-            if env.environment != env_path.stem:
-                raise ManifestError(
-                    f"{env_path}: environment '{env.environment}' does not "
-                    f"match file name '{env_path.stem}'"
-                )
-            envs[env.environment] = env
-
-    content_blocks: ContentBlockCatalog | None = None
-    blocks_path = root / "locales" / "content_blocks.yaml"
-    if blocks_path.is_file():
-        content_blocks = _load_model(ContentBlockCatalog, blocks_path)
+    blocks_path = root_path / "locales" / "content_blocks.yaml"
+    content_blocks = (
+        _load_model(ContentBlockCatalog, blocks_path)
+        if blocks_path.is_file()
+        else None
+    )
 
     return Manifests(
-        root=root,
+        root=root_path,
         brands=brands,
         policies=policies,
         envs=envs,

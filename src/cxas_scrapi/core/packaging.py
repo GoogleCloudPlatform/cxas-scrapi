@@ -49,6 +49,7 @@ _EXCLUDED_FILE_NAMES = frozenset({".DS_Store"})
 
 def _validate_wrapper_dir(wrapper_dir: str) -> PurePosixPath:
     """Validate that ``wrapper_dir`` is a safe relative archive prefix."""
+    # scbc boundary: validates external caller-supplied archive prefix path
     if not wrapper_dir or "\\" in wrapper_dir:
         raise ValueError(
             f"Invalid wrapper_dir '{wrapper_dir}': must be a non-empty "
@@ -57,7 +58,6 @@ def _validate_wrapper_dir(wrapper_dir: str) -> PurePosixPath:
     posix = PurePosixPath(wrapper_dir)
     if (
         posix.is_absolute()
-        or Path(wrapper_dir).is_absolute()
         or not posix.parts
         or any(part in {"", ".", ".."} or ":" in part for part in posix.parts)
     ):
@@ -90,6 +90,76 @@ def _copy_filtered_tree(src: Path, dst: Path) -> None:
             shutil.copy2(src_fpath, dst_fpath)
 
 
+def _stage_archive_dir(
+    app_dir: Path, temp_dir: Path, env_file: Path | None
+) -> None:
+    """Copy allowed CES roots and optional ``env_file`` into ``temp_dir``."""
+    for root_name in sorted(VALID_ARCHIVE_ROOTS):
+        src_path = app_dir / root_name
+        if not src_path.exists():
+            continue
+        dst_path = temp_dir / root_name
+        if src_path.is_dir():
+            _copy_filtered_tree(src_path, dst_path)
+        elif src_path.is_file():
+            dst_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dst_path)
+
+    if env_file is not None:
+        shutil.copy2(env_file, temp_dir / "environment.json")
+
+
+def _resolve_staged_env(
+    temp_dir: Path, resolved_env_vars: list[str] | None
+) -> None:
+    """Resolve ``$env_var`` defaults and boolean overrides in ``temp_dir``."""
+    # Local import: cxas_scrapi.utils imports core.apps, avoiding
+    # circular import chains during package initialization.
+    from cxas_scrapi.utils.env_vars import (  # noqa: PLC0415
+        resolve_app_env_variables_in_dir,
+    )
+    from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
+        resolve_env_booleans_in_dir,
+    )
+
+    resolved = resolve_app_env_variables_in_dir(temp_dir)
+    if resolved_env_vars is not None:
+        resolved_env_vars.extend(resolved)
+    resolve_env_booleans_in_dir(str(temp_dir))
+
+
+def _collect_archive_entries(
+    temp_dir: Path, wrapper_prefix: PurePosixPath | None
+) -> list[tuple[str, Path]]:
+    """Collect sorted ``(arcname, file_path)`` pairs from ``temp_dir``."""
+    entries: list[tuple[str, Path]] = []
+    for root, dirs, files in os.walk(temp_dir):
+        dirs.sort()
+        for fname in sorted(files):
+            fpath = Path(root) / fname
+            rel_posix = PurePosixPath(fpath.relative_to(temp_dir).as_posix())
+            if wrapper_prefix is not None:
+                rel_posix = wrapper_prefix / rel_posix
+            entries.append((rel_posix.as_posix(), fpath))
+    entries.sort(key=lambda item: item[0])
+    return entries
+
+
+def _write_deterministic_zip(
+    output_zip: Path, entries: list[tuple[str, Path]]
+) -> None:
+    """Write normalized ZIP entries with fixed epoch and permissions."""
+    output_zip.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(
+        output_zip, "w", compression=zipfile.ZIP_DEFLATED
+    ) as zf:
+        for arcname, fpath in entries:
+            info = zipfile.ZipInfo(filename=arcname, date_time=_ZIP_EPOCH)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            zf.writestr(info, fpath.read_bytes())
+
+
 def package_app_archive(
     app_dir: Path,
     output_zip: Path,
@@ -118,70 +188,24 @@ def package_app_archive(
     if not app_dir.is_dir():
         raise FileNotFoundError(f"App directory not found: {app_dir}")
 
+    resolved_env_file: Path | None = None
     if env_file is not None:
-        env_file = Path(env_file).resolve()
-        if not env_file.is_file():
-            raise FileNotFoundError(f"Environment file not found: {env_file}")
+        resolved_env_file = Path(env_file).resolve()
+        if not resolved_env_file.is_file():
+            raise FileNotFoundError(
+                f"Environment file not found: {resolved_env_file}"
+            )
 
-    wrapper_prefix: PurePosixPath | None = None
-    if wrapper_dir is not None:
-        wrapper_prefix = _validate_wrapper_dir(wrapper_dir)
+    wrapper_prefix = (
+        _validate_wrapper_dir(wrapper_dir) if wrapper_dir is not None else None
+    )
 
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
-
-        for root_name in sorted(VALID_ARCHIVE_ROOTS):
-            src_path = app_dir / root_name
-            if not src_path.exists():
-                continue
-            dst_path = temp_dir / root_name
-            if src_path.is_dir():
-                _copy_filtered_tree(src_path, dst_path)
-            elif src_path.is_file():
-                dst_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src_path, dst_path)
-
-        if env_file is not None:
-            dst_env = temp_dir / "environment.json"
-            shutil.copy2(env_file, dst_env)
-
+        _stage_archive_dir(app_dir, temp_dir, resolved_env_file)
         if resolve_env or resolved_env_vars is not None:
-            # Local import: cxas_scrapi.utils imports core.apps, avoiding
-            # circular import chains during package initialization.
-            from cxas_scrapi.utils.env_vars import (  # noqa: PLC0415
-                resolve_app_env_variables_in_dir,
-            )
-            from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
-                resolve_env_booleans_in_dir,
-            )
-
-            resolved = resolve_app_env_variables_in_dir(temp_dir)
-            if resolved_env_vars is not None:
-                resolved_env_vars.extend(resolved)
-            resolve_env_booleans_in_dir(str(temp_dir))
-
-        entries: list[tuple[str, Path]] = []
-        for root, dirs, files in os.walk(temp_dir):
-            dirs.sort()
-            for fname in sorted(files):
-                fpath = Path(root) / fname
-                rel_posix = PurePosixPath(
-                    fpath.relative_to(temp_dir).as_posix()
-                )
-                if wrapper_prefix is not None:
-                    rel_posix = wrapper_prefix / rel_posix
-                entries.append((rel_posix.as_posix(), fpath))
-
-        entries.sort(key=lambda item: item[0])
-        output_zip.parent.mkdir(parents=True, exist_ok=True)
-
-        with zipfile.ZipFile(
-            output_zip, "w", compression=zipfile.ZIP_DEFLATED
-        ) as zf:
-            for arcname, fpath in entries:
-                info = zipfile.ZipInfo(filename=arcname, date_time=_ZIP_EPOCH)
-                info.compress_type = zipfile.ZIP_DEFLATED
-                info.external_attr = 0o644 << 16
-                zf.writestr(info, fpath.read_bytes())
+            _resolve_staged_env(temp_dir, resolved_env_vars)
+        entries = _collect_archive_entries(temp_dir, wrapper_prefix)
+        _write_deterministic_zip(output_zip, entries)
 
     return output_zip

@@ -62,6 +62,8 @@ class Deployments(Apps):
         "very_high",
     )
 
+    _API_FALLBACK_CHANNEL_TYPES = frozenset({"WHATSAPP", "INSTAGRAM"})
+
     @classmethod
     def _resolve_proto_channel_type(cls, channel_type: ChannelType) -> Any:
         """Map SDK ChannelType to CES protobuf ChannelProfile.ChannelType.
@@ -70,7 +72,12 @@ class Deployments(Apps):
         protobuf enum fall back to ``API`` until the GAPIC enum adds them.
         """
         proto_enum = types.common.ChannelProfile.ChannelType
-        return getattr(proto_enum, channel_type.value, proto_enum.API)
+        try:
+            return getattr(proto_enum, channel_type.value)
+        except AttributeError:
+            if channel_type.value in cls._API_FALLBACK_CHANNEL_TYPES:
+                return proto_enum.API
+            raise
 
     def __init__(
         self,
