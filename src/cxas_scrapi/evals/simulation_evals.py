@@ -592,11 +592,18 @@ def _scenario_locale(session_parameters: Mapping[str, Any] | None) -> str:
     return "en-US"
 
 
+def _is_event_step(step: Any) -> bool:
+    utterance = (
+        step.get("static_utterance") if isinstance(step, Mapping) else None
+    )
+    return isinstance(utterance, str) and utterance.strip().startswith("event:")
+
+
 def expected_caller_turns(tc: Mapping[str, Any]) -> int:
     """Returns the number of expected caller turns/steps in a scenario."""
     steps = tc.get("steps") or []
     if isinstance(steps, list) and steps:
-        return len(steps)
+        return sum(1 for step in steps if not _is_event_step(step))
     turns = tc.get("turns") or tc.get("conversation_Turns") or []
     if isinstance(turns, list) and turns:
         return len(turns)

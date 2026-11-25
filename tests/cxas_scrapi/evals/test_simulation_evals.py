@@ -3644,6 +3644,57 @@ def test_inconclusive_reason_detects_zero_caller_turns_and_retries() -> None:
     )
 
 
+def test_event_only_scenario_is_not_inconclusive() -> None:
+    from cxas_scrapi.evals.simulation_evals import (  # noqa: PLC0415
+        actual_caller_turns,
+        expected_caller_turns,
+    )
+
+    tc = {
+        "name": "event_case",
+        "steps": [{"static_utterance": "event: order"}],
+    }
+    assert expected_caller_turns(tc) == 0
+    mixed = {
+        "steps": [
+            {"static_utterance": "  event: order  "},
+            {"goal": "Ask about order"},
+        ]
+    }
+    assert expected_caller_turns(mixed) == 1
+
+    row = {
+        "name": "event_case",
+        "run": 1,
+        "passed": True,
+        "expectations": "1/1",
+        "transcript": "User: event: order\nAgent: Thanks for calling.",
+    }
+    assert actual_caller_turns(row) == 0
+    assert (
+        SimulationEvals._inconclusive_reason(
+            row=row,
+            declared_by_name={"event_case": 1},
+            expected_turns_by_name={"event_case": expected_caller_turns(tc)},
+        )
+        is None
+    )
+
+    evals = _naturalness_evals(expectations_only=True)
+    with patch.object(
+        evals, "_aggregate_simulation_results", return_value=[dict(row)]
+    ) as mock_agg:
+        results = evals.run_simulations(
+            test_cases=[tc],
+            runs=1,
+            parallel=1,
+            infra_retries=1,
+            retry_cooldown=0,
+        )
+    assert mock_agg.call_count == 1
+    assert results[0]["passed"] is True
+
+
 def test_simulation_evals_requires_local_execution_tool_expectations() -> None:
     req, reason = SimulationEvals.requires_local_execution(
         {
