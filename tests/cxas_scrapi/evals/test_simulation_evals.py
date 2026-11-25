@@ -970,6 +970,65 @@ def test_llm_user_get_active_step_index() -> None:
     assert conv._get_active_step_index() is None
 
 
+def test_llm_user_opening_event_step_replaces_initial_utterance() -> None:
+    mock_genai_client = MagicMock()
+    test_case = {
+        "steps": [
+            {
+                "static_utterance": "event: order",
+                "inject_variables": {"var1": "val1"},
+            },
+            {"goal": "ask_hours", "static_utterance": "What are the hours?"},
+        ],
+        "session_parameters": {"user_id": "123"},
+    }
+    conv = LLMUserConversation(mock_genai_client, "model", test_case)
+
+    utterance, variables = conv.next_user_utterance()
+    assert utterance == "event: order"
+    assert variables == {"user_id": "123", "var1": "val1"}
+    assert conv.steps_progress[0].status == StepStatus.COMPLETED
+
+    utterance, _ = conv.next_user_utterance("Agent greeting")
+    assert utterance == "What are the hours?"
+    mock_genai_client.generate.assert_not_called()
+
+
+def test_llm_user_opening_event_step_strips_whitespace() -> None:
+    test_case = {
+        "steps": [{"static_utterance": "  event: order  "}],
+        "session_parameters": {"user_id": "123"},
+    }
+    conv = LLMUserConversation(MagicMock(), "model", test_case)
+
+    utterance, variables = conv.next_user_utterance()
+    assert utterance == "event: order"
+    assert variables == {"user_id": "123"}
+    assert conv.steps_progress[0].status == StepStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    "first_step",
+    [
+        {"goal": "greet", "static_utterance": "Hello"},
+        {"goal": "Ask about an order."},
+    ],
+    ids=["static speech", "llm goal"],
+)
+def test_llm_user_speech_first_step_still_gets_initial_utterance(
+    first_step: dict[str, typing.Any],
+) -> None:
+    test_case = {
+        "steps": [first_step],
+        "session_parameters": {"user_id": "123"},
+    }
+    conv = LLMUserConversation(MagicMock(), "model", test_case)
+
+    utterance, variables = conv.next_user_utterance()
+    assert utterance == "event: welcome"
+    assert variables == {"user_id": "123"}
+
+
 def test_llm_user_next_user_utterance_static_utterance_bypass() -> None:
     mock_genai_client = MagicMock()
     test_case = {
