@@ -27,10 +27,16 @@ import warnings
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (
+    CONFIG_EXTENSIONS,
     LintContext,
     LintResult,
     Rule,
     Severity,
+    _find_dir_config,
+    _iter_subdirs,
+    _load_config_dict,
+    extract_resource_ref_candidates,
+    rel_to_project,
     rule,
 )
 
@@ -393,6 +399,62 @@ def _py_file_references_tools(
     return bool(candidate_names & referenced)
 
 
+def _load_tool_config_any(
+    file_path: Path,
+) -> tuple[dict | None, Path | None, Path | None]:
+    """Load tool JSON/YAML config and return ``(cfg, cfg_path, app_root)``."""
+    if file_path.suffix.lower() in CONFIG_EXTENSIONS:
+        tool_dir = file_path.parent
+        return _load_config_dict(file_path), file_path, tool_dir.parent.parent
+
+    tool_dir = file_path.parent.parent
+    app_root = tool_dir.parent.parent
+    for ext in CONFIG_EXTENSIONS:
+        candidate = tool_dir / f"{tool_dir.name}{ext}"
+        if candidate.is_file() and not candidate.is_symlink():
+            return _load_config_dict(candidate), candidate, app_root
+    return None, tool_dir / f"{tool_dir.name}.json", app_root
+
+
+def _agent_tool_refs(cfg: dict) -> set[str]:
+    """Extract raw and short-ID tool reference names from an agent config."""
+    raw_tools = cfg.get("tools")
+    if not isinstance(raw_tools, list):
+        return set()
+    refs: set[str] = set()
+    for entry in raw_tools:
+        if isinstance(entry, str) and entry.strip():
+            refs.update(extract_resource_ref_candidates(entry, "tools"))
+    return refs
+
+
+def _guardrail_invokes_tool(gr_data: dict, candidate_names: set[str]) -> bool:
+    """Return True if a guardrail ``action.toolCall`` references a tool."""
+    action = gr_data.get("action")
+    if not isinstance(action, dict):
+        return False
+    tool_call = action.get("toolCall") or action.get("tool_call")
+    if not isinstance(tool_call, dict):
+        return False
+    tool_ref = str(tool_call.get("tool") or "").strip()
+    if not tool_ref:
+        return False
+    short_ref = tool_ref.rsplit("/", 1)[-1]
+    return tool_ref in candidate_names or short_ref in candidate_names
+
+
+def _any_py_in_dirs_references_tools(
+    scan_dirs: list[Path], candidate_names: set[str]
+) -> bool:
+    """Return True if any non-symlink .py under ``scan_dirs`` calls a tool."""
+    return any(
+        not py_path.is_symlink()
+        and _py_file_references_tools(py_path, candidate_names)
+        for scan_dir in scan_dirs
+        for py_path in scan_dir.rglob("*.py")
+    )
+
+
 def _is_tool_referenced_in_code_or_guardrails(
     app_root: Path,
     candidate_names: set[str],
@@ -400,40 +462,49 @@ def _is_tool_referenced_in_code_or_guardrails(
 ) -> bool:
     """Return True if candidate tool is referenced in code or guardrails."""
     agents_dir = app_root / "agents"
-    if agents_dir.exists():
-        for py_path in agents_dir.rglob("*.py"):
-            if _py_file_references_tools(py_path, candidate_names):
-                return True
+    if (
+        agents_dir.is_dir()
+        and not agents_dir.is_symlink()
+        and _any_py_in_dirs_references_tools([agents_dir], candidate_names)
+    ):
+        return True
 
-    tools_dir = app_root / "tools"
-    if tools_dir.exists():
-        for py_path in tools_dir.rglob("*.py"):
-            if own_tool_dir in py_path.parents:
-                continue
-            if _py_file_references_tools(py_path, candidate_names):
-                return True
+    other_tool_dirs = [
+        d for d in _iter_subdirs(app_root / "tools") if d != own_tool_dir
+    ]
+    if _any_py_in_dirs_references_tools(other_tool_dirs, candidate_names):
+        return True
 
     guardrails_dir = app_root / "guardrails"
-    if guardrails_dir.exists():
-        for gr_json in guardrails_dir.rglob("*.json"):
-            try:
-                gr_data = json.loads(
-                    gr_json.read_text(encoding="utf-8", errors="replace")
-                )
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(gr_data, dict):
-                continue
-            action = gr_data.get("action")
-            if not isinstance(action, dict):
-                continue
-            tool_call = action.get("toolCall") or action.get("tool_call")
-            if isinstance(tool_call, dict):
-                tool_ref = str(tool_call.get("tool") or "")
-                short_ref = tool_ref.rsplit("/", 1)[-1]
-                if tool_ref in candidate_names or short_ref in candidate_names:
-                    return True
+    if guardrails_dir.is_dir() and not guardrails_dir.is_symlink():
+        gr_files = [
+            p
+            for ext in CONFIG_EXTENSIONS
+            for p in sorted(guardrails_dir.rglob(f"*{ext}"))
+        ]
+        if any(
+            (gr_data := _load_config_dict(gr_path)) is not None
+            and _guardrail_invokes_tool(gr_data, candidate_names)
+            for gr_path in gr_files
+        ):
+            return True
 
+    return False
+
+
+def _is_tool_attached_to_any_agent(
+    agents_dir: Path, candidate_names: set[str]
+) -> bool:
+    """Return True if any agent JSON/YAML config lists a candidate tool."""
+    for agent_dir in _iter_subdirs(agents_dir):
+        agent_cfg_path = _find_dir_config(agent_dir)
+        if agent_cfg_path is None:
+            continue
+        agent_cfg = _load_config_dict(agent_cfg_path)
+        if agent_cfg is not None and (
+            candidate_names & _agent_tool_refs(agent_cfg)
+        ):
+            return True
     return False
 
 
@@ -447,59 +518,54 @@ class ToolDisplayNameUnreferenced(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        tool_config, json_path = _load_tool_config(file_path)
-        if not tool_config or json_path is None:
+        tool_config, cfg_path, app_root = _load_tool_config_any(file_path)
+        if not tool_config or cfg_path is None or app_root is None:
             return []
 
-        display_name = tool_config.get("displayName", "")
-        if not display_name:
+        raw_display = tool_config.get("displayName") or tool_config.get(
+            "display_name"
+        )
+        if not isinstance(raw_display, str) or not raw_display.strip():
             return []
+        display_name = raw_display.strip()
 
-        # tools/<name>/python_function/python_code.py → 4 levels to app root
-        if file_path.suffix == ".json":
-            app_root = file_path.parent.parent.parent
-        else:
-            app_root = file_path.parent.parent.parent.parent
         agents_dir = app_root / "agents"
         if not agents_dir.exists():
             return []
 
-        candidate_names = {display_name, json_path.parent.name}
-        referenced = any(
-            bool(
-                candidate_names
-                & set(json.loads(agent_json.read_text()).get("tools", []))
-            )
-            for agent_dir in agents_dir.iterdir()
-            if agent_dir.is_dir()
-            for agent_json in [agent_dir / f"{agent_dir.name}.json"]
-            if agent_json.exists()
-        )
-        if not referenced:
-            referenced = _is_tool_referenced_in_code_or_guardrails(
-                app_root, candidate_names, json_path.parent
-            )
+        candidate_names: set[str] = {display_name, cfg_path.parent.name}
+        raw_name = tool_config.get("name")
+        if isinstance(raw_name, str) and raw_name.strip():
+            clean_name = raw_name.strip()
+            candidate_names.add(clean_name)
+            candidate_names.add(clean_name.rsplit("/", 1)[-1])
 
-        if not referenced:
-            rel = str(json_path.relative_to(context.project_root))
-            return [
-                self.make_result(
-                    file=rel,
-                    message=(
-                        f"Tool displayName"
-                        f" '{display_name}' not"
-                        " found in any agent's"
-                        " tools array"
-                    ),
-                    fix=(
-                        "Add this tool to the"
-                        " relevant agent's JSON"
-                        " config, or remove the"
-                        " tool if unused"
-                    ),
-                )
-            ]
-        return []
+        if _is_tool_attached_to_any_agent(agents_dir, candidate_names):
+            return []
+
+        if _is_tool_referenced_in_code_or_guardrails(
+            app_root, candidate_names, cfg_path.parent
+        ):
+            return []
+
+        rel = rel_to_project(cfg_path, context)
+        return [
+            self.make_result(
+                file=rel,
+                message=(
+                    f"Tool displayName"
+                    f" '{display_name}' not"
+                    " found in any agent's"
+                    " tools array"
+                ),
+                fix=(
+                    "Add this tool to the"
+                    " relevant agent's"
+                    " config, or remove the"
+                    " tool if unused"
+                ),
+            )
+        ]
 
 
 @rule("tools")

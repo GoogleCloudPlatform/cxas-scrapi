@@ -40,6 +40,7 @@ import yaml
 
 from cxas_scrapi.utils.lint_rules.callbacks import _resolve_cb_type
 from cxas_scrapi.utils.linter import (
+    APP_CONFIG_NAMES,
     LintContext,
     LintResult,
     Rule,
@@ -1053,7 +1054,7 @@ class AsyncToolMissingInactivityTimeout(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         data = _load_structured(file_path, content)
         if data is None:
@@ -1129,7 +1130,7 @@ class VariableCountLimit(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         data = _load_structured(file_path, content)
         if data is None:
@@ -1172,7 +1173,7 @@ class LlmPolicyGuardrailLimit(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         data = _load_structured(file_path, content)
         if data is None:

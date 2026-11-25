@@ -344,6 +344,280 @@ class LintContext:
         return self.model
 
 
+# ── Shared Config Loading & Agent Ref Resolution ────────────────────────
+
+CONFIG_EXTENSIONS: tuple[str, ...] = (".json", ".yaml", ".yml")
+APP_CONFIG_NAMES: tuple[str, ...] = ("app.json", "app.yaml", "app.yml")
+_CES_AGENT_REF_RE = re.compile(
+    r"^(?:projects/[^/]+/locations/[^/]+/apps/[^/]+/)?agents/([^/]+)$"
+)
+
+
+def parse_config_content(
+    file_path: Path, content: str
+) -> dict[str, typing.Any] | None:
+    """Parse JSON or YAML config content into a dict, or None on error."""
+    suffix = file_path.suffix.lower()
+    try:
+        data = (
+            yaml.safe_load(content)
+            if suffix in (".yaml", ".yml")
+            else json.loads(content)
+        )
+    except (ValueError, yaml.YAMLError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _load_config_dict(path: Path) -> dict[str, typing.Any] | None:
+    """Load a JSON or YAML mapping from ``path``, returning None on error."""
+    if path.is_symlink() or not path.is_file():
+        return None
+    if path.suffix.lower() not in CONFIG_EXTENSIONS:
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return parse_config_content(path, raw)
+
+
+def _find_dir_config(
+    resource_dir: Path, stem: str | None = None
+) -> Path | None:
+    """Return ``<stem>.json``, ``<stem>.yaml``, or ``<stem>.yml`` if present."""
+    name = stem if stem is not None else resource_dir.name
+    for ext in CONFIG_EXTENSIONS:
+        candidate = resource_dir / f"{name}{ext}"
+        if candidate.is_file() and not candidate.is_symlink():
+            return candidate
+    return None
+
+
+def _load_app_config(
+    app_root: Path,
+) -> tuple[Path | None, dict[str, typing.Any] | None]:
+    """Return ``(path, data)`` for the first non-symlink app config file."""
+    for name in APP_CONFIG_NAMES:
+        candidate = app_root / name
+        if candidate.is_file() and not candidate.is_symlink():
+            return candidate, _load_config_dict(candidate)
+    return None, None
+
+
+def resolve_app_root(file_path: Path, context: LintContext) -> Path:
+    """Resolve the app root directory from ``file_path`` or ``context``."""
+    if file_path.name in APP_CONFIG_NAMES:
+        return file_path.parent
+    if context.app_root and context.app_root.exists():
+        return context.app_root
+    if any((context.app_dir / name).exists() for name in APP_CONFIG_NAMES):
+        return context.app_dir
+    resource_dirs = ("agents", "tools", "toolsets", "guardrails")
+    if file_path.parent.parent.name in resource_dirs:
+        return file_path.parent.parent.parent
+    if file_path.parent.name in resource_dirs:
+        return file_path.parent.parent
+    return context.app_dir
+
+
+def rel_to_project(path: Path, context: LintContext) -> str:
+    """Format ``path`` relative to ``context.project_root`` when possible."""
+    try:
+        return str(path.relative_to(context.project_root))
+    except ValueError:
+        try:
+            return str(
+                path.resolve().relative_to(context.project_root.resolve())
+            )
+        except (OSError, ValueError):
+            return str(path)
+
+
+def _iter_subdirs(parent: Path) -> list[Path]:
+    """Return sorted non-hidden, non-symlink subdirectories under ``parent``."""
+    if parent.is_symlink() or not parent.is_dir():
+        return []
+    return [
+        entry
+        for entry in sorted(parent.iterdir())
+        if not entry.is_symlink()
+        and entry.is_dir()
+        and not entry.name.startswith(".")
+        and entry.name != "__pycache__"
+    ]
+
+
+def extract_resource_ref_candidates(ref: str, subdir: str) -> set[str]:
+    """Return raw and short-ID lookup candidates for a CES resource ref."""
+    raw = ref.strip()
+    if not raw:
+        return set()
+    cands = {raw}
+    m = re.match(
+        rf"^(?:projects/[^/]+/locations/[^/]+/apps/[^/]+/)?{re.escape(subdir)}/([^/]+)$",
+        raw,
+    )
+    if m:
+        cands.add(m.group(1))
+    return cands
+
+
+@dataclass
+class _AgentRefIndex:
+    """Deterministic lookup maps from agent ref variants to directory names."""
+
+    name_set: set[str]
+    exact_name_map: dict[str, str] = field(default_factory=dict)
+    short_name_map: dict[str, str] = field(default_factory=dict)
+    exact_display_map: dict[str, str] = field(default_factory=dict)
+    norm_dir_map: dict[str, str] = field(default_factory=dict)
+    norm_name_map: dict[str, str] = field(default_factory=dict)
+    norm_display_map: dict[str, str] = field(default_factory=dict)
+
+
+def _register_agent_config_refs(
+    dir_name: str, cfg: dict[str, typing.Any], index: _AgentRefIndex
+) -> None:
+    """Populate exact and normalized name/displayName entries for one agent."""
+    cfg_name = cfg.get("name")
+    if isinstance(cfg_name, str) and cfg_name.strip():
+        clean_name = cfg_name.strip()
+        short_id = clean_name.rsplit("/", 1)[-1]
+        index.exact_name_map.setdefault(clean_name, dir_name)
+        index.short_name_map.setdefault(short_id, dir_name)
+        index.norm_name_map.setdefault(
+            clean_name.replace(" ", "_").lower(), dir_name
+        )
+        index.norm_name_map.setdefault(
+            short_id.replace(" ", "_").lower(), dir_name
+        )
+    disp = cfg.get("displayName") or cfg.get("display_name")
+    if isinstance(disp, str) and disp.strip():
+        clean_disp = disp.strip()
+        index.exact_display_map.setdefault(clean_disp, dir_name)
+        index.norm_display_map.setdefault(
+            clean_disp.replace(" ", "_").lower(), dir_name
+        )
+
+
+def _match_exact_agent_ref(
+    raw: str, index: _AgentRefIndex, *, use_short_map: bool = False
+) -> str | None:
+    """Match an agent ref against exact directory, name, and display maps."""
+    if raw in index.name_set:
+        return raw
+    underscored = raw.replace(" ", "_")
+    if underscored in index.name_set:
+        return underscored
+    name_map = index.short_name_map if use_short_map else index.exact_name_map
+    return name_map.get(raw) or index.exact_display_map.get(raw)
+
+
+def _match_normalized_agent_ref(
+    candidates: list[str], index: _AgentRefIndex
+) -> str | None:
+    """Fallback case/space-insensitive match across normalized maps."""
+    lookups = (index.norm_dir_map, index.norm_name_map, index.norm_display_map)
+    for cand in candidates:
+        norm = cand.replace(" ", "_").lower()
+        for lookup in lookups:
+            if norm in lookup:
+                return lookup[norm]
+    return None
+
+
+def _extract_dict_agent_refs(ref: dict[str, typing.Any]) -> list[str]:
+    """Extract candidate string references from a dict childAgents entry."""
+    return [
+        val.strip()
+        for key in ("name", "displayName", "display_name")
+        if isinstance((val := ref.get(key)), str) and val.strip()
+    ]
+
+
+def _resolve_agent_ref_str(raw: str, index: _AgentRefIndex) -> str | None:
+    """Resolve a stripped non-empty agent reference string to a dir name."""
+    direct = _match_exact_agent_ref(raw, index)
+    if direct is not None:
+        return direct
+
+    candidates = [raw]
+    m = _CES_AGENT_REF_RE.match(raw)
+    if m:
+        short_ref = m.group(1)
+        short_match = _match_exact_agent_ref(
+            short_ref, index, use_short_map=True
+        )
+        if short_match is not None:
+            return short_match
+        candidates.append(short_ref)
+
+    if raw in index.short_name_map:
+        return index.short_name_map[raw]
+    return _match_normalized_agent_ref(candidates, index)
+
+
+def _build_agent_ref_resolver(
+    agent_names: set[str],
+    agent_configs: dict[str, dict[str, typing.Any]],
+) -> typing.Callable[[typing.Any], str | None]:
+    """Build a deterministic resolver from agent refs to directory names."""
+    sorted_names = sorted(agent_names)
+    index = _AgentRefIndex(name_set=set(sorted_names))
+    for dir_name in sorted_names:
+        index.norm_dir_map.setdefault(
+            dir_name.replace(" ", "_").lower(), dir_name
+        )
+        cfg = agent_configs.get(dir_name)
+        if isinstance(cfg, dict):
+            _register_agent_config_refs(dir_name, cfg, index)
+
+    def _resolve(ref: typing.Any) -> str | None:
+        if isinstance(ref, dict):
+            for cand in _extract_dict_agent_refs(ref):
+                resolved = _resolve_agent_ref_str(cand, index)
+                if resolved is not None:
+                    return resolved
+            return None
+        if not isinstance(ref, str) or not ref.strip():
+            return None
+        return _resolve_agent_ref_str(ref.strip(), index)
+
+    return _resolve
+
+
+def resolve_safe_app_file(app_root: Path, rel_path: str) -> Path | None:
+    """Resolve an app-relative file path strictly within ``app_root``.
+
+    Returns ``None`` if ``rel_path`` is absolute, traverses ``..``, traverses
+    any symlink inside ``app_root``, escapes ``app_root``, or is not a file.
+    """
+    if not isinstance(rel_path, str):
+        return None
+    stripped = rel_path.strip()
+    if not stripped or "://" in stripped or "\n" in stripped:
+        return None
+    p = Path(stripped)
+    if p.is_absolute() or ".." in p.parts:
+        return None
+
+    cur = app_root
+    for part in p.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return None
+
+    if not cur.is_file():
+        return None
+
+    try:
+        cur.resolve().relative_to(app_root.resolve())
+    except (OSError, ValueError):
+        return None
+    return cur
+
+
 # ── Rule Registry ────────────────────────────────────────────────────────
 
 
@@ -464,11 +738,10 @@ class LintConfig:
 
         return config
 
-    def get_severity(self, rule_obj: Rule, file_path: str = "") -> Severity:
-        """Get the effective severity for a rule.
-
-        Considers per-file overrides.
-        """
+    def get_severity_override(
+        self, rule_obj: Rule, file_path: str = ""
+    ) -> Severity | None:
+        """Return an explicit configured severity override, or None."""
         for pattern, overrides in self.per_file.items():
             if fnmatch.fnmatch(file_path, pattern):  # noqa: SIM102
                 if rule_obj.id in overrides:
@@ -476,6 +749,17 @@ class LintConfig:
 
         if rule_obj.id in self.rules:
             return self.rules[rule_obj.id]
+
+        return None
+
+    def get_severity(self, rule_obj: Rule, file_path: str = "") -> Severity:
+        """Get the effective severity for a rule.
+
+        Considers per-file overrides.
+        """
+        override = self.get_severity_override(rule_obj, file_path)
+        if override is not None:
+            return override
 
         return rule_obj.default_severity
 
@@ -514,19 +798,21 @@ class Discovery:
         """Find the actual app root directory.
 
         Handles two layouts:
-        - Direct: ``app_dir`` itself contains ``app.json``/``app.yaml``
+        - Direct: ``app_dir`` itself contains ``app.{json,yaml,yml}``
         - Nested: ``app_dir/<name>/`` contains the app (gecx-skills convention)
         """
         if not self.app_dir.exists():
             return None
-        if (self.app_dir / "app.json").exists() or (
-            self.app_dir / "app.yaml"
-        ).exists():
+        if any((self.app_dir / name).exists() for name in APP_CONFIG_NAMES):
             return self.app_dir
-        for d in self.app_dir.iterdir():
-            if d.is_dir() and not d.name.startswith("."):  # noqa: SIM102
-                if (d / "app.json").exists() or (d / "app.yaml").exists():
-                    return d
+        for d in sorted(self.app_dir.iterdir()):
+            if (
+                not d.is_symlink()
+                and d.is_dir()
+                and not d.name.startswith(".")
+                and any((d / name).exists() for name in APP_CONFIG_NAMES)
+            ):
+                return d
         return None
 
     def discover_global_instruction(self) -> Path | None:
@@ -536,99 +822,88 @@ class Discovery:
         p = self.app_root / "global_instruction.txt"
         return p if p.exists() else None
 
+    def _iter_agent_dirs(self) -> list[Path]:
+        if not self.app_root:
+            return []
+        return [
+            d
+            for d in _iter_subdirs(self.app_root / "agents")
+            if self.limit_agents is None or d.name in self.limit_agents
+        ]
+
     def discover_agents(self) -> dict[str, Path]:
         """Return ``{dir_name: instruction_or_config_path}`` for all agents."""
-        if not self.app_root:
-            return {}
-        agents_dir = self.app_root / "agents"
-        if not agents_dir.exists():
-            return {}
         result = {}
-        for d in sorted(agents_dir.iterdir()):
-            if d.is_dir():
-                if (
-                    self.limit_agents is not None
-                    and d.name not in self.limit_agents
-                ):
-                    continue
-                inst = d / "instruction.txt"
-                if inst.exists():
-                    result[d.name] = inst
-                else:
-                    json_file = d / f"{d.name}.json"
-                    if json_file.exists():
-                        result[d.name] = json_file
+        for d in self._iter_agent_dirs():
+            inst = d / "instruction.txt"
+            target = inst if inst.exists() else _find_dir_config(d)
+            if target is not None:
+                result[d.name] = target
         return result
 
     def discover_tools(self) -> dict[str, Path]:
         """Return ``{tool_name: code_path}`` for all tools."""
         if not self.app_root:
             return {}
-        tools_dir = self.app_root / "tools"
-        if not tools_dir.exists():
-            return {}
         result = {}
-        for d in sorted(tools_dir.iterdir()):
-            if d.is_dir():
-                if (
-                    self.limit_tools is not None
-                    and d.name not in self.limit_tools
-                ):
-                    continue
-                code = d / "python_function" / "python_code.py"
-                if code.exists():
-                    result[d.name] = code
-                else:
-                    json_files = list(d.glob("*.json"))
-                    if json_files:
-                        result[d.name] = json_files[0]
+        for d in _iter_subdirs(self.app_root / "tools"):
+            if self.limit_tools is not None and d.name not in self.limit_tools:
+                continue
+            py_fn_dir = d / "python_function"
+            code = py_fn_dir / "python_code.py"
+            if (
+                not py_fn_dir.is_symlink()
+                and code.is_file()
+                and not code.is_symlink()
+            ):
+                result[d.name] = code
+                continue
+            dir_cfg = _find_dir_config(d)
+            if dir_cfg is not None:
+                result[d.name] = dir_cfg
+                continue
+            for ext in CONFIG_EXTENSIONS:
+                cfg_files = [
+                    p
+                    for p in sorted(d.glob(f"*{ext}"))
+                    if p.is_file() and not p.is_symlink()
+                ]
+                if cfg_files:
+                    result[d.name] = cfg_files[0]
+                    break
         return result
 
     def discover_callbacks(self) -> list[tuple[str, str, str, Path]]:
         """Return ``[(agent_name, cb_type, cb_name, code_path), ...]``."""
-        if not self.app_root:
-            return []
-        agents_dir = self.app_root / "agents"
-        if not agents_dir.exists():
-            return []
-        result = []
+        result: list[tuple[str, str, str, Path]] = []
         seen_paths: set[Path] = set()
-        cb_types = [
+        cb_types = (
             "before_model_callbacks",
             "after_model_callbacks",
             "before_agent_callbacks",
             "after_agent_callbacks",
             "before_tool_callbacks",
             "after_tool_callbacks",
-        ]
-        for agent_dir in sorted(agents_dir.iterdir()):
-            if not agent_dir.is_dir():
-                continue
+        )
+
+        def _add_cb(agent_name: str, cb_type: str, cb_dir: Path) -> None:
+            code = cb_dir / "python_code.py"
             if (
-                self.limit_agents is not None
-                and agent_dir.name not in self.limit_agents
+                code.is_file()
+                and not code.is_symlink()
+                and code not in seen_paths
             ):
-                continue
+                seen_paths.add(code)
+                result.append((agent_name, cb_type, cb_dir.name, code))
+
+        for agent_dir in self._iter_agent_dirs():
             for cb_type in cb_types:
-                cb_dir = agent_dir / cb_type
-                if not cb_dir.exists():
-                    continue
-                for cb in sorted(cb_dir.iterdir()):
-                    code = cb / "python_code.py"
-                    if code.exists() and code not in seen_paths:
-                        seen_paths.add(code)
-                        result.append((agent_dir.name, cb_type, cb.name, code))
-            for d in sorted(agent_dir.iterdir()):
-                if not d.is_dir():
-                    continue
+                for cb in _iter_subdirs(agent_dir / cb_type):
+                    _add_cb(agent_dir.name, cb_type, cb)
+            for d in _iter_subdirs(agent_dir):
                 for cb_type in cb_types:
                     if d.name.startswith(f"{cb_type}_"):
-                        code = d / "python_code.py"
-                        if code.exists() and code not in seen_paths:
-                            seen_paths.add(code)
-                            result.append(
-                                (agent_dir.name, cb_type, d.name, code)
-                            )
+                        _add_cb(agent_dir.name, cb_type, d)
                         break
         return result
 
@@ -643,53 +918,37 @@ class Discovery:
         return result
 
     def discover_app_config(self) -> Path | None:
-        """Return path to ``app.json`` or ``app.yaml``."""
+        """Return path to ``app.json``, ``app.yaml``, or ``app.yml``."""
         if not self.app_root:
             return None
-        for name in ("app.json", "app.yaml"):
+        for name in APP_CONFIG_NAMES:
             p = self.app_root / name
-            if p.exists():
+            if p.is_file() and not p.is_symlink():
                 return p
         return None
 
     def discover_app_model(self) -> str | None:
         """Return model specified in app config under ``modelSettings``."""
         app_cfg = self.discover_app_config()
-        if not app_cfg or not app_cfg.exists():
+        if not app_cfg:
             return None
-        try:
-            content = app_cfg.read_text()
-            if app_cfg.suffix == ".json":
-                data = json.loads(content)
-            else:
-                data = yaml.safe_load(content) or {}
-            model_settings = (
-                data.get("modelSettings") or data.get("model_settings") or {}
-            )
-            if isinstance(model_settings, dict):
-                return model_settings.get("model")
-        except Exception:
-            pass
+        data = _load_config_dict(app_cfg)
+        if not data:
+            return None
+        model_settings = (
+            data.get("modelSettings") or data.get("model_settings") or {}
+        )
+        if isinstance(model_settings, dict):
+            return model_settings.get("model")
         return None
 
     def discover_agent_configs(self) -> dict[str, Path]:
-        """Return ``{agent_name: json_path}`` for all agent configs."""
-        if not self.app_root:
-            return {}
-        agents_dir = self.app_root / "agents"
-        if not agents_dir.exists():
-            return {}
+        """Return ``{agent_name: config_path}`` for all agent configs."""
         result = {}
-        for d in sorted(agents_dir.iterdir()):
-            if d.is_dir():
-                if (
-                    self.limit_agents is not None
-                    and d.name not in self.limit_agents
-                ):
-                    continue
-                json_file = d / f"{d.name}.json"
-                if json_file.exists():
-                    result[d.name] = json_file
+        for d in self._iter_agent_dirs():
+            cfg_file = _find_dir_config(d)
+            if cfg_file is not None:
+                result[d.name] = cfg_file
         return result
 
     def discover_agent_models(self) -> dict[str, str]:
@@ -697,19 +956,14 @@ class Discovery:
         configs = self.discover_agent_configs()
         result = {}
         for name, path in configs.items():
-            try:
-                data = json.loads(path.read_text())
-                model_settings = (
-                    data.get("modelSettings")
-                    or data.get("model_settings")
-                    or {}
-                )
-                if isinstance(model_settings, dict) and model_settings.get(
-                    "model"
-                ):
-                    result[name] = model_settings["model"]
-            except Exception:
-                pass
+            data = _load_config_dict(path)
+            if not data:
+                continue
+            model_settings = (
+                data.get("modelSettings") or data.get("model_settings") or {}
+            )
+            if isinstance(model_settings, dict) and model_settings.get("model"):
+                result[name] = model_settings["model"]
         return result
 
     def _discover_resource_dirs(self, subdir: str) -> dict[str, Path]:
@@ -844,6 +1098,48 @@ def get_toolset_tools(
     return ToolsetResolution(behavior=ToolsetValidationBehavior.BYPASS)
 
 
+def _build_agent_parent_and_display_maps(
+    known_agent_names: set[str],
+    agent_configs: dict[str, Path],
+    discovery: Discovery,
+) -> tuple[dict[str, set[str]], set[str]]:
+    """Load agent configs and return ``(agent_to_parents, display_names)``."""
+    loaded_configs: dict[str, dict[str, typing.Any]] = {}
+    for agent_name, config_path in agent_configs.items():
+        loaded = _load_config_dict(config_path)
+        if loaded is not None:
+            loaded_configs[agent_name] = loaded
+
+    resolve_agent_ref = _build_agent_ref_resolver(
+        known_agent_names, loaded_configs
+    )
+    agent_to_parents: dict[str, set[str]] = defaultdict(set)
+    for parent_name, agent_config in loaded_configs.items():
+        child_agents = (
+            agent_config.get("childAgents")
+            if "childAgents" in agent_config
+            else agent_config.get("child_agents")
+        )
+        if not isinstance(child_agents, list):
+            continue
+        for child_ref in child_agents:
+            child_name = resolve_agent_ref(child_ref)
+            if child_name:
+                agent_to_parents[child_name].add(parent_name)
+
+    display_names = {
+        discovery.dir_name_to_display(name) for name in known_agent_names
+    }
+    for agent_config in loaded_configs.values():
+        disp = agent_config.get("displayName") or agent_config.get(
+            "display_name"
+        )
+        if isinstance(disp, str) and disp.strip():
+            display_names.add(disp.strip())
+
+    return agent_to_parents, display_names
+
+
 def build_context(
     project_root: Path,
     config: LintConfig,
@@ -864,35 +1160,17 @@ def build_context(
         for ts_name in toolsets:
             res = get_toolset_tools(app_root, ts_name)
             if res.behavior == ToolsetValidationBehavior.BYPASS:
-                # MCP/Connector toolset -> bypass validation of operation suffix
                 bypass_tool_prefixes.add(f"{ts_name}_")
             elif res.tools:
                 all_tool_names.update(res.tools)
 
-    # Discover agent configs to build parent-child map
     agent_configs = discovery.discover_agent_configs()
-    display_to_agent = {
-        discovery.dir_name_to_display(name): name for name in agents
-    }
-    agent_to_parents = defaultdict(set)
-
-    for parent_name, config_path in agent_configs.items():
-        try:
-            content = config_path.read_text()
-            agent_config = json.loads(content)
-            child_agents = agent_config.get("childAgents", [])
-            for child_ref in child_agents:
-                # Resolve child_ref to agent_name
-                child_name = None
-                if child_ref in agents:
-                    child_name = child_ref
-                elif child_ref in display_to_agent:
-                    child_name = display_to_agent[child_ref]
-
-                if child_name:
-                    agent_to_parents[child_name].add(parent_name)
-        except Exception:  # pylint: disable=broad-except
-            pass
+    known_agent_names = set(agents.keys()) | set(agent_configs.keys())
+    agent_to_parents, all_agent_display_names = (
+        _build_agent_parent_and_display_maps(
+            known_agent_names, agent_configs, discovery
+        )
+    )
 
     resolved_model = (
         model_override or config.model or discovery.discover_app_model()
@@ -905,10 +1183,8 @@ def build_context(
         evals_dir=project_root / config.evals_dir,
         model=resolved_model,
         agent_models=agent_models,
-        all_agent_names=set(agents.keys()),
-        all_agent_display_names={
-            discovery.dir_name_to_display(name) for name in agents
-        },
+        all_agent_names=known_agent_names,
+        all_agent_display_names=all_agent_display_names,
         all_tool_names=all_tool_names,
         all_tool_dirs={name: path.parent for name, path in tools.items()},
         options=config.options,
@@ -917,6 +1193,85 @@ def build_context(
         env_file=env_file,
         agent_to_parents=agent_to_parents,
     )
+
+
+def _resolve_emitted_result(
+    config: LintConfig,
+    rule_obj: Rule,
+    result: LintResult,
+    rel: str,
+    file_override: Severity | None,
+) -> LintResult | None:
+    """Apply ignore patterns and per-file severity overrides to a finding."""
+    effective_override = file_override
+    if result.file and result.file != rel:
+        if config.is_ignored(result.file):
+            return None
+        res_override = config.get_severity_override(rule_obj, result.file)
+        if res_override == Severity.OFF:
+            return None
+        if res_override is not None:
+            effective_override = res_override
+    if effective_override is not None:
+        result.severity = effective_override
+    return result
+
+
+def _lint_files(
+    rules: list[Rule],
+    files: dict[str, Path],
+    config: LintConfig,
+    context: LintContext,
+    report: LintReport,
+) -> None:
+    """Apply ``rules`` to a set of discovered files or directories."""
+    for _name, file_path in files.items():
+        rel = str(file_path.relative_to(context.project_root))
+        if config.is_ignored(rel):
+            continue
+        file_model = context.get_model_for_file(file_path)
+        if file_path.is_file():
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+        else:
+            content = ""
+        for rule_obj in rules:
+            if not rule_obj.is_applicable_for_model(file_model):
+                continue
+            override = config.get_severity_override(rule_obj, rel)
+            effective_sev = (
+                override if override is not None else rule_obj.default_severity
+            )
+            if effective_sev == Severity.OFF:
+                continue
+            for result in rule_obj.check(file_path, content, context):
+                resolved = _resolve_emitted_result(
+                    config, rule_obj, result, rel, override
+                )
+                if resolved is not None:
+                    report.add(resolved)
+
+
+def _build_target_files(
+    discovery: Discovery,
+    instruction_files: dict[str, Path],
+) -> dict[str, dict[str, Path]]:
+    """Collect target-keyed file maps for structure and schema rules."""
+    app_cfg = discovery.discover_app_config()
+    return {
+        "app_config": {"app": app_cfg} if app_cfg else {},
+        "instruction": instruction_files,
+        "agent_config": discovery.discover_agent_configs(),
+        "tool_config": discovery._discover_resource_dirs("tools"),
+        "toolset_config": discovery.discover_toolsets(),
+        "guardrail_config": discovery.discover_guardrails(),
+        "evaluation_config": discovery.discover_evaluations(),
+        "eval_expectation_config": (
+            discovery.discover_evaluation_expectations()
+        ),
+    }
 
 
 def run_rules(
@@ -931,40 +1286,14 @@ def run_rules(
 ) -> None:
     """Run lint rules against discovered files."""
 
-    def should_run(rule_obj: typing.Any) -> bool:
-        if specific_rules and rule_obj.id not in specific_rules:
-            return False
-        if model_only and not rule_obj.models:
-            return False
-        return not (categories and rule_obj.category not in categories)
-
-    def _get_severity(rule_obj: typing.Any, file_rel: typing.Any) -> typing.Any:
-        sev = config.get_severity(rule_obj, file_rel)
-        return sev if sev != Severity.OFF else None
-
-    def _lint_files(rules: list[Rule], files: dict[str, Path]) -> None:
-        """Apply rules to a set of discovered files or directories."""
-        for _name, file_path in files.items():
-            rel = str(file_path.relative_to(context.project_root))
-            if config.is_ignored(rel):
-                continue
-            file_model = context.get_model_for_file(file_path)
-            content = file_path.read_text() if file_path.is_file() else ""
-            for rule_obj in rules:
-                if not rule_obj.is_applicable_for_model(file_model):
-                    continue
-                sev = _get_severity(rule_obj, rel)
-                if sev is None:
-                    continue
-                for result in rule_obj.check(file_path, content, context):
-                    result.severity = sev
-                    report.add(result)
-
     def _get_rules(category: str) -> list[Rule]:
         if categories and category not in categories:
             return []
         return [
-            r for r in registry.rules_for_category(category) if should_run(r)
+            r
+            for r in registry.rules_for_category(category)
+            if (not specific_rules or r.id in specific_rules)
+            and (not model_only or bool(r.models))
         ]
 
     # Instructions — instruction.txt files + global_instruction.txt
@@ -976,51 +1305,39 @@ def run_rules(
     global_inst = discovery.discover_global_instruction()
     if global_inst:
         instruction_files["global_instruction"] = global_inst
-    _lint_files(_get_rules("instructions"), instruction_files)
+    _lint_files(
+        _get_rules("instructions"), instruction_files, config, context, report
+    )
 
     # Callbacks
     cb_files = {
         f"{agent}_{cb_type}_{cb_name}": code_path
         for agent, cb_type, cb_name, code_path in discovery.discover_callbacks()
     }
-    _lint_files(_get_rules("callbacks"), cb_files)
+    _lint_files(_get_rules("callbacks"), cb_files, config, context, report)
 
     # Tools
-    _lint_files(_get_rules("tools"), discovery.discover_tools())
+    _lint_files(
+        _get_rules("tools"), discovery.discover_tools(), config, context, report
+    )
 
     # Evals
-    _lint_files(_get_rules("evals"), discovery.discover_evals())
+    _lint_files(
+        _get_rules("evals"), discovery.discover_evals(), config, context, report
+    )
 
     # Config — app config + agent configs
     config_rules = _get_rules("config")
     if config_rules:
         app_cfg = discovery.discover_app_config()
-        config_files = {}
-        if app_cfg:
-            config_files["app"] = app_cfg
+        config_files = {"app": app_cfg} if app_cfg else {}
         config_files.update(discovery.discover_agent_configs())
-        _lint_files(config_rules, config_files)
+        _lint_files(config_rules, config_files, config, context, report)
 
     # Target-dispatched rules (structure + schema categories)
-    # Rules with a ``target`` property get matched to discovered files.
     target_dispatched = _get_rules("structure") + _get_rules("schema")
     if target_dispatched:
-        target_files = {
-            "app_config": {},
-            "instruction": instruction_files,
-            "agent_config": discovery.discover_agent_configs(),
-            "tool_config": discovery._discover_resource_dirs("tools"),
-            "toolset_config": discovery.discover_toolsets(),
-            "guardrail_config": discovery.discover_guardrails(),
-            "evaluation_config": discovery.discover_evaluations(),
-            "eval_expectation_config": (
-                discovery.discover_evaluation_expectations()
-            ),
-        }
-        app_cfg = discovery.discover_app_config()
-        if app_cfg:
-            target_files["app_config"] = {"app": app_cfg}
-
+        target_files = _build_target_files(discovery, instruction_files)
         by_target: dict[str, list[Rule]] = {}
         for r in target_dispatched:
             by_target.setdefault(r.target, []).append(r)
@@ -1028,4 +1345,4 @@ def run_rules(
         for target_name, rules in by_target.items():
             files = target_files.get(target_name, {})
             if files:
-                _lint_files(rules, files)
+                _lint_files(rules, files, config, context, report)
