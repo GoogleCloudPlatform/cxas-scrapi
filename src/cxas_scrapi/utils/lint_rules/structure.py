@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Structure validation rules (S001-S012).
+"""Structure validation rules (S002-S017, G001-G002).
 
 Validates app structure and cross-references using the existing
 ``cxas_scrapi.utils.validator.Validator`` for structural checks, plus
 custom rules for cross-referencing (e.g., instruction references a tool
-not in the agent's tool list, or configs reference missing guardrails,
-toolsets, or code/schema files).
+not in the agent's tool list, agent hierarchy cycles and orphans, or
+configs reference missing/unused guardrails, toolsets, or code/schema
+files).
 """
 
 import json
 import re
+from collections import defaultdict
 from pathlib import Path
 
 import yaml
@@ -30,10 +32,15 @@ import yaml
 from cxas_scrapi.utils.linter import (
     LintContext,
     LintResult,
+    LocalResource,
     Rule,
     Severity,
     ToolsetValidationBehavior,
+    collect_attached_guardrails,
+    discover_local_resources,
     get_toolset_tools,
+    match_local_resources,
+    resolve_agent_graph,
     rule,
 )
 
@@ -520,11 +527,12 @@ def _find_app_root_for_path(file_path: Path, context: LintContext) -> Path:
     """Resolve the app root directory from context or file_path hierarchy."""
     if context.app_root and context.app_root.exists():
         return context.app_root
-    if (context.app_dir / "app.json").exists() or (
-        context.app_dir / "app.yaml"
-    ).exists():
+    if any(
+        (context.app_dir / name).exists()
+        for name in ("app.json", "app.yaml", "app.yml")
+    ):
         return context.app_dir
-    if file_path.name in ("app.json", "app.yaml"):
+    if file_path.name in ("app.json", "app.yaml", "app.yml"):
         return file_path.parent
     if file_path.parent.parent.name in (
         "agents",
@@ -536,6 +544,14 @@ def _find_app_root_for_path(file_path: Path, context: LintContext) -> Path:
     if file_path.parent.name in ("agents", "tools", "toolsets", "guardrails"):
         return file_path.parent.parent
     return context.app_dir
+
+
+def _rel_path(path: Path, context: LintContext) -> str:
+    """Format ``path`` relative to ``context.project_root`` when possible."""
+    try:
+        return str(path.relative_to(context.project_root))
+    except ValueError:
+        return str(path)
 
 
 def _load_resource_dir_config(
@@ -956,6 +972,229 @@ class ToolsetFileReferences(Rule):
                 )
             )
 
+        return results
+
+
+@rule("structure")
+class AgentTreeCycle(Rule):
+    """Agent ``childAgents`` hierarchy must not contain cycles."""
+
+    id = "S014"
+    name = "agent-tree-cycle"
+    description = "Agent childAgents hierarchy must form an acyclic tree"
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = _find_app_root_for_path(file_path, context)
+        graph = resolve_agent_graph(app_root)
+        if not graph.cycles:
+            return []
+
+        rel = _rel_path(file_path, context)
+        return [
+            self.make_result(
+                file=rel,
+                message=f"Agent tree contains a cycle: {' -> '.join(cycle)}.",
+                fix=(
+                    "Remove the cyclic reference from childAgents so agents "
+                    "form a tree."
+                ),
+            )
+            for cycle in graph.cycles
+        ]
+
+
+@rule("structure")
+class OrphanedAgent(Rule):
+    """Every agent under ``agents/`` should be reachable from ``rootAgent``."""
+
+    id = "S015"
+    name = "orphaned-agent"
+    description = "Every agent under agents/ is reachable from rootAgent"
+    default_severity = Severity.WARNING
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = _find_app_root_for_path(file_path, context)
+        graph = resolve_agent_graph(app_root)
+        if graph.root_agent_dir is None:
+            return []
+
+        root_label = graph.root_agent_ref or graph.root_agent_dir
+        results: list[LintResult] = []
+        for agent_name in sorted(graph.agent_dirs):
+            if agent_name in graph.reachable:
+                continue
+            target_path = graph.agent_config_paths.get(
+                agent_name, graph.agent_dirs[agent_name]
+            )
+            disp = graph.agent_display_names.get(agent_name)
+            label = (
+                f"'{agent_name}' (displayName '{disp}')"
+                if disp and disp != agent_name
+                else f"'{agent_name}'"
+            )
+            results.append(
+                self.make_result(
+                    file=_rel_path(target_path, context),
+                    message=(
+                        f"Agent {label} is unreachable from rootAgent "
+                        f"'{root_label}'."
+                    ),
+                    fix=(
+                        f"Add '{agent_name}' to a reachable parent's "
+                        "childAgents list, or remove the unused agent "
+                        "directory."
+                    ),
+                )
+            )
+        return results
+
+
+@rule("structure")
+class UnusedToolset(Rule):
+    """Every toolset under ``toolsets/`` should attach to a reachable agent."""
+
+    id = "S016"
+    name = "unused-toolset"
+    description = (
+        "Every toolset under toolsets/ is attached to at least one reachable "
+        "agent"
+    )
+    default_severity = Severity.WARNING
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = _find_app_root_for_path(file_path, context)
+        resources = discover_local_resources(app_root, "toolsets")
+        if not resources:
+            return []
+
+        graph = resolve_agent_graph(app_root)
+        refs_by_resource: dict[LocalResource, set[str]] = defaultdict(set)
+        for agent_name, cfg in sorted(graph.agent_configs.items()):
+            raw_toolsets = cfg.get("toolsets")
+            if not isinstance(raw_toolsets, list):
+                continue
+            for entry in raw_toolsets:
+                ts_ref = (
+                    entry.get("toolset")
+                    if isinstance(entry, dict)
+                    else (entry if isinstance(entry, str) else None)
+                )
+                if isinstance(ts_ref, str) and ts_ref.strip():
+                    for matched in match_local_resources(
+                        ts_ref, "toolsets", resources
+                    ):
+                        refs_by_resource[matched].add(agent_name)
+
+        results: list[LintResult] = []
+        for res in resources:
+            referencing_agents = sorted(refs_by_resource.get(res, set()))
+            if not referencing_agents:
+                results.append(
+                    self.make_result(
+                        file=_rel_path(res.report_path, context),
+                        message=(
+                            f"Toolset '{res.key}' is not attached to any agent."
+                        ),
+                        fix=(
+                            f"Attach '{res.key}' in an agent's toolsets list, "
+                            f"or remove toolsets/{res.key}."
+                        ),
+                    )
+                )
+            elif graph.root_agent_dir is not None and not any(
+                a in graph.reachable for a in referencing_agents
+            ):
+                unreachable_str = ", ".join(referencing_agents)
+                results.append(
+                    self.make_result(
+                        file=_rel_path(res.report_path, context),
+                        message=(
+                            f"Toolset '{res.key}' is only attached to "
+                            f"unreachable agent(s): {unreachable_str}."
+                        ),
+                        fix=(
+                            f"Attach '{res.key}' to a reachable agent, connect "
+                            f"{unreachable_str} to rootAgent, or remove the "
+                            "unused toolset."
+                        ),
+                    )
+                )
+        return results
+
+
+@rule("structure")
+class UnusedGuardrail(Rule):
+    """Guardrails should attach to the app or at least one reachable agent."""
+
+    id = "S017"
+    name = "unused-guardrail"
+    description = (
+        "Every guardrail under guardrails/ is attached to the app or at least "
+        "one reachable agent"
+    )
+    default_severity = Severity.WARNING
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = _find_app_root_for_path(file_path, context)
+        resources = discover_local_resources(app_root, "guardrails")
+        if not resources:
+            return []
+
+        graph = resolve_agent_graph(app_root)
+        app_referenced, agent_refs = collect_attached_guardrails(
+            graph, resources
+        )
+
+        results: list[LintResult] = []
+        for res in resources:
+            if res in app_referenced:
+                continue
+            referencing_agents = sorted(agent_refs.get(res, set()))
+            if not referencing_agents:
+                results.append(
+                    self.make_result(
+                        file=_rel_path(res.report_path, context),
+                        message=(
+                            f"Guardrail '{res.key}' is not attached to the app "
+                            "or any agent."
+                        ),
+                        fix=(
+                            f"Add '{res.key}' to guardrails in app config or "
+                            f"an agent config, or remove guardrails/{res.key}."
+                        ),
+                    )
+                )
+            elif graph.root_agent_dir is not None and not any(
+                a in graph.reachable for a in referencing_agents
+            ):
+                unreachable_str = ", ".join(referencing_agents)
+                results.append(
+                    self.make_result(
+                        file=_rel_path(res.report_path, context),
+                        message=(
+                            f"Guardrail '{res.key}' is only attached to "
+                            f"unreachable agent(s): {unreachable_str}."
+                        ),
+                        fix=(
+                            f"Attach '{res.key}' to the app or a reachable "
+                            f"agent, connect {unreachable_str} to rootAgent, "
+                            "or remove the unused guardrail."
+                        ),
+                    )
+                )
         return results
 
 

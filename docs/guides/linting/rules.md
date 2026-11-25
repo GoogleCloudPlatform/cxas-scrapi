@@ -273,7 +273,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | T004 | `tool-fn-name` | Warning | Tool function name should match tool directory name |
     | T005 | `tool-high-cardinality` | Info | High-cardinality input arguments |
     | T006 | `tool-return-explosion` | Info | Tool returning excessive data |
-    | T008 | `tool-displayname-unreferenced` | Warning | Tool displayName not referenced by any agent |
+    | T008 | `tool-displayname-unreferenced` | Warning | Tool displayName not referenced by any reachable agent (supports JSON/YAML agents, callbacks, and attached guardrails) |
     | T009 | `tool-kwargs-signature` | Error | Tool function uses `**kwargs` |
     | T010 | `tool-python-syntax` | Error | Tool Python file must have valid syntax |
     | T011 | `tool-none-default` | Error | Tool parameter uses `None` as default value |
@@ -305,6 +305,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     Arguments like `timestamp`, `latitude/longitude`, or internal `session_id`/`request_id` values are hard for users to express, especially in voice mode.
 
     *Fix:* Design arguments that a human can express naturally (e.g., `region`, `category`, `last_n_days`).
+
+    ---
+
+    **T008 — tool-displayname-unreferenced**
+
+    Checks that each tool under `tools/` is attached to at least one reachable agent's `tools` list (supporting both JSON and YAML agent configs), invoked in reachable agent/tool Python code, or referenced by an attached guardrail's `action.toolCall`.
+
+    *Triggers:* A tool is not referenced by any agent, or is attached exclusively to orphaned/unreachable agents that cannot be reached from `rootAgent`.
+
+    *Fix:* Attach the tool to a reachable agent, wire its owning agent into `childAgents`, or remove the unused tool directory.
 
     ---
 
@@ -490,6 +500,10 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S011 | `agent-resource-references` | Error | Agent JSON references guardrails, toolsets, or `instruction` files that don't exist |
     | S012 | `tool-file-references` | Error | Tool JSON references `pythonCode` or `openApiSchema` files that don't exist |
     | S013 | `toolset-file-references` | Error | Toolset JSON references `openApiSchema` files that don't exist |
+    | S014 | `agent-tree-cycle` | Error | Agent `childAgents` hierarchy contains a cycle (self-loop, multi-hop, or disconnected) |
+    | S015 | `orphaned-agent` | Warning | Agent directory under `agents/` is not reachable from `rootAgent` via `childAgents` |
+    | S016 | `unused-toolset` | Warning | Toolset under `toolsets/` is not attached to any reachable agent |
+    | S017 | `unused-guardrail` | Warning | Guardrail under `guardrails/` is not attached to the app or any reachable agent |
     | G001 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
     | G002 | `crosscheck-locales-content-blocks` | Error | `(brandId, country, lang)` tuple in `deployments/*.yaml` missing from `content_blocks.yaml` |
 
@@ -528,6 +542,46 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     **S013 — toolset-file-references**
 
     Validates that `openApiToolset.openApiSchema` file paths in `<toolset>.json` exist on disk when non-inline paths are specified.
+
+    ---
+
+    **S014 — agent-tree-cycle**
+
+    CES enforces a strict tree hierarchy for `childAgents`. Cyclic parent-child references fail validation or create ambiguous delegation loops.
+
+    *Triggers:* Any cycle in `childAgents` (self-loops, 2-node or multi-hop cycles, whether reachable from `rootAgent` or disconnected), resolving JSON/YAML agent configs by directory name, `displayName`, `name`, or CES resource path.
+
+    *Fix:* Remove the cyclic reference from `childAgents` so agents form an acyclic tree.
+
+    ---
+
+    **S015 — orphaned-agent**
+
+    Detects dead agent directories under `agents/` that cannot be reached from `rootAgent` by traversing `childAgents` (supports both JSON and YAML apps). Stays silent when `rootAgent` is missing or invalid so `A006` reports the root cause without noise.
+
+    *Triggers:* An agent directory under `agents/` is not reachable from `rootAgent`.
+
+    *Fix:* Add the agent to a reachable parent's `childAgents` list, or delete the unused agent directory.
+
+    ---
+
+    **S016 — unused-toolset**
+
+    Detects toolsets under `toolsets/` (directories or flat `.json`/`.yaml`/`.yml` configs) that are never attached to any agent, or are attached exclusively to unreachable agents.
+
+    *Triggers:* A toolset is not listed in any agent's `toolsets` array (dict `{toolset: ...}` or string entries, including full CES resource paths), or is only attached to agents unreachable from `rootAgent`.
+
+    *Fix:* Attach the toolset to a reachable agent, wire its owning agent into `childAgents`, or remove the unused toolset.
+
+    ---
+
+    **S017 — unused-guardrail**
+
+    Detects guardrails under `guardrails/` (directories or flat `.json`/`.yaml`/`.yml` configs) that are not attached to `app.{json,yaml,yml}` or any reachable agent.
+
+    *Triggers:* A guardrail is absent from both app-level `guardrails` and every agent's `guardrails` list, or is only attached to agents unreachable from `rootAgent`.
+
+    *Fix:* Attach the guardrail to the app or a reachable agent, wire its owning agent into `childAgents`, or remove the unused guardrail.
 
     ---
 

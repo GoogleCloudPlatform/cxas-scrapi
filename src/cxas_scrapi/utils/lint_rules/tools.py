@@ -29,11 +29,17 @@ from pathlib import Path
 import yaml
 
 from cxas_scrapi.utils.linter import (
+    AgentGraph,
     LintContext,
     LintResult,
     Rule,
     Severity,
+    _load_config_dict,
+    collect_attached_guardrails,
+    discover_local_resources,
+    extract_resource_ref_candidates,
     is_voice_app,
+    resolve_agent_graph,
     rule,
 )
 
@@ -396,46 +402,147 @@ def _py_file_references_tools(
     return bool(candidate_names & referenced)
 
 
+def _load_tool_config_any(
+    file_path: Path,
+) -> tuple[dict | None, Path | None, Path | None]:
+    """Load tool JSON/YAML config and return ``(cfg, cfg_path, app_root)``."""
+    if file_path.suffix.lower() in (".json", ".yaml", ".yml"):
+        tool_dir = file_path.parent
+        return _load_config_dict(file_path), file_path, tool_dir.parent.parent
+
+    tool_dir = file_path.parent.parent
+    app_root = tool_dir.parent.parent
+    for ext in (".json", ".yaml", ".yml"):
+        candidate = tool_dir / f"{tool_dir.name}{ext}"
+        if candidate.is_file() and not candidate.is_symlink():
+            return _load_config_dict(candidate), candidate, app_root
+    return None, tool_dir / f"{tool_dir.name}.json", app_root
+
+
+def _agent_tool_refs(cfg: dict) -> set[str]:
+    """Extract raw and short-ID tool reference names from an agent config."""
+    raw_tools = cfg.get("tools")
+    if not isinstance(raw_tools, list):
+        return set()
+    refs: set[str] = set()
+    for entry in raw_tools:
+        if isinstance(entry, str) and entry.strip():
+            refs.update(extract_resource_ref_candidates(entry, "tools"))
+    return refs
+
+
+def _guardrail_invokes_tool(gr_data: dict, candidate_names: set[str]) -> bool:
+    """Return True if a guardrail ``action.toolCall`` references a tool."""
+    action = gr_data.get("action")
+    if not isinstance(action, dict):
+        return False
+    tool_call = action.get("toolCall") or action.get("tool_call")
+    if not isinstance(tool_call, dict):
+        return False
+    tool_ref = str(tool_call.get("tool") or "").strip()
+    if not tool_ref:
+        return False
+    short_ref = tool_ref.rsplit("/", 1)[-1]
+    return tool_ref in candidate_names or short_ref in candidate_names
+
+
 def _is_tool_referenced_in_code_or_guardrails(
     app_root: Path,
     candidate_names: set[str],
     own_tool_dir: Path,
+    graph: AgentGraph | None = None,
 ) -> bool:
     """Return True if candidate tool is referenced in code or guardrails."""
+    filter_reachable = graph is not None and graph.root_agent_dir is not None
+
     agents_dir = app_root / "agents"
-    if agents_dir.exists():
-        for py_path in agents_dir.rglob("*.py"):
-            if _py_file_references_tools(py_path, candidate_names):
-                return True
+    if agents_dir.is_dir() and not agents_dir.is_symlink():
+        if filter_reachable and graph is not None:
+            agent_scan_dirs = [
+                graph.agent_dirs[name]
+                for name in sorted(graph.reachable)
+                if name in graph.agent_dirs
+            ]
+        else:
+            agent_scan_dirs = [agents_dir]
+        for scan_dir in agent_scan_dirs:
+            for py_path in scan_dir.rglob("*.py"):
+                if not py_path.is_symlink() and _py_file_references_tools(
+                    py_path, candidate_names
+                ):
+                    return True
 
     tools_dir = app_root / "tools"
-    if tools_dir.exists():
-        for py_path in tools_dir.rglob("*.py"):
-            if own_tool_dir in py_path.parents:
+    if tools_dir.is_dir() and not tools_dir.is_symlink():
+        agent_tool_map: dict[str, set[str]] = {}
+        if filter_reachable and graph is not None:
+            agent_tool_map = {
+                a: _agent_tool_refs(cfg)
+                for a, cfg in graph.agent_configs.items()
+            }
+        for other_dir in sorted(tools_dir.iterdir()):
+            if (
+                other_dir.is_symlink()
+                or not other_dir.is_dir()
+                or other_dir == own_tool_dir
+            ):
                 continue
-            if _py_file_references_tools(py_path, candidate_names):
-                return True
+            if filter_reachable and graph is not None:
+                other_cands = {other_dir.name}
+                other_cfg, _, _ = _load_tool_config_any(
+                    other_dir / "python_function" / "python_code.py"
+                )
+                if isinstance(other_cfg, dict):
+                    disp = other_cfg.get("displayName") or other_cfg.get(
+                        "display_name"
+                    )
+                    if isinstance(disp, str) and disp.strip():
+                        other_cands.add(disp.strip())
+                attaching = [
+                    a
+                    for a, refs in agent_tool_map.items()
+                    if other_cands & refs
+                ]
+                if attaching and not any(
+                    a in graph.reachable for a in attaching
+                ):
+                    continue
+            for py_path in other_dir.rglob("*.py"):
+                if not py_path.is_symlink() and _py_file_references_tools(
+                    py_path, candidate_names
+                ):
+                    return True
 
     guardrails_dir = app_root / "guardrails"
-    if guardrails_dir.exists():
-        for gr_json in guardrails_dir.rglob("*.json"):
-            try:
-                gr_data = json.loads(
-                    gr_json.read_text(encoding="utf-8", errors="replace")
+    if guardrails_dir.is_dir() and not guardrails_dir.is_symlink():
+        if filter_reachable and graph is not None:
+            gr_resources = discover_local_resources(app_root, "guardrails")
+            app_grs, agent_grs = collect_attached_guardrails(
+                graph, gr_resources
+            )
+            gr_files: list[Path] = []
+            for res in gr_resources:
+                is_attached = res in app_grs or any(
+                    a in graph.reachable for a in agent_grs.get(res, ())
                 )
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(gr_data, dict):
-                continue
-            action = gr_data.get("action")
-            if not isinstance(action, dict):
-                continue
-            tool_call = action.get("toolCall") or action.get("tool_call")
-            if isinstance(tool_call, dict):
-                tool_ref = str(tool_call.get("tool") or "")
-                short_ref = tool_ref.rsplit("/", 1)[-1]
-                if tool_ref in candidate_names or short_ref in candidate_names:
-                    return True
+                if not is_attached:
+                    continue
+                if res.report_path.is_file():
+                    gr_files.append(res.report_path)
+                elif res.report_path.is_dir():
+                    for ext in ("*.json", "*.yaml", "*.yml"):
+                        gr_files.extend(sorted(res.report_path.glob(ext)))
+        else:
+            gr_files = []
+            for ext in ("*.json", "*.yaml", "*.yml"):
+                gr_files.extend(sorted(guardrails_dir.rglob(ext)))
+
+        for gr_path in gr_files:
+            gr_data = _load_config_dict(gr_path)
+            if gr_data is not None and _guardrail_invokes_tool(
+                gr_data, candidate_names
+            ):
+                return True
 
     return False
 
@@ -444,65 +551,101 @@ def _is_tool_referenced_in_code_or_guardrails(
 class ToolDisplayNameUnreferenced(Rule):
     id = "T008"
     name = "tool-displayname-unreferenced"
-    description = "Tool displayName not referenced by any agent's tools array"
+    description = (
+        "Tool displayName not referenced by any reachable agent's tools array"
+    )
     default_severity = Severity.WARNING
 
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        tool_config, json_path = _load_tool_config(file_path)
-        if not tool_config or json_path is None:
+        tool_config, cfg_path, app_root = _load_tool_config_any(file_path)
+        if not tool_config or cfg_path is None or app_root is None:
             return []
 
-        display_name = tool_config.get("displayName", "")
-        if not display_name:
+        raw_display = tool_config.get("displayName") or tool_config.get(
+            "display_name"
+        )
+        if not isinstance(raw_display, str) or not raw_display.strip():
             return []
+        display_name = raw_display.strip()
 
-        # tools/<name>/python_function/python_code.py → 4 levels to app root
-        if file_path.suffix == ".json":
-            app_root = file_path.parent.parent.parent
-        else:
-            app_root = file_path.parent.parent.parent.parent
         agents_dir = app_root / "agents"
         if not agents_dir.exists():
             return []
 
-        candidate_names = {display_name, json_path.parent.name}
-        referenced = any(
-            bool(
-                candidate_names
-                & set(json.loads(agent_json.read_text()).get("tools", []))
-            )
-            for agent_dir in agents_dir.iterdir()
-            if agent_dir.is_dir()
-            for agent_json in [agent_dir / f"{agent_dir.name}.json"]
-            if agent_json.exists()
-        )
-        if not referenced:
-            referenced = _is_tool_referenced_in_code_or_guardrails(
-                app_root, candidate_names, json_path.parent
-            )
+        candidate_names: set[str] = {display_name, cfg_path.parent.name}
+        raw_name = tool_config.get("name")
+        if isinstance(raw_name, str) and raw_name.strip():
+            clean_name = raw_name.strip()
+            candidate_names.add(clean_name)
+            candidate_names.add(clean_name.rsplit("/", 1)[-1])
 
-        if not referenced:
-            rel = str(json_path.relative_to(context.project_root))
+        graph = resolve_agent_graph(app_root)
+        attaching_agents = [
+            agent_name
+            for agent_name, agent_cfg in sorted(graph.agent_configs.items())
+            if candidate_names & _agent_tool_refs(agent_cfg)
+        ]
+
+        if graph.root_agent_dir is not None:
+            reachable_attaching = [
+                a for a in attaching_agents if a in graph.reachable
+            ]
+            unreachable_attaching = [
+                a for a in attaching_agents if a not in graph.reachable
+            ]
+        else:
+            reachable_attaching = attaching_agents
+            unreachable_attaching = []
+
+        if reachable_attaching:
+            return []
+
+        if _is_tool_referenced_in_code_or_guardrails(
+            app_root, candidate_names, cfg_path.parent, graph=graph
+        ):
+            return []
+
+        try:
+            rel = str(cfg_path.relative_to(context.project_root))
+        except ValueError:
+            rel = str(cfg_path)
+
+        if unreachable_attaching:
+            unreachable_str = ", ".join(unreachable_attaching)
             return [
                 self.make_result(
                     file=rel,
                     message=(
-                        f"Tool displayName"
-                        f" '{display_name}' not"
-                        " found in any agent's"
-                        " tools array"
+                        f"Tool '{display_name}' is only attached to "
+                        f"unreachable agent(s): {unreachable_str}."
                     ),
                     fix=(
-                        "Add this tool to the"
-                        " relevant agent's JSON"
-                        " config, or remove the"
-                        " tool if unused"
+                        f"Attach '{display_name}' to a reachable agent, "
+                        f"connect {unreachable_str} to rootAgent, or remove "
+                        "the unused tool."
                     ),
                 )
             ]
-        return []
+
+        return [
+            self.make_result(
+                file=rel,
+                message=(
+                    f"Tool displayName"
+                    f" '{display_name}' not"
+                    " found in any agent's"
+                    " tools array"
+                ),
+                fix=(
+                    "Add this tool to the"
+                    " relevant agent's"
+                    " config, or remove the"
+                    " tool if unused"
+                ),
+            )
+        ]
 
 
 @rule("tools")
