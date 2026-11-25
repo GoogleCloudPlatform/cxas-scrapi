@@ -83,17 +83,18 @@ _BUILD_MARKER_FILE = ".cxas-build-output"
 
 
 class _UniqueKeyYaml12Loader(Yaml12SafeLoader):
-    """YAML 1.2 SafeLoader that fails fast on duplicate mapping keys."""
+    """YAML 1.2 SafeLoader rejecting duplicate explicit mapping keys."""
 
     def construct_mapping(
         self, node: yaml.MappingNode, deep: bool = False
     ) -> dict[JsonValue, JsonValue]:
-        self.flatten_mapping(node)
-        mapping: dict[JsonValue, JsonValue] = {}
-        for key_node, value_node in node.value:
+        seen: set[JsonValue] = set()
+        for key_node, _ in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                continue
             key = self.construct_object(key_node, deep=deep)
             try:
-                is_dup = key in mapping
+                duplicate = key in seen
             except TypeError as exc:
                 raise yaml.constructor.ConstructorError(
                     "while constructing a mapping",
@@ -101,15 +102,15 @@ class _UniqueKeyYaml12Loader(Yaml12SafeLoader):
                     "found unhashable key",
                     key_node.start_mark,
                 ) from exc
-            if is_dup:
+            if duplicate:
                 raise yaml.constructor.ConstructorError(
                     None,
                     None,
                     f"Duplicate mapping key '{key}'",
                     key_node.start_mark,
                 )
-            mapping[key] = self.construct_object(value_node, deep=deep)
-        return mapping
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 class BuildError(Exception):
@@ -201,6 +202,7 @@ class _BuildRenderer:
     replacements: dict[str, str]
     env_templates: tuple[tuple[re.Pattern[str], str], ...]
     cond_predicates: dict[str, Callable[[str], bool]]
+    allow_resource_conditionals: bool = True
 
     @classmethod
     def from_context(
@@ -212,6 +214,8 @@ class _BuildRenderer:
         environment: str,
         disabled_agents: frozenset[str],
         disabled_tools: frozenset[str],
+        *,
+        allow_resource_conditionals: bool = True,
     ) -> _BuildRenderer:
         replacements: dict[str, str] = {
             "@@profile.profile_id@@": profile.profile_id,
@@ -257,9 +261,19 @@ class _BuildRenderer:
             replacements=replacements,
             env_templates=tuple(env_templates),
             cond_predicates=predicates,
+            allow_resource_conditionals=allow_resource_conditionals,
         )
 
     def _eval_cond(self, kind: str, arg: str) -> bool:
+        if not self.allow_resource_conditionals and kind in (
+            "AgentEnabled",
+            "ToolEnabled",
+        ):
+            raise BuildError(
+                f"Conditional tag kind '{kind}' is not allowed inside resource "
+                "identity fields (displayName/name) or resource-config block "
+                "conditionals; use Channel or Profile conditionals instead."
+            )
         if kind not in self.cond_predicates:
             raise BuildError(f"Unknown conditional tag kind: {kind}")
         return self.cond_predicates[kind](arg)
@@ -1014,28 +1028,28 @@ def _prune_all_resources(
     environment: str,
     channel_caps: ChannelCapabilities,
 ) -> tuple[frozenset[str], frozenset[str]]:
-    disabled_agents = frozenset(channel_caps.disabled_agents)
-    disabled_tools = frozenset(channel_caps.disabled_tools)
-    for _ in range(4):
-        renderer = _BuildRenderer.from_context(
-            profile,
-            policy,
-            env_manifest,
-            channel,
-            environment,
-            disabled_agents,
-            disabled_tools,
-        )
-        next_tools = _prune_resource_dir(
-            staging_dir / "tools", set(disabled_tools), "tools", renderer
-        )
-        next_agents = _prune_resource_dir(
-            staging_dir / "agents", set(disabled_agents), "agents", renderer
-        )
-        if next_agents == disabled_agents and next_tools == disabled_tools:
-            break
-        disabled_agents = next_agents
-        disabled_tools = next_tools
+    prelim_renderer = _BuildRenderer.from_context(
+        profile,
+        policy,
+        env_manifest,
+        channel,
+        environment,
+        frozenset(),
+        frozenset(),
+        allow_resource_conditionals=False,
+    )
+    disabled_tools = _prune_resource_dir(
+        staging_dir / "tools",
+        set(channel_caps.disabled_tools),
+        "tools",
+        prelim_renderer,
+    )
+    disabled_agents = _prune_resource_dir(
+        staging_dir / "agents",
+        set(channel_caps.disabled_agents),
+        "agents",
+        prelim_renderer,
+    )
     return disabled_agents, disabled_tools
 
 

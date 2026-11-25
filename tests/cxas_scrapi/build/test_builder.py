@@ -1917,46 +1917,72 @@ def test_tokenized_display_name_prunes_disabled_agent_and_tool(
 
 
 @pytest.mark.parametrize(
-    ("disabled_tool_ref", "cond_tool_ref"),
+    ("rel_path", "content", "expected_kind"),
     [
-        ("Secret Tool", "secret_tool_dir"),
-        ("secret_tool_dir", "Secret Tool"),
+        (
+            "agents/cond_ag/cond_ag.json",
+            json.dumps(
+                {
+                    "displayName": (
+                        "{@startToolEnabled_active_tool}Bad"
+                        "{@endToolEnabled_active_tool}"
+                    )
+                }
+            ),
+            "ToolEnabled",
+        ),
+        (
+            "agents/cond_ag/cond_ag.json",
+            json.dumps(
+                {
+                    "displayName": "Valid",
+                    "name": (
+                        "{@startAgentEnabled_default_agent}bad"
+                        "{@endAgentEnabled_default_agent}"
+                    ),
+                }
+            ),
+            "AgentEnabled",
+        ),
+        (
+            "agents/cond_ag/cond_ag.yaml",
+            "{@startToolEnabled_active_tool}\n"
+            "displayName: Bad\n"
+            "{@endToolEnabled_active_tool}\n",
+            "ToolEnabled",
+        ),
+        (
+            "tools/cond_tl/cond_tl.yaml",
+            "{@startAgentEnabled_default_agent}\n"
+            "displayName: Bad\n"
+            "{@endAgentEnabled_default_agent}\n",
+            "AgentEnabled",
+        ),
     ],
 )
-def test_fixed_point_cross_resource_conditional_pruning(
-    tmp_path: Path, disabled_tool_ref: str, cond_tool_ref: str
+def test_resource_identity_rejects_circular_enabled_conditionals(
+    tmp_path: Path, rel_path: str, content: str, expected_kind: str
 ) -> None:
     core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
-    (
-        core_dir / "tools" / "secret_tool_dir" / "secret_tool_dir.json"
-    ).write_text(json.dumps({"displayName": "Secret Tool"}), encoding="utf-8")
+    cfg = core_dir / rel_path
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(content, encoding="utf-8")
 
-    cond_dir = core_dir / "agents" / "cond_disabled_agent"
-    cond_dir.mkdir()
-    (cond_dir / "cond_disabled_agent.yaml").write_text(
-        'displayName: "'
-        f"{{@startToolEnabled_{cond_tool_ref}}}KeepMe"
-        f"{{@endToolEnabled_{cond_tool_ref}}}"
-        "{@startToolEnabled_active_tool}DropMe"
-        '{@endToolEnabled_active_tool}"\n',
-        encoding="utf-8",
-    )
-
-    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
-    pol = yaml.safe_load(pol_path.read_text("utf-8"))
-    pol["channels"]["VOICE_TELEPHONY"]["disabled_tools"] = [disabled_tool_ref]
-    pol["channels"]["VOICE_TELEPHONY"]["disabled_agents"] = [
-        "pruned_agent_display",
-        "DropMe",
-    ]
-    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
-
-    out_dir = tmp_path / "out_fixed_point"
-    build_app(
-        core_dir, manifests_dir, "profile_1", "VOICE_TELEPHONY", "prod", out_dir
-    )
-    assert not (out_dir / "tools" / "secret_tool_dir").exists()
-    assert not (out_dir / "agents" / "cond_disabled_agent").exists()
+    with pytest.raises(
+        BuildError,
+        match=(
+            rf"Conditional tag kind '{expected_kind}' is not allowed inside "
+            r"resource identity fields"
+        ),
+    ):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_circular_cond",
+        )
 
 
 @pytest.mark.parametrize(
@@ -2024,3 +2050,167 @@ def test_disabled_resources_ignore_undefined_profile_tokens(
     )
     assert not (out_dir / "tools" / "secret_tool_dir").exists()
     assert not (out_dir / "agents" / "pruned_agent_dir").exists()
+
+
+def test_yaml_anchor_merge_key_override_allowed_with_unique_key_loader(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    openapi_path = (
+        core_dir / "tools" / "active_tool" / "open_api_tool" / "schema.yaml"
+    )
+    openapi_path.parent.mkdir(parents=True, exist_ok=True)
+    openapi_path.write_text(
+        "x-defaults: &def\n"
+        "  timeout: 30\n"
+        "  retries: 3\n"
+        "x-extra: &extra\n"
+        "  timeout: 45\n"
+        "  region: eu\n"
+        "info:\n"
+        '  title: "@@profile.display_name@@ API"\n'
+        "  <<: [*def, *extra]\n"
+        "  timeout: 60\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_yaml_merge"
+    build_app(
+        core_dir, manifests_dir, "profile_1", "DIGITAL_APP", "prod", out_dir
+    )
+    rendered = yaml.safe_load(
+        (
+            out_dir / "tools" / "active_tool" / "open_api_tool" / "schema.yaml"
+        ).read_text("utf-8")
+    )
+    assert rendered["info"]["title"] == "Profile One API"
+    assert rendered["info"]["timeout"] == 60
+    assert rendered["info"]["retries"] == 3
+    assert rendered["info"]["region"] == "eu"
+
+    # Explicit duplicate key alongside a merge key must still fail fast.
+    openapi_path.write_text(
+        "x-defaults: &def\n"
+        "  retries: 3\n"
+        "info:\n"
+        '  title: "@@profile.display_name@@ API"\n'
+        "  <<: *def\n"
+        "  timeout: 10\n"
+        "  timeout: 20\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match="Duplicate mapping key 'timeout'"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_yaml_merge_dup",
+        )
+
+    # Unhashable YAML mapping key must raise BuildError (not uncaught TypeError).
+    openapi_path.write_text(
+        'title: "@@profile.display_name@@"\n? [1, 2]\n: x\n', encoding="utf-8"
+    )
+    with pytest.raises(BuildError, match=r"(?i)unhashable"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_yaml_unhashable",
+        )
+
+
+def test_post_pruning_enabled_conditionals_and_static_identity_conditionals(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # Static Channel/Profile conditional in displayName prunes or survives in
+    # a single deterministic pass.
+    static_dir = core_dir / "agents" / "static_cond_agent"
+    static_dir.mkdir()
+    (static_dir / "static_cond_agent.yaml").write_text(
+        'displayName: "{@startChannel_VOICE_TELEPHONY}pruned_agent_display'
+        "{@endChannel_VOICE_TELEPHONY}"
+        "{@startChannel_DIGITAL_APP}Digital Static{@endChannel_DIGITAL_APP}"
+        '"\n',
+        encoding="utf-8",
+    )
+
+    # Surviving prompt and non-identity JSON agent fields evaluate
+    # AgentEnabled / ToolEnabled using all pruned aliases (folder + displayName).
+    (core_dir / "agents" / "default_agent" / "default_agent.json").write_text(
+        json.dumps(
+            {
+                "displayName": "default_agent",
+                "description": (
+                    "Base"
+                    "{@startToolEnabled_secret_tool_dir} DIR_LEAK"
+                    "{@endToolEnabled_secret_tool_dir}"
+                    "{@startToolEnabled_secret_tool_disabled} DISP_LEAK"
+                    "{@endToolEnabled_secret_tool_disabled}"
+                    "{@startToolEnabled_active_tool} ACTIVE_OK"
+                    "{@endToolEnabled_active_tool}"
+                ),
+                "childAgents": ["pruned_agent_display"],
+                "tools": ["secret_tool_disabled", "active_tool"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (core_dir / "agents" / "default_agent" / "instruction.txt").write_text(
+        "{@startAgentEnabled_pruned_agent_dir}AG_DIR_LEAK"
+        "{@endAgentEnabled_pruned_agent_dir}\n"
+        "{@startAgentEnabled_pruned_agent_display}AG_DISP_LEAK"
+        "{@endAgentEnabled_pruned_agent_display}\n"
+        "{@startToolEnabled_secret_tool_dir}TL_DIR_LEAK"
+        "{@endToolEnabled_secret_tool_dir}\n"
+        "{@startToolEnabled_active_tool}KEEP_ACTIVE"
+        "{@endToolEnabled_active_tool}\n",
+        encoding="utf-8",
+    )
+
+    out_voice = tmp_path / "out_voice_single_pass"
+    build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "VOICE_TELEPHONY",
+        "prod",
+        out_voice,
+    )
+    assert not (out_voice / "agents" / "static_cond_agent").exists()
+    agent_cfg = json.loads(
+        (
+            out_voice / "agents" / "default_agent" / "default_agent.json"
+        ).read_text("utf-8")
+    )
+    assert agent_cfg["description"] == "Base ACTIVE_OK"
+    instr_text = (
+        out_voice / "agents" / "default_agent" / "instruction.txt"
+    ).read_text("utf-8")
+    assert "LEAK" not in instr_text
+    assert "KEEP_ACTIVE" in instr_text
+
+    out_digital = tmp_path / "out_digital_single_pass"
+    build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "DIGITAL_APP",
+        "prod",
+        out_digital,
+    )
+    assert (out_digital / "agents" / "static_cond_agent").is_dir()
+    assert yaml.safe_load(
+        (
+            out_digital
+            / "agents"
+            / "static_cond_agent"
+            / "static_cond_agent.yaml"
+        ).read_text("utf-8")
+    ) == {"displayName": "Digital Static"}
