@@ -24,9 +24,7 @@
     "cloudLoggingSettings": {
       "enableCloudLogging": true
     },
-    "conversationLoggingSettings": {
-      "retentionWindow": "31536000s"
-    },
+    "conversationLoggingSettings": {},
     "evaluationAudioRecordingConfig": {},
     "metricAnalysisSettings": {}
   },
@@ -53,7 +51,7 @@
     },
     {
       "name": "next_agent_actions",
-      "description": "Reply and actions queued by a tool through set_next_agent_actions, played by the before-model callback without calling the model.",
+      "description": "Reply and actions queued in next_agent_actions, played by the before-model callback without calling the model.",
       "schema": {
         "type": "OBJECT"
       }
@@ -67,27 +65,11 @@
       }
     },
     {
-      "name": "order_id",
-      "description": "Order number of the order that was last looked up.",
+      "name": "pending_handoff_reason",
+      "description": "Reason code for a pending live agent handoff, consumed by execute_live_agent_handover.",
       "schema": {
         "type": "STRING",
         "default": ""
-      }
-    },
-    {
-      "name": "order_status",
-      "description": "Status of the order that was last looked up (Processing, Shipped, Delivered, Canceled, Return Started).",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "sms_disclosure_played",
-      "description": "Whether the text message terms were shared with the customer.",
-      "schema": {
-        "type": "BOOLEAN",
-        "default": false
       }
     }
   ],

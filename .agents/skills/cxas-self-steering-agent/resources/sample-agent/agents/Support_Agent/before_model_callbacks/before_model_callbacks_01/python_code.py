@@ -5,12 +5,13 @@ from typing import Optional
 GREETING = (
     "Hi, thanks for contacting customer support. How can I help you today?"
 )
+TRANSFER_TOOLS = ("transfer_to_agent", "transferToAgent")
 
 
 def before_model_callback(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-  """Runs the handlers in order and returns the first response one of them builds.
+  """Runs handlers in order and returns the first response built.
 
   Args:
     callback_context: The session state and other context CES passes in.
@@ -34,7 +35,7 @@ def before_model_callback(
 def _handle_next_agent_actions(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-  """Plays what a tool queued with set_next_agent_actions, without calling the model."""
+  """Plays queued next_agent_actions without calling the model."""
   actions = callback_context.state.pop("next_agent_actions", None)
   if not actions:
     return None
@@ -45,6 +46,10 @@ def _handle_next_agent_actions(
   if end_session := actions.get("end_session"):
     # Part.from_end_session takes reason and escalated (not session_escalated).
     parts.append(Part.from_end_session(**end_session))
+    # Latch end_session so follow-up streaming calls cannot hit the model.
+    callback_context.state["next_agent_actions"] = {
+        "end_session": end_session
+    }
   return LlmResponse.from_parts(parts=parts)
 
 
@@ -63,7 +68,7 @@ def _handle_initial_greeting(
 def _handle_dynamic_tool_hiding(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> Optional[LlmResponse]:
-  """Hides every tool that the rendered instruction doesn't mention."""
+  """Hides transfer tools and any tool not mentioned in the instruction."""
   config = llm_request.config
   if not (
       config
@@ -73,13 +78,19 @@ def _handle_dynamic_tool_hiding(
   ):
     return None
 
-  instruction = config.system_instruction.parts[0].text
-  for func_decl in config.tools[0].function_declarations:
-    if re.search(rf"\b{re.escape(func_decl.name)}\b", instruction):
-      continue
-    if (
-        config.excluded_tools is None
-        or func_decl.name not in config.excluded_tools
-    ):
-      config.hide_tool(func_decl.name)
+  instruction = config.system_instruction.parts[0].text or ""
+  for tool_decl in config.tools:
+    for func_decl in tool_decl.function_declarations or []:
+      if not func_decl.name:
+        continue
+      if (
+          func_decl.name not in TRANSFER_TOOLS
+          and re.search(rf"\b{re.escape(func_decl.name)}\b", instruction)
+      ):
+        continue
+      if (
+          config.excluded_tools is None
+          or func_decl.name not in config.excluded_tools
+      ):
+        config.hide_tool(func_decl.name)
   return None
