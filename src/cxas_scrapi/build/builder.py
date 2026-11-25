@@ -80,17 +80,38 @@ _FSTRING_END = getattr(tokenize, "FSTRING_END", None)
 _STAGE_IGNORE_PATTERNS = ("__pycache__", "*.pyc", ".DS_Store", "manifests")
 _RESOURCE_CONFIG_SUFFIXES = (".json", ".yaml", ".yml")
 _BUILD_MARKER_FILE = ".cxas-build-output"
+_DYNAMIC_COND_KINDS = frozenset({"AgentEnabled", "ToolEnabled"})
+_IDENTITY_YAML_KEY_RE = re.compile(
+    r"""^(?:["']?(?:displayName|name)["']?)\s*:"""
+)
 
 
 class _UniqueKeyYaml12Loader(Yaml12SafeLoader):
     """YAML 1.2 SafeLoader rejecting duplicate explicit mapping keys."""
 
-    def construct_mapping(
-        self, node: yaml.MappingNode, deep: bool = False
-    ) -> dict[JsonValue, JsonValue]:
+    def __init__(self, stream: JsonValue) -> None:
+        super().__init__(stream)
+        self._checked_nodes: set[int] = set()
+
+    def _check_merge_target(self, val_node: yaml.Node, *, deep: bool) -> None:
+        if isinstance(val_node, yaml.MappingNode):
+            self._check_mapping_node(val_node, deep=deep)
+        elif isinstance(val_node, yaml.SequenceNode):
+            for sub_node in val_node.value:
+                if isinstance(sub_node, yaml.MappingNode):
+                    self._check_mapping_node(sub_node, deep=deep)
+
+    def _check_mapping_node(
+        self, node: yaml.MappingNode, *, deep: bool
+    ) -> None:
+        node_id = id(node)
+        if node_id in self._checked_nodes:
+            return
+        self._checked_nodes.add(node_id)
         seen: set[JsonValue] = set()
-        for key_node, _ in node.value:
+        for key_node, val_node in node.value:
             if key_node.tag == "tag:yaml.org,2002:merge":
+                self._check_merge_target(val_node, deep=deep)
                 continue
             key = self.construct_object(key_node, deep=deep)
             try:
@@ -110,6 +131,11 @@ class _UniqueKeyYaml12Loader(Yaml12SafeLoader):
                     key_node.start_mark,
                 )
             seen.add(key)
+
+    def construct_mapping(
+        self, node: yaml.MappingNode, deep: bool = False
+    ) -> dict[JsonValue, JsonValue]:
+        self._check_mapping_node(node, deep=deep)
         return super().construct_mapping(node, deep=deep)
 
 
@@ -164,6 +190,54 @@ def _render_env_template(
             f"Unmatched brace in env template '{key}': {template!r}"
         )
     return _ENV_TEMPLATE_BRACE_RE.sub(_sub, template)
+
+
+def _active_dynamic_kind(
+    stack: list[tuple[str, str, bool]],
+) -> tuple[bool, str | None]:
+    static_active = True
+    dyn_kind: str | None = None
+    for kind, _, active in stack:
+        if kind in _DYNAMIC_COND_KINDS:
+            dyn_kind = kind
+        elif not active:
+            static_active = False
+    return static_active, dyn_kind
+
+
+def _append_identifier_line(
+    line: str,
+    stack: list[tuple[str, str, bool]],
+    out_lines: list[str],
+) -> None:
+    static_active, dyn_kind = _active_dynamic_kind(stack)
+    if not static_active:
+        return
+    if dyn_kind is None:
+        out_lines.append(line)
+        return
+    if _IDENTITY_YAML_KEY_RE.match(line):
+        raise BuildError(
+            f"Conditional tag kind '{dyn_kind}' is not allowed inside "
+            "resource identity fields (displayName/name); use Channel "
+            "or Profile conditionals instead."
+        )
+
+
+def _assert_cond_stack_empty(
+    stack: list[tuple[str, str, bool]],
+    *,
+    inline_line_no: int | None = None,
+) -> None:
+    if not stack:
+        return
+    unclosed = [f"{{@start{k}_{a}}}" for k, a, _ in stack]
+    if inline_line_no is not None:
+        raise BuildError(
+            f"Line {inline_line_no}: Unbalanced inline conditional tag(s): "
+            f"{unclosed}"
+        )
+    raise BuildError(f"Unbalanced conditional tags remain: {unclosed}")
 
 
 def _pop_cond_stack(
@@ -310,12 +384,7 @@ class _BuildRenderer:
             pos = match.end()
             self._apply_inline_token(match, line_no, inline_stack)
 
-        if inline_stack:
-            unclosed = [f"{{@start{k}_{a}}}" for k, a, _ in inline_stack]
-            raise BuildError(
-                f"Line {line_no}: Unbalanced inline conditional tag(s): "
-                f"{unclosed}"
-            )
+        _assert_cond_stack_empty(inline_stack, inline_line_no=line_no)
         if not outer_active:
             return ""
         parts.append(line[pos:])
@@ -326,11 +395,18 @@ class _BuildRenderer:
         stripped: str,
         line_no: int,
         stack: list[tuple[str, str, bool]],
+        *,
+        defer_dynamic: bool = False,
     ) -> bool:
         m_start = _COND_START_RE.match(stripped)
         if m_start:
             kind, arg = m_start.group(1), m_start.group(2)
-            stack.append((kind, arg, self._eval_cond(kind, arg)))
+            active = (
+                False
+                if defer_dynamic and kind in _DYNAMIC_COND_KINDS
+                else self._eval_cond(kind, arg)
+            )
+            stack.append((kind, arg, active))
         elif m_end := _COND_END_RE.match(stripped):
             _pop_cond_stack(
                 stack,
@@ -342,6 +418,19 @@ class _BuildRenderer:
         else:
             return False
         return True
+
+    def preprocess_yaml_for_identifiers(self, content: str) -> str:
+        """Evaluate static block conditionals while deferring dynamic ones."""
+        out_lines: list[str] = []
+        stack: list[tuple[str, str, bool]] = []
+        for idx, line in enumerate(content.split("\n"), start=1):
+            if self._handle_block_tag(
+                line.strip(), idx, stack, defer_dynamic=True
+            ):
+                continue
+            _append_identifier_line(line, stack, out_lines)
+        _assert_cond_stack_empty(stack)
+        return "\n".join(out_lines)
 
     def process_conditional_blocks(self, content: str) -> str:
         if "{@start" not in content and "{@end" not in content:
@@ -360,10 +449,7 @@ class _BuildRenderer:
             if outer_active:
                 out_lines.append(rendered)
 
-        if stack:
-            unclosed = [f"{{@start{k}_{a}}}" for k, a, _ in stack]
-            raise BuildError(f"Unbalanced conditional tags remain: {unclosed}")
-
+        _assert_cond_stack_empty(stack)
         return "\n".join(out_lines)
 
     def substitute_tokens(self, text: str) -> str:
@@ -725,6 +811,12 @@ def _read_yaml_with_renderer(path: Path, renderer: _BuildRenderer) -> JsonValue:
     except (OSError, UnicodeDecodeError) as exc:
         raise BuildError(f"{path}: invalid YAML: {exc}") from exc
     has_cond = "{@start" in text or "{@end" in text
+    if not renderer.allow_resource_conditionals and has_cond:
+        try:
+            stripped = renderer.preprocess_yaml_for_identifiers(text)
+            return yaml.load(stripped, Loader=_UniqueKeyYaml12Loader)
+        except (yaml.YAMLError, BuildError) as exc:
+            raise BuildError(f"{path}: {exc}") from exc
     return _parse_yaml_with_conditionals(
         path, text, renderer, has_tokens=has_cond
     )

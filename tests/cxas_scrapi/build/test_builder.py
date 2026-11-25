@@ -2214,3 +2214,130 @@ def test_post_pruning_enabled_conditionals_and_static_identity_conditionals(
             / "static_cond_agent.yaml"
         ).read_text("utf-8")
     ) == {"displayName": "Digital Static"}
+
+
+def test_yaml_resource_configs_allow_enabled_conditionals_outside_identity_fields(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    yaml_agent = core_dir / "agents" / "yaml_desc_agent"
+    yaml_agent.mkdir()
+    (yaml_agent / "yaml_desc_agent.yaml").write_text(
+        "displayName: YamlDescAgent\n"
+        'description: "Base'
+        "{@startToolEnabled_active_tool} INLINE_ACTIVE"
+        "{@endToolEnabled_active_tool}"
+        "{@startToolEnabled_secret_tool_dir} INLINE_LEAK"
+        '{@endToolEnabled_secret_tool_dir}"\n'
+        "{@startToolEnabled_active_tool}\n"
+        "activeBlock: kept\n"
+        "{@endToolEnabled_active_tool}\n"
+        "{@startToolEnabled_secret_tool_disabled}\n"
+        "disabledBlock: leaked\n"
+        "{@endToolEnabled_secret_tool_disabled}\n",
+        encoding="utf-8",
+    )
+
+    yaml_tool = core_dir / "tools" / "yaml_desc_tool"
+    yaml_tool.mkdir()
+    (yaml_tool / "yaml_desc_tool.yaml").write_text(
+        "displayName: YamlDescTool\n"
+        'description: "Tool'
+        "{@startAgentEnabled_custom_entry} AGENT_ACTIVE"
+        "{@endAgentEnabled_custom_entry}"
+        "{@startAgentEnabled_pruned_agent_display} AGENT_LEAK"
+        '{@endAgentEnabled_pruned_agent_display}"\n'
+        "{@startAgentEnabled_custom_entry}\n"
+        "agentActiveBlock: kept\n"
+        "{@endAgentEnabled_custom_entry}\n"
+        "{@startAgentEnabled_pruned_agent_dir}\n"
+        "agentDisabledBlock: leaked\n"
+        "{@endAgentEnabled_pruned_agent_dir}\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_yaml_desc_cond"
+    build_app(
+        core_dir, manifests_dir, "profile_1", "VOICE_TELEPHONY", "prod", out_dir
+    )
+
+    built_agent = yaml.safe_load(
+        (
+            out_dir / "agents" / "yaml_desc_agent" / "yaml_desc_agent.yaml"
+        ).read_text("utf-8")
+    )
+    assert built_agent == {
+        "displayName": "YamlDescAgent",
+        "description": "Base INLINE_ACTIVE",
+        "activeBlock": "kept",
+    }
+
+    built_tool = yaml.safe_load(
+        (
+            out_dir / "tools" / "yaml_desc_tool" / "yaml_desc_tool.yaml"
+        ).read_text("utf-8")
+    )
+    assert built_tool == {
+        "displayName": "YamlDescTool",
+        "description": "Tool AGENT_ACTIVE",
+        "agentActiveBlock": "kept",
+    }
+
+
+def test_nested_yaml_anchor_overrides_and_inline_merge_duplicate_rejection(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    schema_path = (
+        core_dir / "tools" / "active_tool" / "open_api_tool" / "nested.yaml"
+    )
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    schema_path.write_text(
+        "grand: &grand\n"
+        "  timeout: 10\n"
+        "  retries: 1\n"
+        "parent: &parent\n"
+        "  <<: *grand\n"
+        "  timeout: 20\n"
+        "  region: eu\n"
+        "prod:\n"
+        "  <<: *parent\n"
+        '  title: "@@profile.display_name@@"\n'
+        "  timeout: 30\n",
+        encoding="utf-8",
+    )
+
+    out_ok = tmp_path / "out_nested_anchor"
+    build_app(
+        core_dir, manifests_dir, "profile_1", "DIGITAL_APP", "prod", out_ok
+    )
+    rendered = yaml.safe_load(
+        (
+            out_ok / "tools" / "active_tool" / "open_api_tool" / "nested.yaml"
+        ).read_text("utf-8")
+    )
+    assert rendered["prod"] == {
+        "timeout": 30,
+        "retries": 1,
+        "region": "eu",
+        "title": "Profile One",
+    }
+
+    # Inline merge source with duplicate key must fail fast.
+    schema_path.write_text(
+        "info:\n"
+        '  title: "@@profile.display_name@@"\n'
+        "  <<: {x: 1, x: 2}\n"
+        "  y: 3\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match="Duplicate mapping key 'x'"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_inline_merge_dup",
+        )
