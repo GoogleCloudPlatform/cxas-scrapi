@@ -33,10 +33,7 @@ from typing import Any
 import pytest
 import yaml
 
-from cxas_scrapi.utils.lint_rules.callbacks import (
-    SharedPythonBundleIntegrity,
-    VoiceBeforeModelToolMutation,
-)
+from cxas_scrapi.utils.lint_rules.callbacks import VoiceBeforeModelToolMutation
 from cxas_scrapi.utils.lint_rules.config import VoiceLanguageTtsParity
 from cxas_scrapi.utils.lint_rules.runtime_traps import VariableCountLimit
 from cxas_scrapi.utils.lint_rules.structure import (
@@ -1991,7 +1988,7 @@ def test_qa_pr1_012_t008_orphan_tool_via_ces_name_must_not_rescue_dead_helper(
     assert res[0].rule_id == "T008"
 
 
-# ── PR 1 Post-Build Integrity (Commit e12fa23e): T020-T021, C025, A018, S018-S020 ─
+# ── PR 1 Post-Build Integrity (Commit e12fa23e): T020-T021, A018, S018-S020 ────
 
 
 def test_qa_pr1_post_build_dispatch_categories_severity_overrides_and_yml_deployments(
@@ -2022,11 +2019,6 @@ def test_qa_pr1_post_build_dispatch_categories_severity_overrides_and_yml_deploy
     )
     _write_ext_agent(app, "root", child_agents=["alt"], tools=["end_session"])
     _write_ext_agent(app, "alt")
-    cb = app / "agents" / "root" / "before_model_callbacks" / "cb1"
-    cb.mkdir(parents=True)
-    (cb / "python_code.py").write_text(
-        "import python_lib.missing\n", encoding="utf-8"
-    )
     (app / "tools" / "api" / "api.json").write_text(
         json.dumps({"displayName": "api", "openApiTool": {"url": "$env_var"}}),
         encoding="utf-8",
@@ -2064,7 +2056,6 @@ def test_qa_pr1_post_build_dispatch_categories_severity_overrides_and_yml_deploy
     # Category-scoped runs execute app_config rules once (never skipped or duplicated)
     for cat, expected_ids in [
         ("tools", {"T020", "T021"}),
-        ("callbacks", {"C025"}),
         ("config", {"A018"}),
     ]:
         rep = LintReport()
@@ -2072,11 +2063,9 @@ def test_qa_pr1_post_build_dispatch_categories_severity_overrides_and_yml_deploy
         ids = [
             r.rule_id
             for r in rep.results
-            if r.rule_id in {"T020", "T021", "C025", "A018"}
+            if r.rule_id in {"T020", "T021", "A018"}
         ]
         assert set(ids) == expected_ids
-        if cat == "callbacks":
-            assert ids == ["C025"]
 
     # Default run preserves mixed ERROR/WARNING severities on T020 and A018
     rep_mixed = LintReport()
@@ -2106,7 +2095,7 @@ def test_qa_pr1_post_build_dispatch_categories_severity_overrides_and_yml_deploy
                 "rules": {
                     "S018": "error",
                     "T020": "warning",
-                    "C025": "info",
+                    "A018": "info",
                 }
             }
         ),
@@ -2124,7 +2113,7 @@ def test_qa_pr1_post_build_dispatch_categories_severity_overrides_and_yml_deploy
         build_context(app, ovr_cfg, disc),
         disc,
         rep_ovr,
-        specific_rules={"T020", "C025", "S018"},
+        specific_rules={"T020", "A018", "S018"},
     )
     assert all(
         r.severity == Severity.WARNING
@@ -2134,7 +2123,7 @@ def test_qa_pr1_post_build_dispatch_categories_severity_overrides_and_yml_deploy
     assert all(
         r.severity == Severity.INFO
         for r in rep_ovr.results
-        if r.rule_id == "C025"
+        if r.rule_id == "A018"
     )
     assert all(
         r.severity == Severity.ERROR
@@ -2321,153 +2310,10 @@ def test_qa_pr1_post_build_t020_t021_edge_cases_quoting_and_path_traversal(
         )
 
 
-def test_qa_pr1_post_build_c025_syntax_markers_type_checking_and_cli_exits(
-    tmp_path: Path,
-) -> None:
-    """Verify C025 syntax/non-UTF-8, malformed markers, TYPE_CHECKING, native env, symlinks, and CLI exits."""
-    # 1. Unbuilt local python_lib -> WARNING (CLI exit 0); TYPE_CHECKING imports ignored
-    c_warn = tmp_path / "c_warn"
-    (c_warn / "agents" / "root" / "before_model_callbacks" / "cb1").mkdir(
-        parents=True
-    )
-    (c_warn / "python_lib").mkdir(parents=True)
-    (c_warn / "app.json").write_text(
-        json.dumps({"name": "c", "displayName": "c", "rootAgent": "root"}),
-        encoding="utf-8",
-    )
-    _write_ext_agent(c_warn, "root")
-    (c_warn / "python_lib" / "helpers.py").write_text(
-        "def ok(): return 1\n", encoding="utf-8"
-    )
-    (
-        c_warn
-        / "agents"
-        / "root"
-        / "before_model_callbacks"
-        / "cb1"
-        / "python_code.py"
-    ).write_text(
-        "import typing\n"
-        "from typing import TYPE_CHECKING\n"
-        "if TYPE_CHECKING:\n"
-        "    import python_lib.type_only_a\n"
-        "if typing.TYPE_CHECKING:\n"
-        "    from python_lib.type_only_b import T\n"
-        "import python_lib.helpers\n",
-        encoding="utf-8",
-    )
-    proc_warn = _run_cli_lint(
-        "--app-dir", str(c_warn), "--rule", "C025", "--json"
-    )
-    assert proc_warn.returncode == 0
-    payload_w = json.loads(proc_warn.stdout)
-    assert len(payload_w) == 1
-    assert payload_w[0]["severity"] == "warning"
-    assert payload_w[0]["line"] == 7
-
-    # 2. Missing everywhere -> ERROR (CLI exit 1)
-    c_err = tmp_path / "c_err"
-    (c_err / "agents" / "root" / "before_model_callbacks" / "cb1").mkdir(
-        parents=True
-    )
-    (c_err / "app.json").write_text(
-        json.dumps({"name": "c", "displayName": "c", "rootAgent": "root"}),
-        encoding="utf-8",
-    )
-    _write_ext_agent(c_err, "root")
-    (
-        c_err
-        / "agents"
-        / "root"
-        / "before_model_callbacks"
-        / "cb1"
-        / "python_code.py"
-    ).write_text("from python_lib.sub.mod import fn\n", encoding="utf-8")
-    proc_err = _run_cli_lint(
-        "--app-dir", str(c_err), "--rule", "C025", "--json"
-    )
-    assert proc_err.returncode == 1
-    assert json.loads(proc_err.stdout)[0]["severity"] == "error"
-
-    # 3. Native pythonEnvFiles + inline bundle + malformed markers + syntax/non-UTF-8 + symlinks
-    c_nat = tmp_path / "c_nat"
-    outside_py = tmp_path / "outside_bad.py"
-    outside_py.write_text("def broken(:\n", encoding="utf-8")
-    (c_nat / "pythonEnvFiles" / "content" / "python_lib" / "sub").mkdir(
-        parents=True
-    )
-    (c_nat / "python_lib").mkdir(parents=True)
-    app_nat = c_nat / "app.json"
-    app_nat.write_text(
-        json.dumps({"displayName": "c_nat", "rootAgent": "root"}),
-        encoding="utf-8",
-    )
-    _write_ext_agent(c_nat, "root")
-    (c_nat / "pythonEnvFiles" / "pythonEnvFiles.yaml").write_text(
-        "files: []\n", encoding="utf-8"
-    )
-    (
-        c_nat / "pythonEnvFiles" / "content" / "python_lib" / "sub" / "mod.py"
-    ).write_text("def fn(): return 1\n", encoding="utf-8")
-    (
-        c_nat / "pythonEnvFiles" / "content" / "python_lib" / "bad_syntax.py"
-    ).write_text("def broken(:\n", encoding="utf-8")
-    (c_nat / "python_lib" / "non_utf8.py").write_bytes(b"\xff\xfe\x00")
-    os.symlink(outside_py, c_nat / "python_lib" / "sym_bad.py")
-
-    cbs = c_nat / "agents" / "root" / "before_model_callbacks"
-    for name, code in [
-        ("cb_ok_native", "from python_lib.sub.mod import fn\n"),
-        ("cb_missing_native", "from python_lib.sub.absent import fn\n"),
-        (
-            "cb_inline_ok",
-            "# === BEGIN CXAS_SHARED_BUNDLE ===\n"
-            "# === END CXAS_SHARED_BUNDLE ===\n"
-            "import python_lib.bundled_mod\n",
-        ),
-        ("cb_trunc", "# === BEGIN CXAS_SHARED_BUNDLE ===\nx = 1\n"),
-        (
-            "cb_reversed",
-            "# === END CXAS_SHARED_BUNDLE ===\n# === BEGIN CXAS_SHARED_BUNDLE ===\n",
-        ),
-        (
-            "cb_type_else",
-            "from typing import TYPE_CHECKING\n"
-            "if TYPE_CHECKING:\n"
-            "    import python_lib.ok_only\n"
-            "else:\n"
-            "    import python_lib.missing_else\n",
-        ),
-    ]:
-        d = cbs / name
-        d.mkdir(parents=True)
-        (d / "python_code.py").write_text(code, encoding="utf-8")
-
-    res_nat = SharedPythonBundleIntegrity().check(app_nat, "", _ctx(c_nat))
-    files_nat = {r.file for r in res_nat}
-    assert "python_lib/sym_bad.py" not in files_nat
-    assert (
-        "agents/root/before_model_callbacks/cb_ok_native/python_code.py"
-        not in files_nat
-    )
-    assert (
-        "agents/root/before_model_callbacks/cb_inline_ok/python_code.py"
-        not in files_nat
-    )
-    assert {
-        "pythonEnvFiles/content/python_lib/bad_syntax.py",
-        "python_lib/non_utf8.py",
-        "agents/root/before_model_callbacks/cb_missing_native/python_code.py",
-        "agents/root/before_model_callbacks/cb_trunc/python_code.py",
-        "agents/root/before_model_callbacks/cb_reversed/python_code.py",
-        "agents/root/before_model_callbacks/cb_type_else/python_code.py",
-    }.issubset(files_nat)
-
-
 def test_qa_pr1_post_build_a018_s018_s019_s020_edge_cases_and_cli_hygiene(
     tmp_path: Path,
 ) -> None:
-    """Verify A018, S018, S019, S020 edge cases, CLI 121+ rules, Sample_Support_Agent clean, and zero build imports."""
+    """Verify A018, S018, S019, S020 edge cases, CLI 120+ rules, Sample_Support_Agent clean, and zero build imports."""
     # A018: app.yml snake_case + case-insensitive BCP-47 + non-voice WEB no FP + malformed no crash
     a18_web = tmp_path / "a18_web"
     (a18_web / "deployments").mkdir(parents=True)
@@ -2691,10 +2537,10 @@ def test_qa_pr1_post_build_a018_s018_s019_s020_edge_cases_and_cli_hygiene(
     assert all(r.file == "agents/child_agent/instruction.txt" for r in res20)
     assert [r.line for r in res20] == [2, 3, 4]
 
-    # Real CLI --list-rules (121+ rules) + Sample_Support_Agent clean + zero build imports
+    # Real CLI --list-rules (120+ rules) + Sample_Support_Agent clean + zero build imports
     reg = build_registry()
-    assert len(reg.all_rules()) >= 121
-    new_ids = ("T020", "T021", "C025", "A018", "S018", "S019", "S020")
+    assert len(reg.all_rules()) >= 120
+    new_ids = ("T020", "T021", "A018", "S018", "S019", "S020")
     for rid in new_ids:
         assert reg.get(rid) is not None
     list_proc = _run_cli_lint("--list-rules")
