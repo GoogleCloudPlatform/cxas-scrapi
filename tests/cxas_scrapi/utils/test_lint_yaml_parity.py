@@ -279,6 +279,8 @@ def test_t008_yaml_ces_name_and_yaml_guardrail_parity(tmp_path: Path) -> None:
     root_yaml.write_text(
         "displayName: Root Agent\n"
         "instruction: agents/root_agent/instruction.txt\n"
+        "guardrails:\n"
+        "  - safety\n"
         "tools:\n"
         "  - end_session\n"
         "  - lookup_order\n"
