@@ -981,6 +981,163 @@ def collect_attached_guardrails(
     return app_referenced, agent_refs
 
 
+def resolve_safe_app_file(app_root: Path, rel_path: str) -> Path | None:
+    """Resolve an app-relative file path strictly within ``app_root``.
+
+    Returns ``None`` if ``rel_path`` is absolute, traverses ``..``, traverses
+    any symlink inside ``app_root``, escapes ``app_root``, or is not a file.
+    """
+    if not isinstance(rel_path, str):
+        return None
+    stripped = rel_path.strip()
+    if not stripped or "://" in stripped or "\n" in stripped:
+        return None
+    p = Path(stripped)
+    if p.is_absolute() or ".." in p.parts:
+        return None
+
+    cur = app_root
+    for part in p.parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return None
+
+    if not cur.is_file():
+        return None
+
+    try:
+        cur.resolve().relative_to(app_root.resolve())
+    except (OSError, ValueError):
+        return None
+    return cur
+
+
+def discover_deployment_files(
+    app_root: Path | None,
+    context: LintContext | None = None,
+) -> list[Path]:
+    """Return sorted ``deployments/*.yaml`` and ``*.yml`` skipping symlinks."""
+    roots: list[Path] = []
+    seen_roots: set[Path] = set()
+    candidates = [app_root]
+    if context is not None:
+        candidates.extend(
+            [context.app_root, context.app_dir, context.project_root]
+        )
+    for root in candidates:
+        if root is None or root in seen_roots:
+            continue
+        seen_roots.add(root)
+        roots.append(root)
+
+    found: list[Path] = []
+    seen_files: set[Path] = set()
+    for root in roots:
+        deps_dir = root / "deployments"
+        if deps_dir.is_symlink() or not deps_dir.is_dir():
+            continue
+        dep_files = sorted(
+            {
+                p
+                for ext in ("*.yaml", "*.yml")
+                for p in deps_dir.glob(ext)
+                if p.is_file()
+                and not p.is_symlink()
+                and not p.name.startswith(".")
+            }
+        )
+        for p in dep_files:
+            if p not in seen_files:
+                seen_files.add(p)
+                found.append(p)
+    return found
+
+
+def _looks_like_schema_file_ref(val: typing.Any) -> bool:
+    return (
+        isinstance(val, str)
+        and bool(val.strip())
+        and "://" not in val
+        and "\n" not in val
+        and not any(c.isspace() for c in val)
+        and val.strip().lower().endswith((".yaml", ".yml", ".json"))
+    )
+
+
+def discover_openapi_schema_paths(
+    app_root: Path,
+) -> list[tuple[str, str, Path]]:
+    """Discover OpenAPI schemas as ``(kind, resource_key, schema_path)``."""
+    results: list[tuple[str, str, Path]] = []
+    seen_paths: set[Path] = set()
+
+    specs = (
+        (
+            "tools",
+            "open_api_tool",
+            ("openApiTool", "open_api_tool"),
+        ),
+        (
+            "toolsets",
+            "open_api_toolset",
+            ("openApiToolset", "open_api_toolset"),
+        ),
+    )
+
+    for subdir, default_folder, block_keys in specs:
+        parent = app_root / subdir
+        if parent.is_symlink() or not parent.is_dir():
+            continue
+        for entry in sorted(parent.iterdir()):
+            if (
+                entry.is_symlink()
+                or entry.name.startswith(".")
+                or entry.name == "__pycache__"
+            ):
+                continue
+
+            cfg: dict[str, typing.Any] | None = None
+            res_key = entry.name if entry.is_dir() else entry.stem
+            candidates: list[Path] = []
+
+            if entry.is_dir():
+                cfg_path = _find_dir_config(entry)
+                if cfg_path is not None:
+                    cfg = _load_config_dict(cfg_path)
+                for ext in (".yaml", ".yml"):
+                    rel_default = (
+                        f"{subdir}/{entry.name}/{default_folder}/"
+                        f"open_api_schema{ext}"
+                    )
+                    safe = resolve_safe_app_file(app_root, rel_default)
+                    if safe is not None:
+                        candidates.append(safe)
+            elif entry.is_file() and entry.suffix.lower() in _CONFIG_EXTENSIONS:
+                cfg = _load_config_dict(entry)
+            else:
+                continue
+
+            if isinstance(cfg, dict):
+                for bk in block_keys:
+                    block = cfg.get(bk)
+                    if not isinstance(block, dict):
+                        continue
+                    raw_schema = block.get("openApiSchema") or block.get(
+                        "open_api_schema"
+                    )
+                    if _looks_like_schema_file_ref(raw_schema):
+                        safe = resolve_safe_app_file(app_root, raw_schema)
+                        if safe is not None:
+                            candidates.append(safe)
+
+            for sp in candidates:
+                if sp not in seen_paths:
+                    seen_paths.add(sp)
+                    results.append((subdir, res_key, sp))
+
+    return results
+
+
 # ── Rule Registry ────────────────────────────────────────────────────────
 
 
@@ -1101,11 +1258,10 @@ class LintConfig:
 
         return config
 
-    def get_severity(self, rule_obj: Rule, file_path: str = "") -> Severity:
-        """Get the effective severity for a rule.
-
-        Considers per-file overrides.
-        """
+    def get_severity_override(
+        self, rule_obj: Rule, file_path: str = ""
+    ) -> Severity | None:
+        """Return an explicit configured severity override, or None."""
         for pattern, overrides in self.per_file.items():
             if fnmatch.fnmatch(file_path, pattern):  # noqa: SIM102
                 if rule_obj.id in overrides:
@@ -1113,6 +1269,17 @@ class LintConfig:
 
         if rule_obj.id in self.rules:
             return self.rules[rule_obj.id]
+
+        return None
+
+    def get_severity(self, rule_obj: Rule, file_path: str = "") -> Severity:
+        """Get the effective severity for a rule.
+
+        Considers per-file overrides.
+        """
+        override = self.get_severity_override(rule_obj, file_path)
+        if override is not None:
+            return override
 
         return rule_obj.default_severity
 
@@ -1642,10 +1809,6 @@ def run_rules(
             return False
         return not (categories and rule_obj.category not in categories)
 
-    def _get_severity(rule_obj: typing.Any, file_rel: typing.Any) -> typing.Any:
-        sev = config.get_severity(rule_obj, file_rel)
-        return sev if sev != Severity.OFF else None
-
     def _lint_files(rules: list[Rule], files: dict[str, Path]) -> None:
         """Apply rules to a set of discovered files or directories."""
         for _name, file_path in files.items():
@@ -1663,11 +1826,17 @@ def run_rules(
             for rule_obj in rules:
                 if not rule_obj.is_applicable_for_model(file_model):
                     continue
-                sev = _get_severity(rule_obj, rel)
-                if sev is None:
+                override = config.get_severity_override(rule_obj, rel)
+                effective_sev = (
+                    override
+                    if override is not None
+                    else rule_obj.default_severity
+                )
+                if effective_sev == Severity.OFF:
                     continue
                 for result in rule_obj.check(file_path, content, context):
-                    result.severity = sev
+                    if override is not None:
+                        result.severity = override
                     report.add(result)
 
     def _get_rules(category: str) -> list[Rule]:
@@ -1676,6 +1845,15 @@ def run_rules(
         return [
             r for r in registry.rules_for_category(category) if should_run(r)
         ]
+
+    def _split_targeted(category: str) -> tuple[list[Rule], list[Rule]]:
+        cat_rules = _get_rules(category)
+        return (
+            [r for r in cat_rules if not r.target],
+            [r for r in cat_rules if r.target],
+        )
+
+    target_dispatched: list[Rule] = []
 
     # Instructions — instruction.txt files + global_instruction.txt
     instruction_files = {
@@ -1686,23 +1864,32 @@ def run_rules(
     global_inst = discovery.discover_global_instruction()
     if global_inst:
         instruction_files["global_instruction"] = global_inst
-    _lint_files(_get_rules("instructions"), instruction_files)
+    inst_rules, inst_targeted = _split_targeted("instructions")
+    target_dispatched.extend(inst_targeted)
+    _lint_files(inst_rules, instruction_files)
 
     # Callbacks
     cb_files = {
         f"{agent}_{cb_type}_{cb_name}": code_path
         for agent, cb_type, cb_name, code_path in discovery.discover_callbacks()
     }
-    _lint_files(_get_rules("callbacks"), cb_files)
+    cb_rules, cb_targeted = _split_targeted("callbacks")
+    target_dispatched.extend(cb_targeted)
+    _lint_files(cb_rules, cb_files)
 
     # Tools
-    _lint_files(_get_rules("tools"), discovery.discover_tools())
+    tool_rules, tool_targeted = _split_targeted("tools")
+    target_dispatched.extend(tool_targeted)
+    _lint_files(tool_rules, discovery.discover_tools())
 
     # Evals
-    _lint_files(_get_rules("evals"), discovery.discover_evals())
+    eval_rules, eval_targeted = _split_targeted("evals")
+    target_dispatched.extend(eval_targeted)
+    _lint_files(eval_rules, discovery.discover_evals())
 
     # Config — app config + agent configs
-    config_rules = _get_rules("config")
+    config_rules, config_targeted = _split_targeted("config")
+    target_dispatched.extend(config_targeted)
     if config_rules:
         app_cfg = discovery.discover_app_config()
         config_files = {}
@@ -1711,22 +1898,14 @@ def run_rules(
         config_files.update(discovery.discover_agent_configs())
         _lint_files(config_rules, config_files)
 
-    # Target-dispatched rules (structure + schema categories)
-    # Rules with a ``target`` property get matched to discovered files.
-    target_dispatched = _get_rules("structure") + _get_rules("schema")
+    # Target-dispatched rules (structure, schema, and targeted rules from
+    # any category, e.g. app_config-targeted tool/callback/config rules).
+    target_dispatched.extend(_get_rules("structure"))
+    target_dispatched.extend(_get_rules("schema"))
     if target_dispatched:
         deployment_configs: dict[str, Path] = {}
-        seen_dep_roots: set[Path] = set()
-        for dep_root in (
-            discovery.app_root,
-            discovery.app_dir,
-            context.project_root,
-        ):
-            if dep_root is None or dep_root in seen_dep_roots:
-                continue
-            seen_dep_roots.add(dep_root)
-            for p in sorted(dep_root.glob("deployments/*.yaml")):
-                deployment_configs.setdefault(p.stem, p)
+        for dep_path in discover_deployment_files(discovery.app_root, context):
+            deployment_configs.setdefault(dep_path.name, dep_path)
 
         target_files = {
             "app_config": {},

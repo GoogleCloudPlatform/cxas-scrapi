@@ -32,13 +32,16 @@ from cxas_scrapi.utils.linter import (
     AgentGraph,
     LintContext,
     LintResult,
+    LocalResource,
     Rule,
     Severity,
     _load_config_dict,
     collect_attached_guardrails,
     discover_local_resources,
+    discover_openapi_schema_paths,
     extract_resource_ref_candidates,
     is_voice_app,
+    match_local_resources,
     resolve_agent_graph,
     rule,
 )
@@ -1450,4 +1453,431 @@ class DataStoreVoiceModality(Rule):
                         ),
                     )
                 )
+        return results
+
+
+def _resolve_app_root(file_path: Path, context: LintContext) -> Path:
+    if file_path.name in ("app.json", "app.yaml", "app.yml"):
+        return file_path.parent
+    if context.app_root and context.app_root.exists():
+        return context.app_root
+    return context.app_dir
+
+
+def _rel_or_str(path: Path, project_root: Path) -> str:
+    try:
+        return str(path.relative_to(project_root))
+    except ValueError:
+        return str(path)
+
+
+def _camel_snake_variants(key: str) -> set[str]:
+    snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", key).lower()
+    parts = snake.split("_")
+    camel = parts[0] + "".join(p.title() for p in parts[1:]) if parts else key
+    return {key, snake, camel}
+
+
+def _find_env_var_placeholders(
+    obj: typing.Any, prefix: tuple[str, ...] = ()
+) -> list[tuple[str, ...]]:
+    """Return key-path tuples whose string value equals ``$env_var``."""
+    found: list[tuple[str, ...]] = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            found.extend(_find_env_var_placeholders(v, (*prefix, str(k))))
+    elif isinstance(obj, list):
+        for idx, item in enumerate(obj):
+            found.extend(_find_env_var_placeholders(item, (*prefix, str(idx))))
+    elif isinstance(obj, str) and obj.strip() == "$env_var":
+        found.append(prefix)
+    return found
+
+
+def _is_resolved_env_value(val: typing.Any) -> bool:
+    """Return True if ``val`` is a concrete non-empty non-placeholder value."""
+    if val is None:
+        return False
+    if isinstance(val, str):
+        stripped = val.strip()
+        return bool(stripped) and stripped != "$env_var"
+    if isinstance(val, (dict, list)):
+        return bool(val)
+    return True
+
+
+def _dict_lookup_variants(
+    mapping: dict[str, typing.Any], key: str
+) -> tuple[bool, typing.Any]:
+    variants = _camel_snake_variants(key)
+    for k, v in mapping.items():
+        if k in variants:
+            return True, v
+    return False, None
+
+
+def _contains_resolved_leaf(obj: typing.Any, leaf_variants: set[str]) -> bool:
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k in leaf_variants and _is_resolved_env_value(v):
+                return True
+            if _contains_resolved_leaf(v, leaf_variants):
+                return True
+    elif isinstance(obj, list):
+        return any(_contains_resolved_leaf(i, leaf_variants) for i in obj)
+    return False
+
+
+def _env_entry_resolves_placeholder(
+    entry: typing.Any, path: tuple[str, ...]
+) -> bool:
+    """Return True if an ``environment.json`` entry resolves ``path``."""
+    if not isinstance(entry, dict) or not entry:
+        return False
+
+    # 1. Exact nested path traversal (allowing camelCase/snake_case keys)
+    cur: typing.Any = entry
+    matched_exact = True
+    for seg in path:
+        if isinstance(cur, dict):
+            ok, cur = _dict_lookup_variants(cur, seg)
+            if not ok:
+                matched_exact = False
+                break
+        elif isinstance(cur, list) and seg.isdigit():
+            idx = int(seg)
+            if 0 <= idx < len(cur):
+                cur = cur[idx]
+            else:
+                matched_exact = False
+                break
+        else:
+            matched_exact = False
+            break
+    if matched_exact and _is_resolved_env_value(cur):
+        return True
+
+    # 2. Leaf key lookup anywhere inside entry (handles flat {"url": ...}, etc.)
+    non_index_segs = [s for s in path if not s.isdigit()]
+    if non_index_segs:
+        leaf = non_index_segs[-1]
+        if _contains_resolved_leaf(entry, _camel_snake_variants(leaf)):
+            return True
+
+    return False
+
+
+def _find_matching_env_entry(
+    res: LocalResource,
+    subdir: str,
+    env_section: dict[str, typing.Any],
+) -> tuple[str | None, typing.Any]:
+    for env_key, env_val in env_section.items():
+        if not isinstance(env_key, str):
+            continue
+        if match_local_resources(env_key, subdir, [res]):
+            return env_key, env_val
+    return None, None
+
+
+@rule("tools")
+class ToolToolsetEnvVarParity(Rule):
+    """Tool/toolset ``$env_var`` values must resolve in ``environment.json``."""
+
+    id = "T020"
+    name = "tool-env-var-parity"
+    description = (
+        "Tool and toolset $env_var placeholders resolve in environment.json "
+        "without dangling entries"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = _resolve_app_root(file_path, context)
+        env_path = (
+            context.env_file
+            if context.env_file is not None
+            else app_root / "environment.json"
+        )
+
+        env_data: dict[str, typing.Any] | None = None
+        if env_path.exists():
+            if env_path.is_symlink() or not env_path.is_file():
+                return []
+            try:
+                raw_env = json.loads(env_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                return []
+            if not isinstance(raw_env, dict):
+                return []
+            env_data = raw_env
+
+        env_tools = (
+            env_data.get("tools")
+            if env_data and isinstance(env_data.get("tools"), dict)
+            else {}
+        )
+        env_toolsets = (
+            env_data.get("toolsets")
+            if env_data and isinstance(env_data.get("toolsets"), dict)
+            else {}
+        )
+
+        tool_resources = discover_local_resources(app_root, "tools")
+        toolset_resources = discover_local_resources(app_root, "toolsets")
+        schema_paths = discover_openapi_schema_paths(app_root)
+        schemas_by_key: dict[tuple[str, str], list[Path]] = {}
+        for kind, key, sp in schema_paths:
+            schemas_by_key.setdefault((kind, key), []).append(sp)
+
+        results: list[LintResult] = []
+        sections = (
+            ("tools", "Tool", "openApiTool", tool_resources, env_tools),
+            (
+                "toolsets",
+                "Toolset",
+                "openApiToolset",
+                toolset_resources,
+                env_toolsets,
+            ),
+        )
+
+        for subdir, label, oa_key, resources, env_section in sections:
+            for res in resources:
+                placeholders: list[tuple[Path, tuple[str, ...]]] = []
+                if res.report_path.is_file():
+                    cfg = _load_config_dict(res.report_path)
+                    if cfg is not None:
+                        for p in _find_env_var_placeholders(cfg):
+                            placeholders.append((res.report_path, p))
+
+                for sp in schemas_by_key.get((subdir, res.key), ()):
+                    schema_doc = _load_config_dict(sp)
+                    if schema_doc is None:
+                        continue
+                    servers = schema_doc.get("servers")
+                    if isinstance(servers, list):
+                        for srv in servers:
+                            if (
+                                isinstance(srv, dict)
+                                and isinstance(srv.get("url"), str)
+                                and srv["url"].strip() == "$env_var"
+                            ):
+                                placeholders.append((sp, (oa_key, "url")))
+                                break
+
+                if not placeholders:
+                    continue
+
+                _, env_entry = _find_matching_env_entry(
+                    res, subdir, env_section
+                )
+                seen_paths: set[tuple[Path, tuple[str, ...]]] = set()
+                for src_path, field_path in placeholders:
+                    if (src_path, field_path) in seen_paths:
+                        continue
+                    seen_paths.add((src_path, field_path))
+                    field_desc = ".".join(field_path) or "$env_var"
+                    src_rel = _rel_or_str(src_path, context.project_root)
+                    if env_data is None:
+                        results.append(
+                            self.make_result(
+                                file=src_rel,
+                                severity=Severity.ERROR,
+                                message=(
+                                    f"{label} '{res.key}' uses '$env_var' at "
+                                    f"'{field_desc}' but environment.json is "
+                                    "missing."
+                                ),
+                                fix=(
+                                    f"Add a '{subdir}.{res.key}' entry to "
+                                    "environment.json resolving this value."
+                                ),
+                            )
+                        )
+                    elif not _env_entry_resolves_placeholder(
+                        env_entry, field_path
+                    ):
+                        results.append(
+                            self.make_result(
+                                file=src_rel,
+                                severity=Severity.ERROR,
+                                message=(
+                                    f"{label} '{res.key}' uses '$env_var' at "
+                                    f"'{field_desc}' but environment.json "
+                                    f"'{subdir}' has no non-empty value for it."
+                                ),
+                                fix=(
+                                    f"Set '{subdir}.{res.key}' in "
+                                    "environment.json to a non-empty value."
+                                ),
+                            )
+                        )
+
+            # Dangling keys in environment.json
+            if env_data is not None and env_section:
+                env_rel = _rel_or_str(env_path, context.project_root)
+                for env_key in sorted(env_section.keys()):
+                    if not isinstance(env_key, str):
+                        continue
+                    if not match_local_resources(env_key, subdir, resources):
+                        results.append(
+                            self.make_result(
+                                file=env_rel,
+                                severity=Severity.WARNING,
+                                message=(
+                                    f"environment.json '{subdir}' entry "
+                                    f"'{env_key}' does not match any "
+                                    f"{label.lower()} under {subdir}/."
+                                ),
+                                fix=(
+                                    f"Remove stale '{env_key}' from "
+                                    f"environment.json '{subdir}' or restore "
+                                    f"{subdir}/{env_key}."
+                                ),
+                            )
+                        )
+
+        return results
+
+
+def _is_valid_openapi_server_url(url: typing.Any) -> bool:
+    """Validate an OpenAPI server URL string."""
+    if not isinstance(url, str):
+        return False
+    stripped = url.strip()
+    if not stripped:
+        return False
+    if any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in stripped):
+        return False
+    if stripped == "$env_var":
+        return True
+    if stripped.startswith("/"):
+        return True
+    if stripped.startswith(("http://", "https://")):
+        rest = stripped.split("://", 1)[1]
+        authority = rest.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
+        return bool(authority) and not authority.startswith((".", ":"))
+    return False
+
+
+@rule("tools")
+class OpenApiSchemaValidity(Rule):
+    """OpenAPI schema files must be valid YAML with paths and valid servers."""
+
+    id = "T021"
+    name = "openapi-schema-valid"
+    description = (
+        "OpenAPI schema files must be valid YAML with non-empty paths and "
+        "valid server URLs"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = _resolve_app_root(file_path, context)
+        results: list[LintResult] = []
+
+        for _kind, _key, schema_path in discover_openapi_schema_paths(app_root):
+            rel = _rel_or_str(schema_path, context.project_root)
+            try:
+                raw = schema_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as e:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"OpenAPI schema could not be read as UTF-8: {e}"
+                        ),
+                        fix="Ensure the OpenAPI schema file is valid UTF-8.",
+                    )
+                )
+                continue
+
+            try:
+                doc = yaml.safe_load(raw)
+            except yaml.YAMLError as e:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=f"OpenAPI schema is not valid YAML: {e}",
+                        fix="Fix the YAML syntax error in the OpenAPI schema.",
+                    )
+                )
+                continue
+
+            if not isinstance(doc, dict):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message="OpenAPI schema must be a YAML mapping.",
+                        fix="Provide a valid OpenAPI 3.0 YAML object.",
+                    )
+                )
+                continue
+
+            paths = doc.get("paths")
+            if not isinstance(paths, dict) or len(paths) == 0:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            "OpenAPI schema must define a non-empty 'paths' "
+                            "mapping."
+                        ),
+                        fix="Add at least one endpoint under 'paths:'.",
+                    )
+                )
+
+            if "servers" in doc:
+                servers = doc.get("servers")
+                if not isinstance(servers, list):
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message="OpenAPI schema 'servers' must be a list.",
+                            fix=(
+                                "Define 'servers' as a list of {url: ...} "
+                                "items."
+                            ),
+                        )
+                    )
+                else:
+                    for idx, srv in enumerate(servers):
+                        if not isinstance(srv, dict):
+                            results.append(
+                                self.make_result(
+                                    file=rel,
+                                    message=(
+                                        f"OpenAPI schema servers[{idx}] must "
+                                        "be a mapping with a 'url' field."
+                                    ),
+                                    fix=(
+                                        "Use '- url: https://...' for each "
+                                        "entry in 'servers'."
+                                    ),
+                                )
+                            )
+                            continue
+                        url = srv.get("url")
+                        if not _is_valid_openapi_server_url(url):
+                            results.append(
+                                self.make_result(
+                                    file=rel,
+                                    message=(
+                                        f"OpenAPI schema servers[{idx}].url "
+                                        f"has invalid value {url!r}."
+                                    ),
+                                    fix=(
+                                        "Set 'url' to an http(s):// URL, "
+                                        "relative '/' path, or '$env_var'."
+                                    ),
+                                )
+                            )
+
         return results

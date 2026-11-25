@@ -177,6 +177,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
     | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
     | C024 | `voice-before-model-request-mutation` | Warning | Voice apps ignore `before_model` `llm_request` mutations |
+    | C025 | `shared-python-bundle-integrity` | Error | Validates `python_lib/` syntax and `CXAS_SHARED_BUNDLE` / `pythonEnvFiles` bundling |
 
     ---
 
@@ -262,6 +263,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Fix:* Configure channel-specific tools and prompts statically or move dynamic gating into `before_tool_callback`.
 
+    ---
+
+    **C025 — shared-python-bundle-integrity**
+
+    Validates shared Python modules under `python_lib/` and `pythonEnvFiles/content/` for UTF-8 readability and valid Python syntax, and ensures every callback/tool entrypoint that imports `python_lib.*` (excluding `if TYPE_CHECKING:` blocks) has either a well-formed `# === BEGIN CXAS_SHARED_BUNDLE` ... `# === END CXAS_SHARED_BUNDLE ===` block or matching modules in `pythonEnvFiles/content/`.
+
+    *Triggers:* Syntax/UTF-8 error in `python_lib/` or `pythonEnvFiles/content/`, truncated/mismatched `CXAS_SHARED_BUNDLE` markers, or a `python_lib.*` import with missing `pythonEnvFiles` module or missing `python_lib/` (`Error`); unbundled `python_lib.*` import when local `python_lib/` exists (`Warning`).
+
+    *Fix:* Fix syntax errors or run `cxas build` / `cxas package` before deploying to CES.
+
 === "T — Tools"
 
     Rules in the `T` category check tool `python_code.py` files.
@@ -283,6 +294,8 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | T017 | `data-store-filter-template` | Error | Detects template syntax (`{...}` or `{{...}}`) in data store static filters |
     | T018 | `data-store-filter-parameter-behavior` | Error | Brand-scoped `dataStoreTool` must use `NEVER_INCLUDE` parameter behavior |
     | T019 | `data-store-voice-modality` | Warning | Voice deployments require an `AUDIO` modality config on `dataStoreTool` |
+    | T020 | `tool-env-var-parity` | Error | Tool and toolset `$env_var` placeholders must resolve in `environment.json` (dangling entries emit warnings) |
+    | T021 | `openapi-schema-valid` | Error | OpenAPI schema files must be valid YAML with non-empty `paths` and valid `servers[].url` |
 
     ---
 
@@ -366,6 +379,26 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Fix:* Add an `AUDIO` configuration to `modalityConfigs`, ensure `rewriterConfig.disabled` and `summarizationConfig.disabled` are both `true`, and provide a valid `snippetsConfig`.
 
+    ---
+
+    **T020 — tool-env-var-parity**
+
+    Verifies that every `"$env_var"` placeholder in `tools/` configs, `toolsets/` configs, and OpenAPI `servers[].url` resolves to a non-empty entry in `environment.json` (`tools` / `toolsets`), and warns on dangling `environment.json` entries that no longer match any tool or toolset on disk.
+
+    *Triggers:* A tool or toolset uses `"$env_var"` without a matching non-empty value in `environment.json` (`Error`), or `environment.json` defines a `tools`/`toolsets` key that matches no local resource (`Warning`).
+
+    *Fix:* Populate the matching non-empty entry in `environment.json`, or prune stale entries from `environment.json`.
+
+    ---
+
+    **T021 — openapi-schema-valid**
+
+    Validates every OpenAPI schema YAML under `tools/` and `toolsets/` (discovered via `openApiSchema` or `open_api_schema.{yaml,yml}`).
+
+    *Triggers:* Unreadable/non-UTF-8 file, invalid YAML syntax, non-mapping root, missing or empty `paths`, non-list `servers`, or invalid/blank `servers[].url` (must be `http(s)://...`, relative `/...`, or `$env_var`).
+
+    *Fix:* Fix the OpenAPI schema YAML structure, paths, and server URLs.
+
 === "E — Evals"
 
     Rules in the `E` category check golden and simulation YAML files.
@@ -441,6 +474,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95% of the configured variable cap (default warning ceiling: 95 of ~100; configurable via `max_variables_per_app`) |
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
     | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
+    | A018 | `voice-language-tts-parity` | Error | Validates `languageSettings` default/supported/multilingual parity and voice `synthesizeSpeechConfigs` coverage |
 
     ---
 
@@ -482,6 +516,14 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Fix:* Ensure `schema.default` values match the declared schema type, set `"default": "$env_var"` in `app.json` for environment-specific variables, and nest per-environment values under `app.variableDeclarations` in `environment.json`.
 
+    ---
+
+    **A018 — voice-language-tts-parity**
+
+    Validates `languageSettings` across all JSON/YAML apps (`app.{json,yaml,yml}`): `defaultLanguageCode` must appear in `supportedLanguageCodes` when non-empty (`Error`), multiple `supportedLanguageCodes` should not explicitly set `enableMultilingualSupport: false` (`Warning`), and voice apps with `audioProcessingConfig` should define a matching `synthesizeSpeechConfigs` entry for each supported language (`Warning`, case-insensitive BCP-47 match).
+
+    *Fix:* Align `defaultLanguageCode`, `supportedLanguageCodes`, `enableMultilingualSupport`, and `audioProcessingConfig.synthesizeSpeechConfigs`.
+
 === "S — Structure"
 
     Rules in the `S` category perform cross-reference checks between multiple files.
@@ -504,6 +546,9 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S015 | `orphaned-agent` | Warning | Agent directory under `agents/` is not reachable from `rootAgent` via `childAgents` |
     | S016 | `unused-toolset` | Warning | Toolset under `toolsets/` is not attached to any reachable agent |
     | S017 | `unused-guardrail` | Warning | Guardrail under `guardrails/` is not attached to the app or any reachable agent |
+    | S018 | `deployment-entry-agent` | Error | Deployment `entryAgent` must exist under `agents/` (`Warning` if it diverges from `app.rootAgent`) |
+    | S019 | `prod-url-safety` | Error | Prod deployments must not contain cleartext `http://`, loopback/local hosts, or configured non-prod URL patterns |
+    | S020 | `agent-ref-self-or-orphan` | Warning | Instruction `{@AGENT:}` targets the current agent (self-transfer) or an orphaned/unreachable agent |
     | G001 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
     | G002 | `crosscheck-locales-content-blocks` | Error | `(brandId, country, lang)` tuple in `deployments/*.yaml` missing from `content_blocks.yaml` |
 
@@ -582,6 +627,36 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* A guardrail is absent from both app-level `guardrails` and every agent's `guardrails` list, or is only attached to agents unreachable from `rootAgent`.
 
     *Fix:* Attach the guardrail to the app or a reachable agent, wire its owning agent into `childAgents`, or remove the unused guardrail.
+
+    ---
+
+    **S018 — deployment-entry-agent**
+
+    Validates `entryAgent` / `entry_agent` in `deployments/*.{yaml,yml}` against discovered agents and `app.rootAgent`.
+
+    *Triggers:* `entryAgent` does not resolve to any agent under `agents/` (`Error`), or resolves to a different agent than `app.rootAgent` (`Warning`).
+
+    *Fix:* Point `entryAgent` to an existing agent (and align with `rootAgent` unless an alternate entry agent is intended).
+
+    ---
+
+    **S019 — prod-url-safety**
+
+    Activates when any `deployments/*.{yaml,yml}` specifies `environment: prod` or `production`. Scans endpoint URLs in `environment.json`, `tools/`, `toolsets/`, and OpenAPI `servers[].url` (ignoring `"$env_var"` placeholders).
+
+    *Triggers:* Cleartext `http://` URLs, loopback/local-only hosts (`localhost`, `127.0.0.1`, `0.0.0.0`, `[::1]`, `*.local`), or URLs matching configured `options.S019.forbidden_url_patterns` in `cxaslint.yaml`.
+
+    *Fix:* Use `https://` production endpoints before deploying to production.
+
+    ---
+
+    **S020 — agent-ref-self-or-orphan**
+
+    Scans agent instructions (custom `instruction` path or `instruction.txt`) for `{@AGENT: ...}` references targeting either the current agent itself (self-transfer) or an orphaned/unreachable agent.
+
+    *Triggers:* `{@AGENT: <target>}` resolves to the owning agent directory or an agent unreachable from `rootAgent`.
+
+    *Fix:* Remove the self-transfer or wire the target agent into `childAgents`.
 
     ---
 

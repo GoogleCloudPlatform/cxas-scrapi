@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Structure validation rules (S002-S017, G001-G002).
+"""Structure validation rules (S002-S020, G001-G002).
 
 Validates app structure and cross-references using the existing
 ``cxas_scrapi.utils.validator.Validator`` for structural checks, plus
@@ -26,6 +26,7 @@ import json
 import re
 from collections import defaultdict
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 
@@ -36,13 +37,17 @@ from cxas_scrapi.utils.linter import (
     Rule,
     Severity,
     ToolsetValidationBehavior,
+    _build_agent_ref_resolver,
     _find_dir_config,
     _load_config_dict,
     collect_attached_guardrails,
+    discover_deployment_files,
     discover_local_resources,
+    discover_openapi_schema_paths,
     get_toolset_tools,
     match_local_resources,
     resolve_agent_graph,
+    resolve_safe_app_file,
     rule,
 )
 
@@ -1206,6 +1211,425 @@ class UnusedGuardrail(Rule):
                         ),
                     )
                 )
+        return results
+
+
+@rule("structure")
+class DeploymentEntryAgentParity(Rule):
+    """Deployment ``entryAgent`` must exist under ``agents/`` and match root."""
+
+    id = "S018"
+    name = "deployment-entry-agent"
+    description = (
+        "Deployment entryAgent must exist under agents/ and match app rootAgent"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = _find_app_root_for_path(file_path, context)
+        dep_files = discover_deployment_files(app_root, context)
+        if not dep_files:
+            return []
+
+        graph = resolve_agent_graph(app_root)
+        resolve_ref = _build_agent_ref_resolver(
+            set(graph.agent_dirs.keys()), graph.agent_configs
+        )
+
+        results: list[LintResult] = []
+        for dep_path in dep_files:
+            dep = _load_config_dict(dep_path)
+            if dep is None:
+                continue
+            raw_entry = (
+                dep.get("entryAgent")
+                if "entryAgent" in dep
+                else dep.get("entry_agent")
+            )
+            if not isinstance(raw_entry, str) or not raw_entry.strip():
+                continue
+
+            entry_ref = raw_entry.strip()
+            resolved = resolve_ref(entry_ref)
+            dep_rel = _rel_path(dep_path, context)
+
+            if resolved is None:
+                results.append(
+                    self.make_result(
+                        file=dep_rel,
+                        severity=Severity.ERROR,
+                        message=(
+                            f"Deployment entryAgent '{entry_ref}' does not "
+                            "resolve to any agent under agents/."
+                        ),
+                        fix=(
+                            "Set entryAgent to an existing agent under "
+                            "agents/ or create the missing agent."
+                        ),
+                    )
+                )
+            elif (
+                graph.root_agent_dir is not None
+                and resolved != graph.root_agent_dir
+            ):
+                root_label = graph.root_agent_ref or graph.root_agent_dir
+                results.append(
+                    self.make_result(
+                        file=dep_rel,
+                        severity=Severity.WARNING,
+                        message=(
+                            f"Deployment entryAgent '{entry_ref}' (resolved "
+                            f"to '{resolved}') diverges from app rootAgent "
+                            f"'{root_label}'."
+                        ),
+                        fix=(
+                            "Align deployment entryAgent with app rootAgent, "
+                            "or confirm the alternate entry agent is "
+                            "intentional."
+                        ),
+                    )
+                )
+        return results
+
+
+_PROD_ENV_VALUES: frozenset[str] = frozenset({"prod", "production"})
+_LOOPBACK_HOSTS: frozenset[str] = frozenset(
+    {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+)
+_URL_FIELD_KEYS_LOWER: frozenset[str] = frozenset(
+    {
+        "url",
+        "serverurl",
+        "server_url",
+        "baseurl",
+        "base_url",
+        "endpoint",
+        "endpointurl",
+        "endpoint_url",
+    }
+)
+_REGEX_META_RE = re.compile(r"[\\^$*+?{}\[\]|()]")
+
+
+def _extract_url_fields(
+    obj: object, *, include_all_http: bool = False
+) -> list[str]:
+    """Collect endpoint URL strings from nested JSON/YAML structures."""
+    found: list[str] = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            key_str = str(k)
+            if key_str == "$schema" or key_str.startswith("_comment"):
+                continue
+            key_lower = key_str.lower()
+            if isinstance(v, str):
+                stripped = v.strip()
+                if (
+                    stripped
+                    and stripped != "$env_var"
+                    and (
+                        key_lower in _URL_FIELD_KEYS_LOWER
+                        or (
+                            include_all_http
+                            and stripped.lower().startswith(
+                                ("http://", "https://")
+                            )
+                        )
+                    )
+                ):
+                    found.append(stripped)
+            else:
+                found.extend(
+                    _extract_url_fields(v, include_all_http=include_all_http)
+                )
+    elif isinstance(obj, list):
+        for item in obj:
+            if isinstance(item, str):
+                stripped = item.strip()
+                if (
+                    include_all_http
+                    and stripped
+                    and stripped != "$env_var"
+                    and stripped.lower().startswith(("http://", "https://"))
+                ):
+                    found.append(stripped)
+            else:
+                found.extend(
+                    _extract_url_fields(item, include_all_http=include_all_http)
+                )
+    return found
+
+
+def _compile_forbidden_url_matchers(
+    raw_patterns: object,
+) -> list[tuple[str, re.Pattern[str] | None]]:
+    """Compile forbidden URL patterns (literal substring or regex)."""
+    if not isinstance(raw_patterns, list):
+        return []
+    matchers: list[tuple[str, re.Pattern[str] | None]] = []
+    for pat in raw_patterns:
+        if not isinstance(pat, str) or not pat.strip():
+            continue
+        clean = pat.strip()
+        if _REGEX_META_RE.search(clean):
+            try:
+                matchers.append((clean, re.compile(clean, re.IGNORECASE)))
+            except re.error:
+                matchers.append((clean, None))
+        else:
+            matchers.append((clean, None))
+    return matchers
+
+
+@rule("structure")
+class ProdUrlSafety(Rule):
+    """Prod builds must not contain cleartext, loopback, or non-prod URLs."""
+
+    id = "S019"
+    name = "prod-url-safety"
+    description = (
+        "Prod deployments must not reference cleartext http://, loopback, "
+        "or forbidden non-prod URLs"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = _find_app_root_for_path(file_path, context)
+        dep_files = discover_deployment_files(app_root, context)
+        is_prod = False
+        for dep_path in dep_files:
+            dep = _load_config_dict(dep_path)
+            if dep is None:
+                continue
+            env_val = dep.get("environment")
+            if (
+                isinstance(env_val, str)
+                and env_val.strip().lower() in _PROD_ENV_VALUES
+            ):
+                is_prod = True
+                break
+        if not is_prod:
+            return []
+
+        s019_opts = context.options.get("S019")
+        raw_patterns = (
+            s019_opts.get("forbidden_url_patterns")
+            if isinstance(s019_opts, dict)
+            else context.options.get("forbidden_url_patterns")
+        )
+        forbidden_matchers = _compile_forbidden_url_matchers(raw_patterns)
+
+        url_sources: list[tuple[Path, str]] = []
+
+        # 1. environment.json
+        env_path = (
+            context.env_file
+            if context.env_file is not None
+            else app_root / "environment.json"
+        )
+        if env_path.is_file() and not env_path.is_symlink():
+            env_doc = _load_config_dict(env_path)
+            if env_doc is not None:
+                for u in _extract_url_fields(env_doc, include_all_http=True):
+                    url_sources.append((env_path, u))
+
+        # 2. tools/ and toolsets/ configs
+        for subdir in ("tools", "toolsets"):
+            for res in discover_local_resources(app_root, subdir):
+                if res.report_path.is_file():
+                    cfg = _load_config_dict(res.report_path)
+                    if cfg is not None:
+                        for u in _extract_url_fields(cfg):
+                            url_sources.append((res.report_path, u))
+
+        # 3. OpenAPI schema servers[].url
+        for _kind, _key, schema_path in discover_openapi_schema_paths(app_root):
+            doc = _load_config_dict(schema_path)
+            if doc is None:
+                continue
+            servers = doc.get("servers")
+            if isinstance(servers, list):
+                for srv in servers:
+                    if isinstance(srv, dict) and isinstance(
+                        srv.get("url"), str
+                    ):
+                        u = srv["url"].strip()
+                        if u and u != "$env_var":
+                            url_sources.append((schema_path, u))
+
+        results: list[LintResult] = []
+        seen: set[tuple[str, str, str]] = set()
+
+        for src_path, url in url_sources:
+            rel = _rel_path(src_path, context)
+            parsed = urlparse(url)
+            scheme = (parsed.scheme or "").lower()
+            host = (parsed.hostname or "").lower()
+
+            if scheme == "http":
+                key = (rel, url, "cleartext")
+                if key not in seen:
+                    seen.add(key)
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message=(
+                                f"Cleartext http:// URL '{url}' is not "
+                                "allowed in prod builds."
+                            ),
+                            fix="Use an https:// production endpoint URL.",
+                        )
+                    )
+
+            if (
+                host in _LOOPBACK_HOSTS
+                or host.endswith(".local")
+                or host.endswith(".localhost")
+            ):
+                key = (rel, url, "loopback")
+                if key not in seen:
+                    seen.add(key)
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            message=(
+                                f"Loopback or local-only host in URL '{url}' "
+                                "is not allowed in prod builds."
+                            ),
+                            fix="Replace with a production endpoint host.",
+                        )
+                    )
+
+            url_lower = url.lower()
+            for pat_str, pat_re in forbidden_matchers:
+                matched = (
+                    bool(pat_re.search(url))
+                    if pat_re is not None
+                    else pat_str.lower() in url_lower
+                )
+                if matched:
+                    key = (rel, url, f"pattern:{pat_str}")
+                    if key not in seen:
+                        seen.add(key)
+                        results.append(
+                            self.make_result(
+                                file=rel,
+                                message=(
+                                    f"URL '{url}' matches forbidden non-prod "
+                                    f"pattern '{pat_str}' in prod build."
+                                ),
+                                fix=(
+                                    "Replace with the production URL before "
+                                    "deploying to prod."
+                                ),
+                            )
+                        )
+
+        return results
+
+
+_AGENT_REF_PATTERN = re.compile(r"\{@AGENT[:\s]+([^}]+)\}", re.IGNORECASE)
+
+
+@rule("structure")
+class AgentRefSelfOrOrphan(Rule):
+    """Instructions should not target self or orphans via {@AGENT:}."""
+
+    id = "S020"
+    name = "agent-ref-self-or-orphan"
+    description = (
+        "Instructions should not reference the current agent (self-transfer) "
+        "or an orphaned/unreachable agent via {@AGENT:}"
+    )
+    default_severity = Severity.WARNING
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = _find_app_root_for_path(file_path, context)
+        graph = resolve_agent_graph(app_root)
+        if not graph.agent_dirs:
+            return []
+
+        resolve_ref = _build_agent_ref_resolver(
+            set(graph.agent_dirs.keys()), graph.agent_configs
+        )
+        results: list[LintResult] = []
+
+        for agent_name, agent_dir in sorted(graph.agent_dirs.items()):
+            cfg = graph.agent_configs.get(agent_name)
+            inst_path: Path | None = None
+            raw_inst = cfg.get("instruction") if isinstance(cfg, dict) else None
+            if _is_file_path_ref(raw_inst):
+                inst_path = resolve_safe_app_file(app_root, str(raw_inst))
+            if inst_path is None:
+                default_inst = agent_dir / "instruction.txt"
+                if default_inst.is_file() and not default_inst.is_symlink():
+                    inst_path = default_inst
+
+            if inst_path is not None:
+                try:
+                    inst_text = inst_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                report_rel = _rel_path(inst_path, context)
+            elif isinstance(raw_inst, str) and raw_inst.strip():
+                inst_text = raw_inst
+                cfg_path = graph.agent_config_paths.get(agent_name, agent_dir)
+                report_rel = _rel_path(cfg_path, context)
+            else:
+                continue
+
+            for line_num, line in enumerate(inst_text.splitlines(), 1):
+                for match in _AGENT_REF_PATTERN.finditer(line):
+                    raw_target = match.group(1).strip()
+                    resolved = resolve_ref(raw_target)
+                    if resolved is None:
+                        continue
+                    if resolved == agent_name:
+                        results.append(
+                            self.make_result(
+                                file=report_rel,
+                                line=line_num,
+                                message=(
+                                    f"Agent '{agent_name}' references itself "
+                                    f"via '{{@AGENT: {raw_target}}}' "
+                                    "(self-transfer)."
+                                ),
+                                fix=(
+                                    "Remove the self-transfer or target a "
+                                    "distinct child/parent agent."
+                                ),
+                            )
+                        )
+                    elif (
+                        graph.root_agent_dir is not None
+                        and resolved not in graph.reachable
+                    ):
+                        results.append(
+                            self.make_result(
+                                file=report_rel,
+                                line=line_num,
+                                message=(
+                                    f"Agent '{agent_name}' references "
+                                    f"orphaned/unreachable agent '{resolved}' "
+                                    f"via '{{@AGENT: {raw_target}}}'."
+                                ),
+                                fix=(
+                                    f"Add '{resolved}' to a reachable parent's "
+                                    "childAgents list, or remove the stale "
+                                    "{@AGENT:} reference."
+                                ),
+                            )
+                        )
+
         return results
 
 

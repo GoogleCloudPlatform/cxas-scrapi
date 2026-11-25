@@ -669,3 +669,336 @@ class VoiceBeforeModelToolMutation(Rule):
             )
             for mutation in visitor.mutations
         ]
+
+
+_BUNDLE_BEGIN_PREFIX = "# === BEGIN CXAS_SHARED_BUNDLE"
+_BUNDLE_END_PREFIX = "# === END CXAS_SHARED_BUNDLE"
+
+
+def _iter_safe_py_files(root: Path) -> list[Path]:
+    """Return sorted ``.py`` files under ``root``, skipping symlinks/hidden."""
+    if root.is_symlink() or not root.is_dir():
+        return []
+    found: list[Path] = []
+    stack: list[Path] = [root]
+    while stack:
+        cur = stack.pop()
+        try:
+            entries = sorted(cur.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if (
+                entry.is_symlink()
+                or entry.name.startswith(".")
+                or entry.name == "__pycache__"
+            ):
+                continue
+            if entry.is_dir():
+                stack.append(entry)
+            elif entry.is_file() and entry.suffix == ".py":
+                found.append(entry)
+    found.sort()
+    return found
+
+
+def _is_type_checking_guard(test: ast.expr) -> bool:
+    """Return True if ``test`` checks ``TYPE_CHECKING``."""
+    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+        return True
+    if isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING":
+        return True
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+        return any(_is_type_checking_guard(v) for v in test.values)
+    return False
+
+
+def _collect_python_lib_imports(
+    tree: ast.AST,
+) -> list[tuple[str, str | None, int]]:
+    """Return ``(module, imported_name_or_none, lineno)`` for ``python_lib``."""
+    imports: list[tuple[str, str | None, int]] = []
+
+    class _ImportVisitor(ast.NodeVisitor):
+        def visit_If(self, node: ast.If) -> None:
+            if _is_type_checking_guard(node.test):
+                for stmt in node.orelse:
+                    self.visit(stmt)
+                return
+            self.generic_visit(node)
+
+        def visit_Import(self, node: ast.Import) -> None:
+            for alias in node.names:
+                if alias.name == "python_lib" or alias.name.startswith(
+                    "python_lib."
+                ):
+                    imports.append((alias.name, None, node.lineno))
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+            if (
+                node.level == 0
+                and node.module
+                and (
+                    node.module == "python_lib"
+                    or node.module.startswith("python_lib.")
+                )
+            ):
+                for alias in node.names:
+                    imports.append((node.module, alias.name, node.lineno))
+
+    _ImportVisitor().visit(tree)
+    return imports
+
+
+def _check_bundle_markers(content: str) -> tuple[bool, bool]:
+    """Return ``(has_valid_bundle, is_malformed)`` for bundle markers."""
+    depth = 0
+    paired_count = 0
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(_BUNDLE_BEGIN_PREFIX):
+            if depth != 0:
+                return False, True
+            depth += 1
+        elif stripped.startswith(_BUNDLE_END_PREFIX):
+            if depth != 1:
+                return False, True
+            depth -= 1
+            paired_count += 1
+    if depth != 0:
+        return False, True
+    return paired_count > 0, False
+
+
+def _safe_child_exists(
+    base: Path, parts: list[str], *, expect_dir: bool
+) -> bool:
+    cur = base
+    for part in parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return False
+    return cur.is_dir() if expect_dir else cur.is_file()
+
+
+def _native_env_has_module(
+    content_root: Path, mod: str, imported_name: str | None
+) -> bool:
+    parts = mod.split(".")
+    if _safe_child_exists(
+        content_root, [*parts[:-1], f"{parts[-1]}.py"], expect_dir=False
+    ):
+        return True
+    if _safe_child_exists(
+        content_root, [*parts, "__init__.py"], expect_dir=False
+    ):
+        return True
+    if imported_name and imported_name != "*":
+        if _safe_child_exists(
+            content_root, [*parts, f"{imported_name}.py"], expect_dir=False
+        ):
+            return True
+        if _safe_child_exists(
+            content_root,
+            [*parts, imported_name, "__init__.py"],
+            expect_dir=False,
+        ):
+            return True
+    if imported_name is None and _safe_child_exists(
+        content_root, parts, expect_dir=True
+    ):
+        return bool(_iter_safe_py_files(content_root.joinpath(*parts)))
+    return False
+
+
+@rule("callbacks")
+class SharedPythonBundleIntegrity(Rule):
+    """Validates ``python_lib/`` syntax and shared-Python bundle integrity."""
+
+    id = "C025"
+    name = "shared-python-bundle-integrity"
+    description = (
+        "Validates python_lib/ syntax and CXAS_SHARED_BUNDLE / "
+        "pythonEnvFiles bundling"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        app_root = (
+            file_path.parent
+            if file_path.name in ("app.json", "app.yaml", "app.yml")
+            else (context.app_root or context.app_dir)
+        )
+        results: list[LintResult] = []
+
+        def _rel(p: Path) -> str:
+            try:
+                return str(p.relative_to(context.project_root))
+            except ValueError:
+                return str(p)
+
+        # Part A: Syntax check python_lib/ and pythonEnvFiles/content/
+        for py_root in (
+            app_root / "python_lib",
+            app_root / "pythonEnvFiles" / "content",
+        ):
+            for py_path in _iter_safe_py_files(py_root):
+                rel = _rel(py_path)
+                try:
+                    src = py_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as e:
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            severity=Severity.ERROR,
+                            message=(
+                                "Failed to read shared Python file as "
+                                f"UTF-8: {e}"
+                            ),
+                            fix="Re-save the Python file using UTF-8 encoding.",
+                        )
+                    )
+                    continue
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", SyntaxWarning)
+                        compile(src, rel, "exec")
+                except SyntaxError as e:
+                    results.append(
+                        self.make_result(
+                            file=rel,
+                            line=e.lineno,
+                            severity=Severity.ERROR,
+                            message=(
+                                f"Syntax error in shared Python file: {e.msg}"
+                            ),
+                            fix="Fix the Python syntax error.",
+                        )
+                    )
+
+        # Part B: Bundle integrity across callback & tool entrypoints
+        env_yaml = app_root / "pythonEnvFiles" / "pythonEnvFiles.yaml"
+        content_root = app_root / "pythonEnvFiles" / "content"
+        content_py_lib = content_root / "python_lib"
+        has_native_env = (
+            env_yaml.is_file()
+            and not env_yaml.is_symlink()
+            and not (app_root / "pythonEnvFiles").is_symlink()
+            and not content_root.is_symlink()
+            and content_py_lib.is_dir()
+            and not content_py_lib.is_symlink()
+        )
+        local_py_lib = app_root / "python_lib"
+        has_local_py_lib = (
+            local_py_lib.is_dir() and not local_py_lib.is_symlink()
+        )
+
+        entry_files = _iter_safe_py_files(
+            app_root / "agents"
+        ) + _iter_safe_py_files(app_root / "tools")
+
+        for py_path in entry_files:
+            rel = _rel(py_path)
+            try:
+                src = py_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+
+            has_valid_bundle, malformed_bundle = _check_bundle_markers(src)
+            if malformed_bundle:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        severity=Severity.ERROR,
+                        message=(
+                            "Malformed or truncated CXAS_SHARED_BUNDLE marker "
+                            "pair."
+                        ),
+                        fix=(
+                            "Re-bundle with cxas build/package or restore the "
+                            "matching BEGIN/END CXAS_SHARED_BUNDLE markers."
+                        ),
+                    )
+                )
+                continue
+
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", SyntaxWarning)
+                    tree = ast.parse(src)
+            except SyntaxError:
+                continue
+
+            py_lib_imports = _collect_python_lib_imports(tree)
+            if not py_lib_imports or has_valid_bundle:
+                continue
+
+            if has_native_env:
+                missing_reported: set[str] = set()
+                for mod, imp_name, lineno in py_lib_imports:
+                    if not _native_env_has_module(content_root, mod, imp_name):
+                        label = (
+                            f"{mod}.{imp_name}"
+                            if imp_name and imp_name != "*"
+                            else mod
+                        )
+                        if label in missing_reported:
+                            continue
+                        missing_reported.add(label)
+                        results.append(
+                            self.make_result(
+                                file=rel,
+                                line=lineno,
+                                severity=Severity.ERROR,
+                                message=(
+                                    f"Imports '{label}' which is missing from "
+                                    "pythonEnvFiles/content/."
+                                ),
+                                fix=(
+                                    "Re-run cxas build/package with "
+                                    "--native-python-env or add the missing "
+                                    "module under python_lib/."
+                                ),
+                            )
+                        )
+            elif has_local_py_lib:
+                first_line = py_lib_imports[0][2]
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        line=first_line,
+                        severity=Severity.WARNING,
+                        message=(
+                            "Imports python_lib.* without inline "
+                            "CXAS_SHARED_BUNDLE or pythonEnvFiles; run "
+                            "cxas build/package before deploying to CES."
+                        ),
+                        fix=(
+                            "Run cxas build or cxas package to bundle "
+                            "python_lib/ before pushing to CES."
+                        ),
+                    )
+                )
+            else:
+                first_line = py_lib_imports[0][2]
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        line=first_line,
+                        severity=Severity.ERROR,
+                        message=(
+                            "Imports python_lib.* with neither "
+                            "CXAS_SHARED_BUNDLE nor pythonEnvFiles — "
+                            "guaranteed ModuleNotFoundError in CES runtime."
+                        ),
+                        fix=(
+                            "Provide python_lib/ and bundle via cxas build/"
+                            "package, or remove the python_lib import."
+                        ),
+                    )
+                )
+
+        return results

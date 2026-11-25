@@ -36,6 +36,7 @@ from cxas_scrapi.utils.linter import (
     Severity,
     _find_dir_config,
     _load_config_dict,
+    is_voice_app,
     rule,
 )
 
@@ -1192,5 +1193,137 @@ class AppVariableDefaultsAndEnvVars(Rule):
                         ),
                     )
                 )
+
+        return results
+
+
+@rule("config")
+class VoiceLanguageTtsParity(Rule):
+    """Validates languageSettings parity and voice TTS coverage."""
+
+    id = "A018"
+    name = "voice-language-tts-parity"
+    description = (
+        "Validates languageSettings default/supported/multilingual parity "
+        "and voice synthesizeSpeechConfigs coverage"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if file_path.name not in _APP_CONFIG_NAMES:
+            return []
+
+        data = _parse_config_content(file_path, content)
+        if data is None:
+            return []
+
+        ls = data.get("languageSettings") or data.get("language_settings")
+        if not isinstance(ls, dict):
+            return []
+
+        rel = _rel_or_str(file_path, context.project_root)
+        raw_default = ls.get("defaultLanguageCode") or ls.get(
+            "default_language_code"
+        )
+        default_lang = (
+            raw_default.strip()
+            if isinstance(raw_default, str) and raw_default.strip()
+            else None
+        )
+
+        raw_supported = (
+            ls.get("supportedLanguageCodes")
+            if "supportedLanguageCodes" in ls
+            else ls.get("supported_language_codes")
+        )
+        supported: list[str] = []
+        seen_supported: set[str] = set()
+        if isinstance(raw_supported, list):
+            for item in raw_supported:
+                if isinstance(item, str) and item.strip():
+                    code = item.strip()
+                    if code not in seen_supported:
+                        seen_supported.add(code)
+                        supported.append(code)
+
+        multilingual = (
+            ls["enableMultilingualSupport"]
+            if "enableMultilingualSupport" in ls
+            else ls.get("enable_multilingual_support")
+        )
+
+        results: list[LintResult] = []
+        if default_lang and supported and default_lang not in supported:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    severity=Severity.ERROR,
+                    message=(
+                        f"defaultLanguageCode '{default_lang}' is not in "
+                        f"supportedLanguageCodes {supported}."
+                    ),
+                    fix=(
+                        f"Add '{default_lang}' to supportedLanguageCodes or "
+                        "align defaultLanguageCode."
+                    ),
+                )
+            )
+
+        if len(supported) > 1 and multilingual is False:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Multiple supportedLanguageCodes ({supported}) "
+                        "declared while enableMultilingualSupport is false."
+                    ),
+                    fix=(
+                        "Set enableMultilingualSupport to true or reduce "
+                        "supportedLanguageCodes to a single language."
+                    ),
+                )
+            )
+
+        if supported and is_voice_app(context):
+            audio_cfg = data.get("audioProcessingConfig") or data.get(
+                "audio_processing_config"
+            )
+            if isinstance(audio_cfg, dict):
+                tts_cfgs = (
+                    audio_cfg.get("synthesizeSpeechConfigs")
+                    if "synthesizeSpeechConfigs" in audio_cfg
+                    else audio_cfg.get("synthesize_speech_configs")
+                )
+                tts_keys_lower = (
+                    {
+                        k.strip().lower()
+                        for k in tts_cfgs
+                        if isinstance(k, str) and k.strip()
+                    }
+                    if isinstance(tts_cfgs, dict)
+                    else set()
+                )
+                for lang in supported:
+                    if lang.lower() not in tts_keys_lower:
+                        results.append(
+                            self.make_result(
+                                file=rel,
+                                severity=Severity.WARNING,
+                                message=(
+                                    f"Voice app language '{lang}' is missing "
+                                    "an entry in audioProcessingConfig."
+                                    "synthesizeSpeechConfigs."
+                                ),
+                                fix=(
+                                    f"Add a '{lang}' voice config under "
+                                    "audioProcessingConfig."
+                                    "synthesizeSpeechConfigs."
+                                ),
+                            )
+                        )
 
         return results
