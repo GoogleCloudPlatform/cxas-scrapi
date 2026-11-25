@@ -1,0 +1,11 @@
+blocks:
+  brand_alpha:
+    US:
+      en-US:
+        greeting: "Welcome to Alpha Financial support."
+        disclosure: "Alpha Financial Corp. is an equal opportunity financial services provider."
+  brand_beta:
+    US:
+      en-US:
+        greeting: "Welcome to Beta Direct support."
+        disclosure: "Beta Direct Services LLC provides digital-first customer accounts."

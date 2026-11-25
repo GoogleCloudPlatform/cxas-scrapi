@@ -1,0 +1,13 @@
+profile_id: brand_beta
+display_name: Beta Direct
+assistant_title: Beta Direct Assistant
+legal_entity: Beta Direct Services LLC
+tone_guidelines: Friendly, direct, and efficient.
+lexicon:
+  account: Beta Everyday Account
+urls:
+  support: https://support.beta-direct.example.com
+tts_voices:
+  en-US:
+    voice: en-US-Neural2-D
+    speaking_rate: 1.0

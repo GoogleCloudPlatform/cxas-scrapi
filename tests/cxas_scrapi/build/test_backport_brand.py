@@ -203,13 +203,13 @@ def _copy_built_as_live(dist_bundle: Path, live_dir: Path) -> Path:
     return live_dir
 
 
-def test_target_core_rejected_cleanly(tmp_path: Path) -> None:
+def test_invalid_target_rejected_cleanly(tmp_path: Path) -> None:
     repo, core, manifests = _make_multi_brand_repo(tmp_path)
     dist = repo / "dist"
     build_all(core, manifests, dist, "prod", write_locks=True)
     live = _copy_built_as_live(dist / "alpha" / "web", tmp_path / "live")
 
-    with pytest.raises(BuildGateError, match="only target='brand'"):
+    with pytest.raises(BuildGateError, match="expected 'brand' or 'core'"):
         backport_live_to_source(
             core,
             manifests,
@@ -217,7 +217,7 @@ def test_target_core_rejected_cleanly(tmp_path: Path) -> None:
             brand_id="alpha",
             channel="WEB",
             environment="prod",
-            target="core",
+            target="invalid",  # type: ignore[arg-type]
         )
 
 
@@ -842,8 +842,8 @@ def test_cli_backport_dry_run_apply_and_reject_core(tmp_path: Path) -> None:
     assert (manifests / "profiles" / "alpha" / "overrides.yaml").is_file()
     assert pr_md.is_file()
 
-    # 3. --target core rejected cleanly by CLI
-    core_proc = subprocess.run(
+    # 3. Unsupported --target value rejected cleanly by CLI
+    invalid_proc = subprocess.run(
         [
             sys.executable,
             "-m",
@@ -856,7 +856,7 @@ def test_cli_backport_dry_run_apply_and_reject_core(tmp_path: Path) -> None:
             "--live",
             str(live),
             "--target",
-            "core",
+            "invalid",
         ],
         cwd=str(repo_root),
         env=env,
@@ -864,4 +864,4 @@ def test_cli_backport_dry_run_apply_and_reject_core(tmp_path: Path) -> None:
         text=True,
         check=False,
     )
-    assert core_proc.returncode != 0
+    assert invalid_proc.returncode != 0

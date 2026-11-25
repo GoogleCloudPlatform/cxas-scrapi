@@ -1,0 +1,28 @@
+openapi: 3.0.0
+info:
+  title: Brand FAQ API
+  version: 1.0.0
+  description: Retrieve verified answers for customer support questions.
+servers:
+  - url: $env_var
+paths:
+  /v1/faq:
+    get:
+      operationId: lookupFaq
+      summary: Search frequently asked questions
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching FAQ entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer:
+                    type: string

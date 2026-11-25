@@ -1,0 +1,7 @@
+{
+  "displayName": "lookup_faq",
+  "openApiTool": {
+    "description": "Search @@profile.display_name@@ frequently asked questions.",
+    "openApiSchema": "tools/lookup_faq/open_api_tool/open_api_schema.yaml"
+  }
+}

@@ -1,0 +1,4 @@
+environment: prod
+templates:
+  api: https://api.example.com/{profile_slug}/{service}
+overrides: {}

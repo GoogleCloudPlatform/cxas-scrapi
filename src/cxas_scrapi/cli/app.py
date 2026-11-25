@@ -449,6 +449,25 @@ def _app_pull(
                     "updated environment.json."
                 )
 
+        if args and getattr(args, "sync_deployments", False):
+            from cxas_scrapi.core.deployment_sync import (  # noqa: PLC0415
+                export_deployments_to_dir,
+            )
+            from cxas_scrapi.core.deployments import (  # noqa: PLC0415
+                Deployments,
+            )
+
+            deployments_client = Deployments(
+                app_name=app_name, creds=apps_client.creds
+            )
+            exported_deps = export_deployments_to_dir(
+                deployments_client, Path(pulled_app_root)
+            )
+            print(
+                f"Synced {len(exported_deps)} deployment(s) to "
+                f"{Path(pulled_app_root) / 'deployments'}."
+            )
+
         print("Successfully pulled app.")
 
     except Exception as e:
@@ -928,6 +947,27 @@ def _app_push(
             )
             args.created_version_name = version_name
 
+        if args and getattr(args, "sync_deployments", False) and app_name:
+            from cxas_scrapi.core.deployment_sync import (  # noqa: PLC0415
+                sync_deployments_from_dir,
+            )
+            from cxas_scrapi.core.deployments import (  # noqa: PLC0415
+                Deployments,
+            )
+
+            deployments_client = Deployments(
+                app_name=app_name, creds=apps_client.creds
+            )
+            sync_summary = sync_deployments_from_dir(
+                deployments_client, Path(app_dir)
+            )
+            print(
+                "Synced deployments: "
+                f"{len(sync_summary['created'])} created, "
+                f"{len(sync_summary['updated'])} updated, "
+                f"{len(sync_summary['skipped'])} skipped."
+            )
+
         if should_lock_after and app_name:
             print(f"Locking app {app_name} (locked=true)...")
             relock_target = None
@@ -1327,11 +1367,178 @@ def app_lint(args: argparse.Namespace) -> None:
     report.print_and_exit(json_output, show_fixes)
 
 
-def app_init(args: argparse.Namespace) -> None:
-    """Handles the 'init' command -- copies skill files."""
+def _assert_safe_init_dest(dest: Path, root: Path) -> None:
+    """Reject symlinks and paths escaping ``root`` during ``cxas init``."""
+    resolved_root = root.resolve()
+    curr = dest
+    while True:
+        if curr.is_symlink():
+            raise ValueError(
+                f"Refusing to write through symlink during init: {curr}"
+            )
+        if curr in (root, resolved_root, curr.parent):
+            break
+        curr = curr.parent
+    resolved_dest = dest.resolve()
+    if (
+        resolved_dest != resolved_root
+        and resolved_root not in resolved_dest.parents
+    ):
+        raise ValueError(
+            f"Destination path escapes target directory ({resolved_root}): "
+            f"{dest}"
+        )
 
-    target_dir = Path(getattr(args, "target_dir", ".")).resolve()
-    force = getattr(args, "force", False)
+
+def _copy_template_traversable(src_node: Any, dest: Path, root: Path) -> None:
+    """Recursively copy an ``importlib.resources`` Traversable into ``dest``."""
+    _assert_safe_init_dest(dest, root)
+    if src_node.is_dir():
+        dest.mkdir(parents=True, exist_ok=True)
+        for child in sorted(src_node.iterdir(), key=lambda c: c.name):
+            if child.name in (
+                "__pycache__",
+                ".DS_Store",
+            ) or child.name.endswith(".pyc"):
+                continue
+            _copy_template_traversable(child, dest / child.name, root)
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(src_node.read_bytes())
+
+
+def _validate_template_dest_tree(src_node: Any, dest: Path, root: Path) -> None:
+    """Recursively verify destination paths have no symlinks or escapes."""
+    _assert_safe_init_dest(dest, root)
+    if src_node.is_dir() and dest.is_dir():
+        for child in sorted(src_node.iterdir(), key=lambda c: c.name):
+            if child.name in (
+                "__pycache__",
+                ".DS_Store",
+            ) or child.name.endswith(".pyc"):
+                continue
+            _validate_template_dest_tree(child, dest / child.name, root)
+
+
+def _init_multibrand_template(
+    target_dir: Path, *, force: bool, no_input: bool
+) -> None:
+    """Scaffold the bundled multi-brand starter (`core/`, `manifests/`)."""
+    import importlib.resources as importlib_resources  # noqa: PLC0415
+
+    template_root = (
+        importlib_resources.files("cxas_scrapi.templates") / "multibrand"
+    )
+    if not template_root.is_dir():
+        print(
+            "ERROR: Bundled 'multibrand' template not found in "
+            "cxas_scrapi.templates.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    entries = [
+        item
+        for item in sorted(template_root.iterdir(), key=lambda c: c.name)
+        if item.name not in ("__pycache__", ".DS_Store")
+        and not item.name.endswith(".pyc")
+    ]
+
+    # Phase 1a: Validate ALL destination paths for symlinks/escapes before
+    # creating directories or writing any files on disk.
+    for item in entries:
+        dest = target_dir / item.name
+        try:
+            _validate_template_dest_tree(item, dest, target_dir)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    # Phase 1b: Resolve ALL overwrite checks/prompts before writing anything.
+    overwrite_all = force
+    plan: list[tuple[Any, Path, bool]] = []
+    for item in entries:
+        dest = target_dir / item.name
+        if dest.exists() and not overwrite_all:
+            choice = _prompt_overwrite(item.name, no_input)
+            if choice == "abort":
+                print("Aborted.")
+                sys.exit(0)
+            if choice == "all":
+                overwrite_all = True
+                plan.append((item, dest, True))
+            elif choice == "skip":
+                plan.append((item, dest, False))
+            else:
+                plan.append((item, dest, True))
+        else:
+            plan.append((item, dest, True))
+
+    # Phase 2: Apply the pre-validated write plan.
+    target_dir.mkdir(parents=True, exist_ok=True)
+    copied, skipped = 0, 0
+    for item, dest, should_write in plan:
+        if not should_write:
+            skipped += 1
+            print(f"  Skipped: {item.name}")
+            continue
+        try:
+            if item.is_dir():
+                if dest.exists():
+                    if dest.is_dir():
+                        shutil.rmtree(dest)
+                    else:
+                        dest.unlink()
+                _copy_template_traversable(item, dest, target_dir)
+            else:
+                if dest.exists() and dest.is_dir():
+                    shutil.rmtree(dest)
+                _copy_template_traversable(item, dest, target_dir)
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        copied += 1
+        print(f"  Created: {item.name}")
+
+    print(
+        f"\nDone. {copied} scaffolded, {skipped} skipped "
+        f"(template=multibrand in {target_dir})."
+    )
+
+
+def app_init(args: argparse.Namespace) -> None:
+    """Handles the 'init' command -- copies skills or scaffolds templates."""
+    raw_target = Path(getattr(args, "target_dir", "."))
+    if raw_target.is_symlink():
+        print(
+            f"ERROR: Symlinks are not permitted for --target-dir: {raw_target}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if raw_target.exists() and not raw_target.is_dir():
+        print(
+            f"ERROR: --target-dir is not a directory: {raw_target}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    target_dir = raw_target.resolve()
+    force = bool(getattr(args, "force", False))
+    no_input = bool(getattr(args, "no_input", False))
+    template = getattr(args, "template", None) or "default"
+
+    if template == "multibrand":
+        _init_multibrand_template(target_dir, force=force, no_input=no_input)
+        return
+    if template != "default":
+        print(
+            f"ERROR: Unknown template '{template}'. "
+            "Expected 'default' or 'multibrand'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     skills_root = Path(sys.prefix) / "share" / "cxas-scrapi" / "skills"
 
     if not skills_root.exists():
@@ -1346,10 +1553,14 @@ def app_init(args: argparse.Namespace) -> None:
 
     for item in sorted(skills_root.iterdir()):
         dest = target_dir / item.name
-        if dest.exists() and not overwrite_all:
-            choice = _prompt_overwrite(
-                item.name, getattr(args, "no_input", False)
+        if dest.is_symlink():
+            print(
+                f"ERROR: Refusing to write through symlink during init: {dest}",
+                file=sys.stderr,
             )
+            sys.exit(1)
+        if dest.exists() and not overwrite_all:
+            choice = _prompt_overwrite(item.name, no_input)
             if choice == "abort":
                 print("Aborted.")
                 sys.exit(0)

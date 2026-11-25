@@ -1,0 +1,16 @@
+{
+  "name": "projects/example-project/locations/us/apps/@@profile.profile_id@@",
+  "displayName": "@@profile.display_name@@ Assistant",
+  "rootAgent": "root_agent",
+  "globalInstruction": "global_instruction.txt",
+  "variableDeclarations": [
+    {
+      "name": "current_date",
+      "description": "Current date in ISO-8601 format.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    }
+  ]
+}

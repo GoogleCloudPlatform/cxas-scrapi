@@ -273,10 +273,10 @@ def _init_git_repo(repo_dir: Path) -> None:
 # ── 1. Target Gate & Scope Hygiene ──────────────────────────────────────
 
 
-def test_qa_pr7_target_core_rejected_api_and_cli_zero_mutations(
+def test_qa_pr7_invalid_target_rejected_api_and_cli_zero_mutations(
     tmp_path: Path,
 ) -> None:
-    """Passing target='core' fails cleanly via API and CLI with zero mutations."""
+    """Passing an unsupported target fails cleanly via API and CLI with zero mutations."""
     core, man = _make_ws(tmp_path)
     live = tmp_path / "live"
     build_app(core, man, "brand_1", "WEB", "prod", live)
@@ -288,7 +288,7 @@ def test_qa_pr7_target_core_rejected_api_and_cli_zero_mutations(
     core_before = _tree_snapshot(core)
     man_before = _tree_snapshot(man)
 
-    with pytest.raises(BuildGateError, match="target='brand'"):
+    with pytest.raises(BuildGateError, match="expected 'brand' or 'core'"):
         backport_live_to_source(
             core,
             man,
@@ -296,7 +296,7 @@ def test_qa_pr7_target_core_rejected_api_and_cli_zero_mutations(
             brand_id="brand_1",
             channel="WEB",
             environment="prod",
-            target="core",
+            target="invalid",  # type: ignore[arg-type]
         )
 
     proc = _run_cli(
@@ -315,7 +315,7 @@ def test_qa_pr7_target_core_rejected_api_and_cli_zero_mutations(
             "--env",
             "prod",
             "--target",
-            "core",
+            "invalid",
         ]
     )
     assert proc.returncode != 0

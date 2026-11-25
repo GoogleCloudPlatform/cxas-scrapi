@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Console UI -> Multi-Brand Build manifest back-port (`--target brand`)."""
+"""Console UI -> Multi-Brand Build back-port (`--target brand|core`)."""
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import copy
 import difflib
+import io
 import json
 import math
 import os
@@ -28,9 +30,12 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tokenize
+import types
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -41,6 +46,7 @@ from cxas_scrapi.build.builder import (
     _paths_overlap,
     _reject_symlinks,
     _render_env_template,
+    _render_python_source,
     build_all,
     build_app,
 )
@@ -49,10 +55,12 @@ from cxas_scrapi.build.bundle_io import (
     DriftGateError,
     NormalizedResource,
     assert_safe_subpath,
+    load_json_dict_strict,
     load_mapping_strict,
     read_utf8_strict,
 )
 from cxas_scrapi.build.drift import (
+    _OPENAPI_SERVER_URL_RE,
     _canonical_openapi_schema_lines,
     _find_config_file,
     _has_app_marker,
@@ -76,6 +84,10 @@ from cxas_scrapi.build.overrides import (
     apply_append_rules_lines,
     apply_line_replacements_strict,
 )
+from cxas_scrapi.core.python_bundler import (
+    PythonBundlerError,
+    strip_shared_bundle_text,
+)
 from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
 
 if TYPE_CHECKING:
@@ -86,7 +98,23 @@ BackportScope = Literal["channel", "brand"]
 
 _GIT_BRANCH_RE = re.compile(r"^[a-zA-Z0-9._/-]+$")
 _PLACEHOLDER_TOKEN_RE = re.compile(r"(@@[^@\s]+@@)")
+_BRAND_SCOPED_TOKEN_RE = re.compile(
+    r"^@@(profile\.lexicon|profile\.urls|routing)\.([^@]+)@@$"
+)
+_COND_START_RE = re.compile(
+    r"^\{@start(Channel|Profile|AgentEnabled|ToolEnabled)_([^}]+)\}$"
+)
+_COND_END_RE = re.compile(
+    r"^\{@end(Channel|Profile|AgentEnabled|ToolEnabled)_([^}]+)\}$"
+)
+_COND_INLINE_RE = re.compile(
+    r"\{@start(Channel|Profile|AgentEnabled|ToolEnabled)_([^}]+)\}"
+    r"([^\n]*?)"
+    r"\{@end\1_\2\}"
+)
 _TOOL_PAYLOAD_KEYS = ("openApiTool", "dataStoreTool", "pythonFunction")
+_PY_STR_PREFIX_RE = re.compile(r"^([rRuUbBfF]*)('''|\"\"\"|'|\")")
+_FSTRING_MIDDLE = getattr(tokenize, "FSTRING_MIDDLE", None)
 
 
 class _CleanYamlDumper(yaml.SafeDumper):
@@ -481,6 +509,24 @@ def _reverse_url_tokens(
     )
 
 
+def _token_defined_for_all_brands(manifests: Manifests, tok: str) -> bool:
+    """Return True when every built brand can resolve ``tok``."""
+    m_tok = _BRAND_SCOPED_TOKEN_RE.match(tok)
+    if m_tok is None:
+        return True
+    kind, key = m_tok.group(1), m_tok.group(2)
+    for b_id in sorted(manifests.policies):
+        if kind == "profile.lexicon":
+            defined = key in manifests.profile(b_id).lexicon
+        elif kind == "profile.urls":
+            defined = key in manifests.profile(b_id).urls
+        else:
+            defined = key in manifests.policy(b_id).api_routing
+        if not defined:
+            return False
+    return True
+
+
 def _extract_line_replacement_pairs(
     base_lines: list[str],
     live_lines: list[str],
@@ -768,6 +814,76 @@ def _load_normalized_tool(
     return norm_tj, oa_canon, oa_raw
 
 
+def _validate_openapi_schema_compat(
+    res_id: str,
+    ours_oa_canon: list[str] | None,
+    live_oa_canon: list[str] | None,
+    ours_oa_raw: str | None,
+    live_oa_raw: str | None,
+    *,
+    new_url: str | None = None,
+    new_desc: str | None = None,
+    allow_schema_desc_update: bool = False,
+    error_suffix: str,
+) -> None:
+    if ours_oa_canon == live_oa_canon:
+        return
+    if ours_oa_raw is None or live_oa_raw is None:
+        raise BuildGateError(
+            f"Cannot backport structural OpenAPI schema change on "
+            f"{res_id}{error_suffix}"
+        )
+    ours_doc = _safe_load_yaml_text(
+        ours_oa_raw, context=f"{res_id} OpenAPI schema (source)"
+    )
+    live_doc = _safe_load_yaml_text(
+        live_oa_raw, context=f"{res_id} OpenAPI schema (live)"
+    )
+    if not isinstance(ours_doc, dict) or not isinstance(live_doc, dict):
+        raise BuildGateError(
+            f"Cannot backport structural OpenAPI schema change on "
+            f"{res_id}{error_suffix}"
+        )
+    exp_doc = copy.deepcopy(ours_doc)
+    live_cmp = copy.deepcopy(live_doc)
+    exp_doc["servers"] = [{"url": CES_ENV_VAR_PLACEHOLDER}]
+    live_cmp["servers"] = [{"url": CES_ENV_VAR_PLACEHOLDER}]
+
+    if (
+        new_url is not None
+        and isinstance(exp_doc.get("paths"), dict)
+        and len(exp_doc["paths"]) == 1
+    ):
+        new_ep = urlsplit(new_url).path or "/"
+        old_ep = next(iter(exp_doc["paths"].keys()))
+        exp_doc["paths"] = {new_ep: exp_doc["paths"][old_ep]}
+
+    if exp_doc == live_cmp:
+        return
+
+    if allow_schema_desc_update and new_desc is not None:
+        exp_desc_doc = copy.deepcopy(exp_doc)
+        if isinstance(exp_desc_doc.get("info"), dict):
+            exp_desc_doc["info"]["description"] = new_desc
+        if (
+            isinstance(exp_desc_doc.get("paths"), dict)
+            and len(exp_desc_doc["paths"]) == 1
+        ):
+            ops = next(iter(exp_desc_doc["paths"].values()))
+            if isinstance(ops, dict) and len(ops) == 1:
+                op_obj = next(iter(ops.values()))
+                if isinstance(op_obj, dict):
+                    op_obj["summary"] = new_desc
+                    op_obj["description"] = new_desc
+        if exp_desc_doc == live_cmp:
+            return
+
+    raise BuildGateError(
+        f"Cannot backport structural OpenAPI schema change on "
+        f"{res_id}{error_suffix}"
+    )
+
+
 def _tool_payload(tj: Mapping[str, Any]) -> Mapping[str, Any]:
     """Return the tool sub-object carrying `description`/`url` fields."""
     for sub_k in _TOOL_PAYLOAD_KEYS:
@@ -849,7 +965,9 @@ def _check_python_bundle_and_extra_files(
     ours_norm: Mapping[str, NormalizedResource],
     live_norm: Mapping[str, NormalizedResource],
     brand_id: str,
-) -> None:
+    target: BackportTarget,
+) -> dict[str, list[str]]:
+    changed_py_files: dict[str, list[str]] = {}
     for res_id in changed_res_ids:
         ours_obj = json.loads(ours_norm[res_id].normalized)
         live_obj = json.loads(live_norm[res_id].normalized)
@@ -873,10 +991,491 @@ def _check_python_bundle_and_extra_files(
             for k in set(ours_extra) | set(live_extra)
             if ours_extra.get(k) != live_extra.get(k)
         )
-        raise BuildGateError(
-            f"Cannot backport Python code edits ({diff_py}) on {res_id} "
-            f"into profiles/{brand_id}/overrides.yaml; edit core/ directly."
+        if target == "brand":
+            raise BuildGateError(
+                f"Cannot backport Python code edits ({diff_py}) on {res_id} "
+                f"into profiles/{brand_id}/overrides.yaml; re-run with "
+                "--target core."
+            )
+        missing_in_live = sorted(set(ours_extra) - set(live_extra))
+        if missing_in_live:
+            raise BuildGateError(
+                f"Cannot backport deleted Python entrypoint(s) "
+                f"{missing_in_live} on {res_id}."
+            )
+        changed_py_files[res_id] = diff_py
+    return changed_py_files
+
+
+def _reverse_tokens_in_python_strings(
+    clean_py: str,
+    rev_pairs: Sequence[tuple[str, str]],
+    svc_patterns: Sequence[tuple[re.Pattern[str], str]],
+    render_fn: Callable[[str], str],
+) -> str:
+    """Reverse-tokenize only Python string literals, never identifiers."""
+    lines = clean_py.splitlines(keepends=True)
+    line_offsets: list[int] = [0]
+    for ln in lines:
+        line_offsets.append(line_offsets[-1] + len(ln))
+
+    def _to_offset(pos: tuple[int, int]) -> int:
+        row, col = pos
+        return line_offsets[row - 1] + col
+
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(clean_py).readline))
+    except (tokenize.TokenError, IndentationError):
+        return clean_py
+
+    edits: list[tuple[int, int, str]] = []
+    for tok in tokens:
+        if tok.type == tokenize.STRING:
+            m = _PY_STR_PREFIX_RE.match(tok.string)
+            if not m:
+                continue
+            prefix, quote = m.group(1), m.group(2)
+            if "b" in prefix.lower():
+                continue
+            body = tok.string[len(prefix) + len(quote) : -len(quote)]
+            new_body = _reverse_tokens(body, rev_pairs, svc_patterns, render_fn)
+            if new_body != body:
+                edits.append(
+                    (
+                        _to_offset(tok.start),
+                        _to_offset(tok.end),
+                        f"{prefix}{quote}{new_body}{quote}",
+                    )
+                )
+        elif _FSTRING_MIDDLE is not None and tok.type == _FSTRING_MIDDLE:
+            new_seg = _reverse_tokens(
+                tok.string, rev_pairs, svc_patterns, render_fn
+            )
+            if new_seg != tok.string:
+                edits.append(
+                    (_to_offset(tok.start), _to_offset(tok.end), new_seg)
+                )
+
+    if not edits:
+        return clean_py
+    result = clean_py
+    for start_off, end_off, replacement in reversed(edits):
+        result = result[:start_off] + replacement + result[end_off:]
+    return result
+
+
+def _reverse_python_code_safely(
+    raw_py: str,
+    py_path: Path,
+    *,
+    manifests: Manifests,
+    environment: str,
+    rev_pairs: Sequence[tuple[str, str]],
+    svc_patterns: Sequence[tuple[re.Pattern[str], str]],
+    render_fn: Callable[[str], str],
+) -> str:
+    try:
+        clean_py = strip_shared_bundle_text(raw_py, py_path).replace(
+            "\r\n", "\n"
         )
+    except PythonBundlerError as exc:
+        raise BuildGateError(str(exc)) from exc
+
+    try:
+        ast.parse(clean_py, filename=str(py_path))
+    except SyntaxError as exc:
+        raise BuildGateError(
+            f"Cannot backport invalid Python syntax in {py_path}: {exc}"
+        ) from exc
+
+    cand_py = _reverse_tokens_in_python_strings(
+        clean_py, rev_pairs, svc_patterns, render_fn
+    )
+    if cand_py == clean_py:
+        return clean_py
+
+    try:
+        rendered_source = _render_python_source(
+            cand_py,
+            py_path,
+            types.SimpleNamespace(
+                process_conditional_blocks=lambda s: s,
+                substitute_tokens=render_fn,
+            ),
+        )
+    except BuildError:
+        return clean_py
+    if rendered_source != clean_py:
+        return clean_py
+
+    for b_id, pol in manifests.policies.items():
+        for ch in pol.channels:
+            r_fn = _make_token_renderer(manifests, b_id, ch, environment)
+            try:
+                _render_python_source(
+                    cand_py,
+                    py_path,
+                    types.SimpleNamespace(
+                        process_conditional_blocks=lambda s: s,
+                        substitute_tokens=r_fn,
+                    ),
+                )
+            except BuildError:
+                return clean_py
+    return cand_py
+
+
+def _has_reachable_inactive_inline(
+    text: str, eval_fn: Callable[[str, str], bool]
+) -> bool:
+    for m in _COND_INLINE_RE.finditer(text):
+        if not eval_fn(m.group(1), m.group(2)):
+            return True
+        if _has_reachable_inactive_inline(m.group(3), eval_fn):
+            return True
+    return False
+
+
+def _analyze_inline_conditionals(
+    r_line: str, eval_fn: Callable[[str, str], bool]
+) -> tuple[str, list[str]]:
+    if "{@start" not in r_line:
+        return "none", []
+    top_matches = list(_COND_INLINE_RE.finditer(r_line))
+    if not top_matches:
+        return "none", []
+    outside = _COND_INLINE_RE.sub("", r_line)
+    if outside.strip() == "" and all(
+        not eval_fn(m.group(1), m.group(2)) for m in top_matches
+    ):
+        expanded: list[str] = []
+        if len(top_matches) == 1:
+            m0 = top_matches[0]
+            lead_ws = r_line[: m0.start()]
+            trail_ws = r_line[m0.end() :]
+            expanded.extend(
+                [
+                    f"{{@start{m0.group(1)}_{m0.group(2)}}}",
+                    f"{lead_ws}{m0.group(3)}{trail_ws}",
+                    f"{{@end{m0.group(1)}_{m0.group(2)}}}",
+                ]
+            )
+        else:
+            for m in top_matches:
+                expanded.extend(
+                    [
+                        f"{{@start{m.group(1)}_{m.group(2)}}}",
+                        m.group(3),
+                        f"{{@end{m.group(1)}_{m.group(2)}}}",
+                    ]
+                )
+        return "pure_inactive", expanded
+    if _has_reachable_inactive_inline(r_line, eval_fn):
+        return "mixed_inactive", []
+    return "none", []
+
+
+def _eval_inline_conditionals_line(
+    r_line: str, eval_fn: Callable[[str, str], bool]
+) -> str:
+    """Evaluate inline `{@start...}...{@end...}` blocks on one raw line."""
+    cur = r_line
+    while "{@start" in cur:
+        nxt = _COND_INLINE_RE.sub(
+            lambda m: m.group(3) if eval_fn(m.group(1), m.group(2)) else "",
+            cur,
+        )
+        if nxt == cur:
+            break
+        cur = nxt
+    return cur
+
+
+def _align_raw_lines_to_base_spans(
+    emit_to_raw_line: Sequence[str],
+    base_split: Sequence[str],
+    *,
+    eval_fn: Callable[[str, str], bool],
+    render_fn: Callable[[str], str] | None = None,
+) -> list[tuple[int, int]] | None:
+    """Map each emitted raw line to a contiguous `[start, end)` base span."""
+    n_raw = len(emit_to_raw_line)
+    n_base = len(base_split)
+    if n_raw == n_base:
+        return [(i, i + 1) for i in range(n_raw)]
+    if n_raw == 0 or n_base == 0:
+        return None
+
+    # 1. Exact alignment using `render_fn` when available (handles any
+    # combination of single-line and multi-line token expansions cleanly).
+    if render_fn is not None:
+        spans: list[tuple[int, int]] = []
+        cursor = 0
+        matched = True
+        for r_line in emit_to_raw_line:
+            rendered = render_fn(
+                _eval_inline_conditionals_line(r_line, eval_fn)
+            ).replace("\r\n", "\n")
+            parts = rendered.split("\n")
+            end = cursor + len(parts)
+            if end > n_base or list(base_split[cursor:end]) != parts:
+                matched = False
+                break
+            spans.append((cursor, end))
+            cursor = end
+        if matched and cursor == n_base:
+            return spans
+
+    # 2. Structural anchor alignment without `render_fn`: literal lines match
+    # 1:1 while a single raw line containing a multi-line token maps to its
+    # expanded `base_split` slice.
+    eval_raw = [
+        _eval_inline_conditionals_line(ln, eval_fn) for ln in emit_to_raw_line
+    ]
+    opcodes = difflib.SequenceMatcher(
+        None, eval_raw, list(base_split), autojunk=False
+    ).get_opcodes()
+    spans_by_raw: list[tuple[int, int] | None] = [None] * n_raw
+    for tag, ri1, ri2, bi1, bi2 in opcodes:
+        if tag == "equal":
+            for k in range(ri2 - ri1):
+                spans_by_raw[ri1 + k] = (bi1 + k, bi1 + k + 1)
+        elif tag == "replace":
+            r_len = ri2 - ri1
+            b_len = bi2 - bi1
+            if r_len == 1 and b_len >= 1:
+                spans_by_raw[ri1] = (bi1, bi2)
+            elif r_len == b_len:
+                for k in range(r_len):
+                    spans_by_raw[ri1 + k] = (bi1 + k, bi1 + k + 1)
+            else:
+                return None
+        else:
+            return None
+
+    if any(s is None for s in spans_by_raw):
+        return None
+    resolved = [s for s in spans_by_raw if s is not None]
+    if (
+        resolved[0][0] != 0
+        or resolved[-1][1] != n_base
+        or any(b_e <= b_s for b_s, b_e in resolved)
+        or any(
+            resolved[i][1] != resolved[i + 1][0]
+            for i in range(len(resolved) - 1)
+        )
+    ):
+        return None
+    return resolved
+
+
+def _patch_core_instruction_preserving_conditionals(
+    raw_core_text: str,
+    base_built_text: str,
+    live_built_text: str,
+    *,
+    brand_id: str,
+    channel: str,
+    disabled_agents: set[str],
+    disabled_tools: set[str],
+    rev_fn: Callable[[str], str],
+    render_fn: Callable[[str], str] | None = None,
+) -> str:
+    """Patch a `core/` prompt while keeping active and inactive conditionals."""
+
+    def _eval_cond(kind: str, arg: str) -> bool:
+        if kind == "Channel":
+            return arg == channel
+        if kind == "Profile":
+            return arg == brand_id
+        if kind == "AgentEnabled":
+            return arg not in disabled_agents
+        if kind == "ToolEnabled":
+            return arg not in disabled_tools
+        return True
+
+    raw_norm = raw_core_text.replace("\r\n", "\n")
+    raw_lines = raw_norm.splitlines()
+    base_split = base_built_text.replace("\r\n", "\n").splitlines()
+    live_split = live_built_text.replace("\r\n", "\n").splitlines()
+
+    pre_interstitial: dict[int, list[str]] = {}
+    emit_to_raw_line: list[str] = []
+    pending_struct: list[str] = []
+    stack: list[tuple[str, str, bool]] = []
+    has_active_cond = False
+
+    for r_line in raw_lines:
+        stripped = r_line.strip()
+        m_s = _COND_START_RE.match(stripped)
+        if m_s:
+            k, a = m_s.group(1), m_s.group(2)
+            active = _eval_cond(k, a)
+            if active and all(item[2] for item in stack):
+                has_active_cond = True
+            stack.append((k, a, active))
+            pending_struct.append(r_line)
+            continue
+        m_e = _COND_END_RE.match(stripped)
+        if m_e:
+            if stack:
+                stack.pop()
+            pending_struct.append(r_line)
+            continue
+        if all(item[2] for item in stack):
+            if "{@start" in r_line:
+                for m_inl in _COND_INLINE_RE.finditer(r_line):
+                    if _eval_cond(m_inl.group(1), m_inl.group(2)):
+                        has_active_cond = True
+            emit_idx = len(emit_to_raw_line)
+            if pending_struct:
+                pre_interstitial[emit_idx] = list(pending_struct)
+                pending_struct.clear()
+            emit_to_raw_line.append(r_line)
+        else:
+            pending_struct.append(r_line)
+
+    trailing_struct = list(pending_struct)
+
+    if (
+        not raw_norm.endswith("\n")
+        and len(emit_to_raw_line) == len(base_split) + 1
+    ):
+        tail_kind, tail_exp = _analyze_inline_conditionals(
+            emit_to_raw_line[-1], _eval_cond
+        )
+        if tail_kind == "pure_inactive":
+            last_idx = len(emit_to_raw_line) - 1
+            emit_to_raw_line.pop()
+            tail_pre = pre_interstitial.pop(last_idx, [])
+            trailing_struct = [*tail_pre, *tail_exp, *trailing_struct]
+
+    raw_spans = _align_raw_lines_to_base_spans(
+        emit_to_raw_line,
+        base_split,
+        eval_fn=_eval_cond,
+        render_fn=render_fn,
+    )
+    if raw_spans is not None:
+        base_to_raw: list[int] = [-1] * len(base_split)
+        raw_bounds: dict[int, int] = {len(base_split): len(raw_spans)}
+        for r_idx, (b_s, b_e) in enumerate(raw_spans):
+            raw_bounds[b_s] = r_idx
+            for b_i in range(b_s, b_e):
+                base_to_raw[b_i] = r_idx
+
+        opcodes = difflib.SequenceMatcher(
+            None, base_split, live_split, autojunk=False
+        ).get_opcodes()
+        base_to_live: dict[int, int] = {}
+        dirty_raw = [False] * len(raw_spans)
+        for tag, i1, i2, j1, _j2 in opcodes:
+            if tag == "equal":
+                for k in range(i2 - i1):
+                    base_to_live[i1 + k] = j1 + k
+            elif tag in ("replace", "delete"):
+                for b_i in range(i1, i2):
+                    dirty_raw[base_to_raw[b_i]] = True
+            elif tag == "insert" and i1 not in raw_bounds:
+                dirty_raw[base_to_raw[i1]] = True
+
+        out_raw: list[str] = []
+        live_cursor = 0
+        r_idx = 0
+        n_raw = len(raw_spans)
+        while r_idx < n_raw:
+            if not dirty_raw[r_idx]:
+                b_s, b_e = raw_spans[r_idx]
+                l_s = base_to_live[b_s]
+                l_e = base_to_live[b_e - 1] + 1
+                if live_cursor < l_s:
+                    if r_idx in pre_interstitial:
+                        out_raw.extend(pre_interstitial.pop(r_idx))
+                    for l_ln in live_split[live_cursor:l_s]:
+                        out_raw.append(rev_fn(l_ln))
+                out_raw.extend(pre_interstitial.get(r_idx, ()))
+                out_raw.append(emit_to_raw_line[r_idx])
+                live_cursor = l_e
+                r_idx += 1
+            else:
+                r_start = r_idx
+                while r_idx < n_raw and dirty_raw[r_idx]:
+                    r_idx += 1
+                r_end = r_idx
+                live_end = (
+                    base_to_live[raw_spans[r_end][0]]
+                    if r_end < n_raw
+                    else len(live_split)
+                )
+                for d_idx in range(r_start, r_end):
+                    out_raw.extend(pre_interstitial.get(d_idx, ()))
+                    r_ln = emit_to_raw_line[d_idx]
+                    inl_kind, inl_exp = _analyze_inline_conditionals(
+                        r_ln, _eval_cond
+                    )
+                    if inl_kind == "pure_inactive":
+                        out_raw.extend(inl_exp)
+                    elif inl_kind == "mixed_inactive":
+                        raise BuildGateError(
+                            "Cannot backport modification/deletion of line "
+                            "mixing active text with an inactive inline "
+                            f"conditional ({r_ln.strip()!r}); edit this line "
+                            "in core/ directly."
+                        )
+                for l_ln in live_split[live_cursor:live_end]:
+                    out_raw.append(rev_fn(l_ln))
+                live_cursor = live_end
+
+        if live_cursor < len(live_split):
+            for l_ln in live_split[live_cursor:]:
+                out_raw.append(rev_fn(l_ln))
+        out_raw.extend(trailing_struct)
+        return "\n".join(out_raw) + ("\n" if out_raw else "")
+
+    if has_active_cond:
+        raise BuildGateError(
+            "Cannot safely preserve active conditional block(s) during "
+            "--target core backport because line alignment failed; edit "
+            "this file in core/ directly."
+        )
+
+    preserved_inactive: list[str] = []
+    inact_stack: list[bool] = []
+    cur_block: list[str] = []
+    for r_line in raw_lines:
+        st = r_line.strip()
+        ms = _COND_START_RE.match(st)
+        if ms:
+            act = _eval_cond(ms.group(1), ms.group(2))
+            inact_stack.append(act)
+            if not all(inact_stack):
+                cur_block.append(r_line)
+            continue
+        me = _COND_END_RE.match(st)
+        if me and inact_stack:
+            was_inact = not all(inact_stack)
+            inact_stack.pop()
+            if was_inact:
+                cur_block.append(r_line)
+                if all(inact_stack):
+                    preserved_inactive.extend(cur_block)
+                    cur_block.clear()
+            continue
+        if inact_stack and not all(inact_stack):
+            cur_block.append(r_line)
+            continue
+        inl_kind, inl_exp = _analyze_inline_conditionals(r_line, _eval_cond)
+        if inl_kind == "pure_inactive":
+            preserved_inactive.extend(inl_exp)
+        elif inl_kind == "mixed_inactive":
+            raise BuildGateError(
+                "Cannot backport modification/deletion of line mixing active "
+                "text with an inactive inline conditional "
+                f"({r_line.strip()!r}); edit this line in core/ directly."
+            )
+
+    rebuilt = [*preserved_inactive, *[rev_fn(ln) for ln in live_split]]
+    return "\n".join(rebuilt) + ("\n" if rebuilt else "")
 
 
 def _strip_brand_overrides_for_baseline(
@@ -1488,6 +2087,891 @@ def _apply_brand_target_backport(
     return [ov_path], changes
 
 
+def _write_core_json_formatted(path: Path, payload: dict[str, Any]) -> None:
+    if path.is_symlink():
+        raise BuildGateError(f"Refusing to write through symlink: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_core_mapping_formatted(path: Path, payload: dict[str, Any]) -> None:
+    if path.suffix.lower() in {".yaml", ".yml"}:
+        _dump_yaml_clean(path, payload)
+    else:
+        _write_core_json_formatted(path, payload)
+
+
+def _apply_core_target_backport(
+    *,
+    core_dir: Path,
+    manifests_dir: Path,
+    manifests: Manifests,
+    brand_id: str,
+    channel: str,
+    environment: str,
+    ours_bundle: Path,
+    live_bundle: Path,
+    unoverridden_bundle: Path,
+    changed_res_ids: Sequence[str],
+    changed_py_files: Mapping[str, list[str]],
+    is_promotion_only: bool,
+) -> tuple[list[Path], list[BackportChange]]:
+    rev_pairs, svc_patterns, render_fn = _build_reverse_token_map(
+        manifests, brand_id, channel, environment
+    )
+    # Shared core/ is built for every brand: never lift literals into
+    # brand-scoped tokens that some sister brand cannot resolve.
+    rev_pairs = [
+        (val, tok)
+        for val, tok in rev_pairs
+        if _token_defined_for_all_brands(manifests, tok)
+    ]
+
+    def _rev(s: str) -> str:
+        return _reverse_tokens(s, rev_pairs, svc_patterns, render_fn)
+
+    policy = manifests.policy(brand_id)
+    ch_caps = policy.channels[channel]
+    disabled_agents = set(ch_caps.disabled_agents)
+    disabled_tools = set(ch_caps.disabled_tools)
+
+    # Include displayNames of pruned core agents/tools so {@startAgentEnabled_*}
+    # matching displayName is evaluated identically to builder.py.
+    if (core_dir / "agents").is_dir():
+        for ag_p in sorted((core_dir / "agents").iterdir()):
+            if not ag_p.is_dir():
+                continue
+            aj_p = _find_config_file(
+                ag_p, ag_p.name, core_dir, label=f"core agents/{ag_p.name}"
+            )
+            if aj_p is not None:
+                d_name = load_mapping_strict(
+                    aj_p, context=f"core agents/{ag_p.name}"
+                ).get("displayName", "")
+                if ag_p.name in disabled_agents or d_name in disabled_agents:
+                    disabled_agents.add(ag_p.name)
+                    if d_name:
+                        disabled_agents.add(str(d_name))
+    if (core_dir / "tools").is_dir():
+        for tl_p in sorted((core_dir / "tools").iterdir()):
+            if not tl_p.is_dir():
+                continue
+            tj_p = _find_config_file(
+                tl_p, tl_p.name, core_dir, label=f"core tools/{tl_p.name}"
+            )
+            if tj_p is not None:
+                d_name = load_mapping_strict(
+                    tj_p, context=f"core tools/{tl_p.name}"
+                ).get("displayName", "")
+                if tl_p.name in disabled_tools or d_name in disabled_tools:
+                    disabled_tools.add(tl_p.name)
+                    if d_name:
+                        disabled_tools.add(str(d_name))
+
+    ov_path = manifests_dir / "profiles" / brand_id / "overrides.yaml"
+    assert_safe_subpath(ov_path, manifests_dir, label="overrides.yaml")
+    orig_ov_yaml = _load_yaml_dict_optional(ov_path)
+    ov_yaml = copy.deepcopy(orig_ov_yaml)
+
+    modified_paths: list[Path] = []
+    changes: list[BackportChange] = []
+
+    def _mark_modified(p: Path) -> None:
+        if p not in modified_paths:
+            modified_paths.append(p)
+
+    for res_id in changed_res_ids:
+        if res_id == "app":
+            ours_app = _normalize_app_obj(
+                _load_bundle_app_config(ours_bundle, label="ours app config")
+            )
+            live_app = _normalize_app_obj(
+                _load_bundle_app_config(live_bundle, label="live app config")
+            )
+            if ours_app != live_app:
+                diff_keys = sorted(
+                    k
+                    for k in set(ours_app) | set(live_app)
+                    if ours_app.get(k) != live_app.get(k)
+                )
+                raise BuildGateError(
+                    f"Cannot backport structural app config change on keys "
+                    f"{diff_keys} with --target core."
+                )
+
+            base_gi = _read_optional_text(
+                unoverridden_bundle / "global_instruction.txt",
+                context="baseline global_instruction.txt",
+            )
+            ours_gi = _read_optional_text(
+                ours_bundle / "global_instruction.txt",
+                context="ours global_instruction.txt",
+            )
+            live_gi = _read_optional_text(
+                live_bundle / "global_instruction.txt",
+                context="live global_instruction.txt",
+            )
+            base_gi_l = base_gi.replace("\r\n", "\n").splitlines()
+            ours_gi_l = ours_gi.replace("\r\n", "\n").splitlines()
+            live_gi_l = live_gi.replace("\r\n", "\n").splitlines()
+
+            if ours_gi_l != live_gi_l or (
+                is_promotion_only and base_gi_l != live_gi_l
+            ):
+                core_gi_path = core_dir / "global_instruction.txt"
+                assert_safe_subpath(
+                    core_gi_path, core_dir, label="core global_instruction.txt"
+                )
+                raw_core_gi = _read_optional_text(
+                    core_gi_path, context="core global_instruction.txt"
+                )
+                id_block = render_fn(_build_identity_block(manifests, brand_id))
+                live_gi_norm = live_gi.replace("\r\n", "\n")
+                base_gi_norm = base_gi.replace("\r\n", "\n")
+                if "@@profile.identity_block@@" in raw_core_gi:
+                    if id_block and id_block not in live_gi_norm:
+                        raise BuildGateError(
+                            f"Cannot backport global_instruction.txt: live "
+                            f"modified the generated '# Profile:' identity "
+                            f"block; edit profiles/{brand_id}/identity.yaml."
+                        )
+                    occ_cnt = max(
+                        1, raw_core_gi.count("@@profile.identity_block@@")
+                    )
+                    b_tok = (
+                        base_gi_norm.replace(
+                            id_block, "@@profile.identity_block@@", occ_cnt
+                        )
+                        if id_block
+                        else base_gi_norm
+                    )
+                    l_tok = (
+                        live_gi_norm.replace(
+                            id_block, "@@profile.identity_block@@", occ_cnt
+                        )
+                        if id_block
+                        else live_gi_norm
+                    )
+
+                    def _gi_rev(ln: str) -> str:
+                        if "@@profile.identity_block@@" not in ln:
+                            return _rev(ln)
+                        return "@@profile.identity_block@@".join(
+                            _rev(part)
+                            for part in ln.split("@@profile.identity_block@@")
+                        )
+
+                    def _gi_render(ln: str) -> str:
+                        if "@@profile.identity_block@@" not in ln:
+                            return render_fn(ln)
+                        return "@@profile.identity_block@@".join(
+                            render_fn(part)
+                            for part in ln.split("@@profile.identity_block@@")
+                        )
+
+                    patched_core_gi = (
+                        _patch_core_instruction_preserving_conditionals(
+                            raw_core_gi,
+                            b_tok,
+                            l_tok,
+                            brand_id=brand_id,
+                            channel=channel,
+                            disabled_agents=disabled_agents,
+                            disabled_tools=disabled_tools,
+                            rev_fn=_gi_rev,
+                            render_fn=_gi_render,
+                        )
+                    )
+                else:
+                    if id_block and not live_gi_norm.startswith(id_block):
+                        raise BuildGateError(
+                            f"Cannot backport global_instruction.txt: live "
+                            f"modified the generated '# Profile:' identity "
+                            f"block; edit profiles/{brand_id}/identity.yaml."
+                        )
+                    b_after = base_gi_norm[len(id_block) :]
+                    l_after = live_gi_norm[len(id_block) :]
+                    b_tail = (
+                        b_after[2:]
+                        if b_after.startswith("\n\n")
+                        else b_after.lstrip("\n")
+                    )
+                    l_tail = (
+                        l_after[2:]
+                        if l_after.startswith("\n\n")
+                        else l_after.lstrip("\n")
+                    )
+                    patched_core_gi = (
+                        _patch_core_instruction_preserving_conditionals(
+                            raw_core_gi,
+                            b_tail,
+                            l_tail,
+                            brand_id=brand_id,
+                            channel=channel,
+                            disabled_agents=disabled_agents,
+                            disabled_tools=disabled_tools,
+                            rev_fn=_rev,
+                            render_fn=render_fn,
+                        )
+                    )
+                core_gi_path.write_text(patched_core_gi, encoding="utf-8")
+                _mark_modified(core_gi_path)
+
+                if isinstance(ov_yaml.get("global_instruction"), dict):
+                    gi_d = dict(ov_yaml["global_instruction"])
+                    gi_d.pop("instruction", None)
+                    gi_d.pop("replace_lines", None)
+                    gi_d.pop("append_rules", None)
+                    if isinstance(gi_d.get("channels"), dict):
+                        gi_d["channels"].pop(channel, None)
+                    cleaned_gi = _prune_empty_dict(gi_d)
+                    if cleaned_gi:
+                        ov_yaml["global_instruction"] = cleaned_gi
+                    else:
+                        ov_yaml.pop("global_instruction", None)
+
+                changes.append(
+                    BackportChange(
+                        resource_id="app",
+                        target_file="core/global_instruction.txt",
+                        summary="Backported shared global_instruction.txt",
+                    )
+                )
+            continue
+
+        if res_id.startswith("agents/"):
+            agent_id = res_id.split("/", 1)[1]
+            ours_aj_raw = _load_bundle_resource_config(
+                ours_bundle, "agents", agent_id, label=f"ours {res_id}"
+            )
+            base_aj_raw = _load_bundle_resource_config(
+                unoverridden_bundle,
+                "agents",
+                agent_id,
+                label=f"baseline {res_id}",
+            )
+            live_aj_raw = _load_bundle_resource_config(
+                live_bundle, "agents", agent_id, label=f"live {res_id}"
+            )
+            ours_aj = normalize_json_obj(ours_aj_raw, is_root=True)
+            base_aj = normalize_json_obj(base_aj_raw, is_root=True)
+            live_aj = normalize_json_obj(live_aj_raw, is_root=True)
+            if ours_aj != live_aj:
+                changed_top = {
+                    k
+                    for k in set(ours_aj) | set(live_aj)
+                    if ours_aj.get(k) != live_aj.get(k)
+                }
+                if not changed_top.issubset({"description"}):
+                    raise BuildGateError(
+                        f"Cannot backport config keys {sorted(changed_top)} on "
+                        f"{res_id} with --target core; use --target brand for "
+                        "model/temperature or edit core/manifests."
+                    )
+
+            core_ag_dir = core_dir / "agents" / agent_id
+            core_aj_path = _find_config_file(
+                core_ag_dir, agent_id, core_dir, label=f"core {res_id}"
+            )
+            if core_aj_path is None:
+                raise BuildGateError(
+                    f"Missing core agent config under {core_ag_dir} for "
+                    f"{res_id}"
+                )
+            core_aj = load_mapping_strict(
+                core_aj_path, context=f"core {res_id}"
+            )
+
+            ag_root = dict(ov_yaml.get("agents") or {})
+            ag_ov_d = copy.deepcopy(dict(ag_root.get(agent_id) or {}))
+            ag_ch_d = dict(ag_ov_d.get("channels") or {})
+            ag_ch_entry = dict(ag_ch_d.get(channel) or {})
+            summary_parts: list[str] = []
+
+            if ours_aj.get("description") != live_aj.get("description") or (
+                is_promotion_only
+                and base_aj.get("description") != live_aj.get("description")
+            ):
+                if "description" in live_aj:
+                    core_aj["description"] = _rev(
+                        str(live_aj.get("description", ""))
+                    )
+                else:
+                    core_aj.pop("description", None)
+                _write_core_mapping_formatted(core_aj_path, core_aj)
+                _mark_modified(core_aj_path)
+                ag_ov_d.pop("description", None)
+                ag_ch_entry.pop("description", None)
+                summary_parts.append("description")
+
+            base_in_path = _resolve_agent_instruction_path(
+                unoverridden_bundle, agent_id, base_aj_raw
+            )
+            ours_in_path = _resolve_agent_instruction_path(
+                ours_bundle, agent_id, ours_aj_raw
+            )
+            live_in_path = _resolve_agent_instruction_path(
+                live_bundle, agent_id, live_aj_raw
+            )
+            base_in = _read_optional_text(
+                base_in_path, context=f"baseline {res_id} instruction"
+            )
+            ours_in = _read_optional_text(
+                ours_in_path, context=f"ours {res_id} instruction"
+            )
+            live_in = _read_optional_text(
+                live_in_path, context=f"live {res_id} instruction"
+            )
+            if ours_in.replace("\r\n", "\n").splitlines() != live_in.replace(
+                "\r\n", "\n"
+            ).splitlines() or (
+                is_promotion_only
+                and base_in.replace("\r\n", "\n").splitlines()
+                != live_in.replace("\r\n", "\n").splitlines()
+            ):
+                core_in_path = _resolve_agent_instruction_path(
+                    core_dir, agent_id, core_aj
+                )
+                assert_safe_subpath(
+                    core_in_path, core_dir, label=f"core {res_id} instruction"
+                )
+                raw_core_in = _read_optional_text(
+                    core_in_path, context=f"core {res_id} instruction"
+                )
+                patched_in = _patch_core_instruction_preserving_conditionals(
+                    raw_core_in,
+                    base_in,
+                    live_in,
+                    brand_id=brand_id,
+                    channel=channel,
+                    disabled_agents=disabled_agents,
+                    disabled_tools=disabled_tools,
+                    rev_fn=_rev,
+                    render_fn=render_fn,
+                )
+                core_in_path.parent.mkdir(parents=True, exist_ok=True)
+                core_in_path.write_text(patched_in, encoding="utf-8")
+                _mark_modified(core_in_path)
+                for k_i in ("instruction", "replace_lines", "append_rules"):
+                    ag_ov_d.pop(k_i, None)
+                    ag_ch_entry.pop(k_i, None)
+                summary_parts.append("instruction")
+
+            for rel_py in changed_py_files.get(res_id, ()):
+                live_py_p = live_bundle / "agents" / agent_id / rel_py
+                core_py_p = core_dir / "agents" / agent_id / rel_py
+                assert_safe_subpath(
+                    live_py_p, live_bundle, label=f"live {res_id} {rel_py}"
+                )
+                assert_safe_subpath(
+                    core_py_p, core_dir, label=f"core {res_id} {rel_py}"
+                )
+                raw_py = read_utf8_strict(
+                    live_py_p, context=f"live {res_id} {rel_py}"
+                )
+                rev_py = _reverse_python_code_safely(
+                    raw_py,
+                    live_py_p,
+                    manifests=manifests,
+                    environment=environment,
+                    rev_pairs=rev_pairs,
+                    svc_patterns=svc_patterns,
+                    render_fn=render_fn,
+                )
+                core_py_p.parent.mkdir(parents=True, exist_ok=True)
+                core_py_p.write_text(rev_py, encoding="utf-8")
+                _mark_modified(core_py_p)
+                summary_parts.append(rel_py)
+
+            cleaned_ch_e = _prune_empty_dict(ag_ch_entry)
+            if cleaned_ch_e:
+                ag_ch_d[channel] = cleaned_ch_e
+            else:
+                ag_ch_d.pop(channel, None)
+            if ag_ch_d:
+                ag_ov_d["channels"] = ag_ch_d
+            else:
+                ag_ov_d.pop("channels", None)
+            cleaned_ag_d = _prune_empty_dict(ag_ov_d)
+            if cleaned_ag_d:
+                ag_root[agent_id] = cleaned_ag_d
+            else:
+                ag_root.pop(agent_id, None)
+            if ag_root:
+                ov_yaml["agents"] = ag_root
+            else:
+                ov_yaml.pop("agents", None)
+
+            changes.append(
+                BackportChange(
+                    resource_id=res_id,
+                    target_file=f"core/agents/{agent_id}",
+                    summary=f"Backported core {', '.join(summary_parts)}",
+                )
+            )
+            continue
+
+        if res_id.startswith("tools/"):
+            tool_id = res_id.split("/", 1)[1]
+            err_sfx = " with --target core."
+            ours_tj, _o_oa_c, _o_oa_r = _load_normalized_tool(
+                ours_bundle, tool_id, res_id
+            )
+            base_tj, base_oa_c, base_oa_r = _load_normalized_tool(
+                unoverridden_bundle, tool_id, res_id
+            )
+            live_tj, live_oa_c, live_oa_r = _load_normalized_tool(
+                live_bundle, tool_id, res_id
+            )
+            ours_t_desc, ours_t_url = _extract_tool_json_deltas(
+                ours_tj, live_tj, res_id=res_id, error_suffix=err_sfx
+            )
+            base_t_desc, base_t_url = _extract_tool_json_deltas(
+                base_tj, live_tj, res_id=res_id, error_suffix=err_sfx
+            )
+            new_t_desc = base_t_desc if is_promotion_only else ours_t_desc
+            new_t_url = base_t_url if is_promotion_only else ours_t_url
+
+            _validate_openapi_schema_compat(
+                res_id,
+                base_oa_c,
+                live_oa_c,
+                base_oa_r,
+                live_oa_r,
+                new_url=base_t_url,
+                new_desc=new_t_desc,
+                allow_schema_desc_update=True,
+                error_suffix=err_sfx,
+            )
+
+            core_tool_dir = core_dir / "tools" / tool_id
+            core_tj_path = _find_config_file(
+                core_tool_dir, tool_id, core_dir, label=f"core {res_id}"
+            )
+            if core_tj_path is None:
+                raise BuildGateError(
+                    f"Missing core tool config under {core_tool_dir} for "
+                    f"{res_id}"
+                )
+            core_tj = load_mapping_strict(
+                core_tj_path, context=f"core {res_id}"
+            )
+            mutated_tj = False
+            t_parts: list[str] = []
+
+            to_root = dict(ov_yaml.get("tools") or {})
+            to_ov_d = copy.deepcopy(dict(to_root.get(tool_id) or {}))
+            to_ch_d = dict(to_ov_d.get("channels") or {})
+            to_ch_entry = dict(to_ch_d.get(channel) or {})
+
+            for fld, base_delta, ours_delta in (
+                ("description", base_t_desc, ours_t_desc),
+                ("url", base_t_url, ours_t_url),
+            ):
+                if base_delta is None and ours_delta is not None:
+                    to_ov_d.pop(fld, None)
+                    to_ch_entry.pop(fld, None)
+                    t_parts.append(f"{fld} (reverted override)")
+
+            rev_desc: str | None = None
+            if new_t_desc is not None and "description" not in _tool_payload(
+                live_tj
+            ):
+                core_payload = _tool_payload(core_tj)
+                if isinstance(core_payload, dict):
+                    core_payload.pop("description", None)
+                mutated_tj = True
+                to_ov_d.pop("description", None)
+                to_ch_entry.pop("description", None)
+                t_parts.append("description (cleared)")
+            elif new_t_desc is not None:
+                rev_desc = _rev(new_t_desc)
+                updated_sub = False
+                for sub_k in _TOOL_PAYLOAD_KEYS:
+                    if isinstance(core_tj.get(sub_k), dict):
+                        core_tj[sub_k]["description"] = rev_desc
+                        updated_sub = True
+                        break
+                if not updated_sub:
+                    core_tj["description"] = rev_desc
+                mutated_tj = True
+                to_ov_d.pop("description", None)
+                to_ch_entry.pop("description", None)
+                t_parts.append("description")
+
+            if new_t_url is not None:
+                rev_url = _reverse_url_tokens(
+                    new_t_url,
+                    brand_id,
+                    rev_pairs,
+                    svc_patterns,
+                    render_fn,
+                )
+                core_env_p = core_dir / "environment.json"
+                env_has_url = False
+                if core_env_p.is_file():
+                    assert_safe_subpath(
+                        core_env_p, core_dir, label="core environment.json"
+                    )
+                    env_d = load_json_dict_strict(core_env_p)
+                    env_tools = env_d.get("tools")
+                    d_name = str(core_tj.get("displayName") or tool_id)
+                    if isinstance(env_tools, dict):
+                        for kc in dict.fromkeys((d_name, tool_id)):
+                            ent = env_tools.get(kc)
+                            if isinstance(ent, dict) and isinstance(
+                                ent.get("openApiTool"), dict
+                            ):
+                                ent["openApiTool"]["url"] = rev_url
+                                env_has_url = True
+                        if env_has_url:
+                            _write_core_json_formatted(core_env_p, env_d)
+                            _mark_modified(core_env_p)
+
+                oa_cfg = core_tj.get("openApiTool")
+                if isinstance(oa_cfg, dict) and (
+                    "url" in oa_cfg or not env_has_url
+                ):
+                    oa_cfg["url"] = rev_url
+                    mutated_tj = True
+
+                to_ov_d.pop("url", None)
+                to_ch_entry.pop("url", None)
+                t_parts.append("url")
+
+            core_oa_p: Path | None = None
+            core_oa_cfg = core_tj.get("openApiTool")
+            if isinstance(core_oa_cfg, dict):
+                raw_schema = core_oa_cfg.get("openApiSchema")
+                if isinstance(raw_schema, str) and raw_schema.strip():
+                    cand_oa_p = core_dir / raw_schema.strip()
+                    if cand_oa_p.exists() or cand_oa_p.is_symlink():
+                        assert_safe_subpath(
+                            cand_oa_p,
+                            core_dir,
+                            label=f"core {res_id} OpenAPI schema",
+                        )
+                        if cand_oa_p.is_file():
+                            core_oa_p = cand_oa_p
+            if core_oa_p is None:
+                for oa_name in ("open_api_schema.yaml", "open_api_schema.yml"):
+                    cand_oa_p = core_tool_dir / "open_api_tool" / oa_name
+                    if cand_oa_p.exists() or cand_oa_p.is_symlink():
+                        assert_safe_subpath(
+                            cand_oa_p,
+                            core_dir,
+                            label=f"core {res_id} OpenAPI schema",
+                        )
+                        if cand_oa_p.is_file():
+                            core_oa_p = cand_oa_p
+                            break
+
+            if core_oa_p is not None and core_oa_p.is_file():
+                orig_core_oa = read_utf8_strict(
+                    core_oa_p, context=f"core {res_id} OpenAPI schema"
+                )
+                orig_srv_tok: str | None = None
+                for ln in orig_core_oa.splitlines():
+                    m_orig = _OPENAPI_SERVER_URL_RE.match(ln)
+                    if m_orig:
+                        orig_srv_tok = ln[len(m_orig.group(1)) :].strip()
+                        break
+
+                desired_srv_tok = orig_srv_tok
+                if (
+                    new_t_url is not None
+                    and orig_srv_tok != CES_ENV_VAR_PLACEHOLDER
+                ):
+                    ref_oa = (
+                        live_oa_r
+                        if (base_oa_c != live_oa_c and live_oa_r is not None)
+                        else orig_core_oa
+                    )
+                    ref_doc = _safe_load_yaml_text(
+                        render_fn(ref_oa),
+                        context=f"{res_id} OpenAPI schema",
+                    )
+                    ref_paths = (
+                        ref_doc.get("paths")
+                        if isinstance(ref_doc, dict)
+                        else None
+                    )
+                    parsed_raw = urlsplit(new_t_url)
+                    srv_raw = (
+                        f"{parsed_raw.scheme}://{parsed_raw.netloc}"
+                        if (
+                            parsed_raw.scheme
+                            and parsed_raw.netloc
+                            and isinstance(ref_paths, dict)
+                            and parsed_raw.path in ref_paths
+                        )
+                        else new_t_url
+                    )
+                    desired_srv_tok = _reverse_url_tokens(
+                        srv_raw,
+                        brand_id,
+                        rev_pairs,
+                        svc_patterns,
+                        render_fn,
+                    )
+
+                if base_oa_c != live_oa_c and live_oa_r is not None:
+                    cand_oa = live_oa_r
+                    if (
+                        new_t_desc is not None
+                        and rev_desc is not None
+                        and new_t_desc in cand_oa
+                    ):
+                        maybe_tok = cand_oa.replace(new_t_desc, rev_desc)
+                        if _canonical_openapi_schema_lines(
+                            render_fn(maybe_tok)
+                        ) == _canonical_openapi_schema_lines(live_oa_r):
+                            cand_oa = maybe_tok
+                    out_lines: list[str] = []
+                    for line in cand_oa.splitlines():
+                        m_srv = _OPENAPI_SERVER_URL_RE.match(line)
+                        if m_srv and desired_srv_tok is not None:
+                            out_lines.append(
+                                f"{m_srv.group(1)}{desired_srv_tok}"
+                            )
+                        else:
+                            out_lines.append(line)
+                    rebuilt_oa = "\n".join(out_lines) + (
+                        "\n" if cand_oa.endswith("\n") else ""
+                    )
+                    if rebuilt_oa != orig_core_oa:
+                        core_oa_p.write_text(rebuilt_oa, encoding="utf-8")
+                        _mark_modified(core_oa_p)
+                        if not t_parts:
+                            t_parts.append(core_oa_p.name)
+                elif (
+                    desired_srv_tok is not None
+                    and desired_srv_tok != orig_srv_tok
+                ):
+                    out_lines = []
+                    for line in orig_core_oa.splitlines():
+                        m_srv = _OPENAPI_SERVER_URL_RE.match(line)
+                        if m_srv:
+                            out_lines.append(
+                                f"{m_srv.group(1)}{desired_srv_tok}"
+                            )
+                        else:
+                            out_lines.append(line)
+                    core_oa_p.write_text(
+                        "\n".join(out_lines)
+                        + ("\n" if orig_core_oa.endswith("\n") else ""),
+                        encoding="utf-8",
+                    )
+                    _mark_modified(core_oa_p)
+
+            if mutated_tj:
+                _write_core_mapping_formatted(core_tj_path, core_tj)
+                _mark_modified(core_tj_path)
+
+            for rel_py in changed_py_files.get(res_id, ()):
+                live_py_p = live_bundle / "tools" / tool_id / rel_py
+                core_py_p = core_dir / "tools" / tool_id / rel_py
+                assert_safe_subpath(
+                    live_py_p, live_bundle, label=f"live {res_id} {rel_py}"
+                )
+                assert_safe_subpath(
+                    core_py_p, core_dir, label=f"core {res_id} {rel_py}"
+                )
+                raw_py = read_utf8_strict(
+                    live_py_p, context=f"live {res_id} {rel_py}"
+                )
+                rev_py = _reverse_python_code_safely(
+                    raw_py,
+                    live_py_p,
+                    manifests=manifests,
+                    environment=environment,
+                    rev_pairs=rev_pairs,
+                    svc_patterns=svc_patterns,
+                    render_fn=render_fn,
+                )
+                core_py_p.parent.mkdir(parents=True, exist_ok=True)
+                core_py_p.write_text(rev_py, encoding="utf-8")
+                _mark_modified(core_py_p)
+                t_parts.append(rel_py)
+
+            cleaned_tch = _prune_empty_dict(to_ch_entry)
+            if cleaned_tch:
+                to_ch_d[channel] = cleaned_tch
+            else:
+                to_ch_d.pop(channel, None)
+            if to_ch_d:
+                to_ov_d["channels"] = to_ch_d
+            else:
+                to_ov_d.pop("channels", None)
+            cleaned_to = _prune_empty_dict(to_ov_d)
+            if cleaned_to:
+                to_root[tool_id] = cleaned_to
+            else:
+                to_root.pop(tool_id, None)
+            if to_root:
+                ov_yaml["tools"] = to_root
+            else:
+                ov_yaml.pop("tools", None)
+
+            if not t_parts:
+                raise BuildGateError(
+                    f"Cannot backport structural tool change on "
+                    f"{res_id}{err_sfx}"
+                )
+            changes.append(
+                BackportChange(
+                    resource_id=res_id,
+                    target_file=f"core/tools/{tool_id}",
+                    summary=f"Backported core tool {', '.join(t_parts)}",
+                )
+            )
+            continue
+
+        if res_id.startswith("guardrails/"):
+            gr_id = res_id.split("/", 1)[1]
+            ours_gj = normalize_json_obj(
+                _load_bundle_resource_config(
+                    ours_bundle, "guardrails", gr_id, label=f"ours {res_id}"
+                ),
+                is_root=True,
+            )
+            live_gj = normalize_json_obj(
+                _load_bundle_resource_config(
+                    live_bundle, "guardrails", gr_id, label=f"live {res_id}"
+                ),
+                is_root=True,
+            )
+            core_gr_dir = core_dir / "guardrails" / gr_id
+            core_gj_path = _find_config_file(
+                core_gr_dir, gr_id, core_dir, label=f"core {res_id}"
+            )
+            if core_gj_path is None:
+                raise BuildGateError(
+                    f"Missing core guardrail config under {core_gr_dir} for "
+                    f"{res_id}"
+                )
+            core_gj = load_mapping_strict(
+                core_gj_path, context=f"core {res_id}"
+            )
+            gr_parts: list[str] = []
+
+            if ours_gj.get("description") != live_gj.get("description"):
+                if "description" in live_gj:
+                    core_gj["description"] = _rev(
+                        str(live_gj.get("description", ""))
+                    )
+                else:
+                    core_gj.pop("description", None)
+                gr_parts.append("description")
+            if (
+                isinstance(ours_gj.get("llmPolicy"), dict)
+                and isinstance(live_gj.get("llmPolicy"), dict)
+                and isinstance(core_gj.get("llmPolicy"), dict)
+                and ours_gj["llmPolicy"].get("prompt")
+                != live_gj["llmPolicy"].get("prompt")
+            ):
+                core_gj["llmPolicy"]["prompt"] = _rev(
+                    str(live_gj["llmPolicy"].get("prompt", ""))
+                )
+                gr_parts.append("llmPolicy.prompt")
+            if (
+                isinstance(ours_gj.get("llmPromptSecurity"), dict)
+                and isinstance(live_gj.get("llmPromptSecurity"), dict)
+                and isinstance(core_gj.get("llmPromptSecurity"), dict)
+            ):
+                o_cp = ours_gj["llmPromptSecurity"].get("customPolicy")
+                l_cp = live_gj["llmPromptSecurity"].get("customPolicy")
+                c_cp = core_gj["llmPromptSecurity"].get("customPolicy")
+                if (
+                    isinstance(o_cp, dict)
+                    and isinstance(l_cp, dict)
+                    and isinstance(c_cp, dict)
+                    and o_cp.get("prompt") != l_cp.get("prompt")
+                ):
+                    c_cp["prompt"] = _rev(str(l_cp.get("prompt", "")))
+                    gr_parts.append("llmPromptSecurity.customPolicy.prompt")
+
+            if not gr_parts:
+                raise BuildGateError(
+                    f"Cannot backport structural guardrail change on {res_id}."
+                )
+            _write_core_mapping_formatted(core_gj_path, core_gj)
+            _mark_modified(core_gj_path)
+            changes.append(
+                BackportChange(
+                    resource_id=res_id,
+                    target_file=f"core/guardrails/{gr_id}/{core_gj_path.name}",
+                    summary=f"Backported core guardrail {', '.join(gr_parts)}",
+                )
+            )
+            continue
+
+        raise BuildGateError(
+            f"Unsupported resource {res_id!r} for --target core."
+        )
+
+    cleaned_ov = _prune_empty_dict(ov_yaml)
+    if cleaned_ov != _prune_empty_dict(orig_ov_yaml):
+        if set(cleaned_ov.keys()) <= {"profile_id"}:
+            if ov_path.is_file():
+                ov_path.unlink()
+                _mark_modified(ov_path)
+        else:
+            _dump_yaml_clean(ov_path, cleaned_ov)
+            _mark_modified(ov_path)
+
+    return modified_paths, changes
+
+
+def _has_core_promotable_diff(
+    res_id: str,
+    unoverridden_bundle: Path,
+    live_bundle: Path,
+    *,
+    unoverridden_norm: Mapping[str, NormalizedResource],
+    live_norm: Mapping[str, NormalizedResource],
+) -> bool:
+    if unoverridden_norm[res_id].sha256 == live_norm[res_id].sha256:
+        return False
+    if res_id == "app":
+        u_gi = _read_optional_text(
+            unoverridden_bundle / "global_instruction.txt"
+        )
+        l_gi = _read_optional_text(live_bundle / "global_instruction.txt")
+        return (
+            u_gi.replace("\r\n", "\n").splitlines()
+            != l_gi.replace("\r\n", "\n").splitlines()
+        )
+    if res_id.startswith("agents/"):
+        ag_id = res_id.split("/", 1)[1]
+        u_aj_raw = _load_bundle_resource_config(
+            unoverridden_bundle, "agents", ag_id, label=f"baseline {res_id}"
+        )
+        l_aj_raw = _load_bundle_resource_config(
+            live_bundle, "agents", ag_id, label=f"live {res_id}"
+        )
+        u_aj = normalize_json_obj(u_aj_raw, is_root=True)
+        l_aj = normalize_json_obj(l_aj_raw, is_root=True)
+        if u_aj.get("description") != l_aj.get("description"):
+            return True
+        u_in = _read_optional_text(
+            _resolve_agent_instruction_path(
+                unoverridden_bundle, ag_id, u_aj_raw
+            )
+        )
+        l_in = _read_optional_text(
+            _resolve_agent_instruction_path(live_bundle, ag_id, l_aj_raw)
+        )
+        return (
+            u_in.replace("\r\n", "\n").splitlines()
+            != l_in.replace("\r\n", "\n").splitlines()
+        )
+    return res_id.startswith(("tools/", "guardrails/"))
+
+
 def _make_tree_writable(root: Path) -> None:
     """Ensure copied temporary directories and files are owner-writable."""
     for dirpath, _dirnames, filenames in os.walk(root):
@@ -1802,6 +3286,11 @@ def format_backport_pr_body(
         sib_str = ", ".join(f"`{b}`" for b in result.unchanged_sibling_bundles)
         lines.append(
             f"- **Unchanged Sibling Bundles (0 Blast Radius)**: {sib_str}"
+        )
+    elif result.target == "core":
+        lines.append(
+            "- **Unchanged Sibling Bundles**: *(shared core update across "
+            "applicable bundles)*"
         )
     else:
         lines.append(
@@ -2119,11 +3608,11 @@ def backport_live_to_source(
     pr_body_out: Path | str | None = None,
     git_branch: str | None = None,
 ) -> BackportResult:
-    """Back-port Console UI edits into `brands/<brand>/overrides.yaml`."""
-    if target != "brand":
+    """Back-port Console UI edits into `manifests/` or shared `core/`."""
+    if target not in ("brand", "core"):
         raise BuildGateError(
-            f"Unsupported backport target {target!r}: only target='brand' "
-            "is supported in this release."
+            f"Unsupported backport target {target!r}; "
+            "expected 'brand' or 'core'."
         )
     if scope not in ("channel", "brand"):
         raise BuildGateError(
@@ -2435,7 +3924,7 @@ def backport_live_to_source(
             )
 
         try:
-            if scope == "channel":
+            if target == "brand" and scope == "channel":
                 changed_res_ids = direct_changed_ids
                 if changed_res_ids:
                     brand_only_bundles = _build_clean_brand_baselines(
@@ -2447,7 +3936,7 @@ def backport_live_to_source(
                         channel_to_clear=eff_channel,
                         work_dir=work_root / "brand_only_base",
                     )
-            else:
+            elif target == "brand" and scope == "brand":
                 unoverridden_bundles = _build_clean_brand_baselines(
                     c_dir,
                     m_dir,
@@ -2474,6 +3963,31 @@ def backport_live_to_source(
                         r_id
                         for r_id in sorted(live_norm)
                         if live_norm[r_id].sha256 != b_only_norm[r_id].sha256
+                    ]
+                )
+            else:
+                unoverridden_bundles = _build_clean_brand_baselines(
+                    c_dir,
+                    m_dir,
+                    eff_brand,
+                    eff_env,
+                    clear_all_brand=True,
+                    channel_to_clear=None,
+                    work_dir=work_root / "unoverridden_base",
+                )
+                u_bundle = unoverridden_bundles[eff_channel]
+                u_norm = extract_normalized_resources(u_bundle)
+                changed_res_ids = _merge_ids(
+                    [
+                        r_id
+                        for r_id in sorted(live_norm)
+                        if _has_core_promotable_diff(
+                            r_id,
+                            u_bundle,
+                            live_bundle,
+                            unoverridden_norm=u_norm,
+                            live_norm=live_norm,
+                        )
                     ]
                 )
         except (BuildError, ManifestError) as exc:
@@ -2557,11 +4071,12 @@ def backport_live_to_source(
                 pr_out.write_text(noop_res.pr_body_markdown, encoding="utf-8")
             return noop_res
 
-        _check_python_bundle_and_extra_files(
+        changed_py_files = _check_python_bundle_and_extra_files(
             changed_res_ids=changed_res_ids,
             ours_norm=ours_norm,
             live_norm=live_norm,
             brand_id=eff_brand,
+            target=target,
         )
 
         if dry_run:
@@ -2572,11 +4087,22 @@ def backport_live_to_source(
                 ignore=shutil.ignore_patterns(".git", "__pycache__"),
             )
             _make_tree_writable(work_m_dir)
+            if target == "core":
+                work_c_dir = work_root / "dry_run_core"
+                shutil.copytree(
+                    c_dir,
+                    work_c_dir,
+                    ignore=shutil.ignore_patterns(".git", "__pycache__"),
+                )
+                _make_tree_writable(work_c_dir)
+            else:
+                work_c_dir = c_dir
             core_snapshot: tuple[dict[Path, bytes], set[Path]] | None = None
             man_snapshot: tuple[dict[Path, bytes], set[Path]] | None = None
             dist_snapshot: tuple[dict[Path, bytes], set[Path]] | None = None
             lock_snapshots: dict[Path, bytes | None] = {}
         else:
+            work_c_dir = c_dir
             work_m_dir = m_dir
             core_snapshot = _snapshot_directory_bytes(c_dir)
             man_snapshot = _snapshot_directory_bytes(m_dir)
@@ -2593,39 +4119,62 @@ def backport_live_to_source(
 
         final_lock_path: Path | None = eff_lock
         try:
-            base_map = (
-                brand_only_bundles
-                if scope == "channel" and brand_only_bundles is not None
-                else (unoverridden_bundles or {})
-            )
-            raw_modified_files, changes = _apply_brand_target_backport(
-                core_dir=c_dir,
-                manifests_dir=work_m_dir,
-                manifests=manifests,
-                brand_id=eff_brand,
-                channel=eff_channel,
-                environment=eff_env,
-                scope=scope,
-                ours_bundle=ours_bundle,
-                live_bundle=live_bundle,
-                base_bundles_by_channel=base_map,
-                changed_res_ids=changed_res_ids,
-            )
-            modified_files = (
-                [
-                    m_dir / mf.relative_to(work_m_dir)
-                    if mf.is_relative_to(work_m_dir)
-                    else mf
-                    for mf in raw_modified_files
-                ]
-                if dry_run
-                else raw_modified_files
-            )
+            if target == "brand":
+                base_map = (
+                    brand_only_bundles
+                    if scope == "channel" and brand_only_bundles is not None
+                    else (unoverridden_bundles or {})
+                )
+                raw_modified_files, changes = _apply_brand_target_backport(
+                    core_dir=work_c_dir,
+                    manifests_dir=work_m_dir,
+                    manifests=manifests,
+                    brand_id=eff_brand,
+                    channel=eff_channel,
+                    environment=eff_env,
+                    scope=scope,
+                    ours_bundle=ours_bundle,
+                    live_bundle=live_bundle,
+                    base_bundles_by_channel=base_map,
+                    changed_res_ids=changed_res_ids,
+                )
+            else:
+                assert unoverridden_bundles is not None
+                raw_modified_files, changes = _apply_core_target_backport(
+                    core_dir=work_c_dir,
+                    manifests_dir=work_m_dir,
+                    manifests=manifests,
+                    brand_id=eff_brand,
+                    channel=eff_channel,
+                    environment=eff_env,
+                    ours_bundle=ours_bundle,
+                    live_bundle=live_bundle,
+                    unoverridden_bundle=unoverridden_bundles[eff_channel],
+                    changed_res_ids=changed_res_ids,
+                    changed_py_files=changed_py_files,
+                    is_promotion_only=True,
+                )
+
+            if dry_run:
+                modified_files = []
+                for mf in raw_modified_files:
+                    if mf.is_relative_to(work_m_dir):
+                        modified_files.append(
+                            m_dir / mf.relative_to(work_m_dir)
+                        )
+                    elif target == "core" and mf.is_relative_to(work_c_dir):
+                        modified_files.append(
+                            c_dir / mf.relative_to(work_c_dir)
+                        )
+                    else:
+                        modified_files.append(mf)
+            else:
+                modified_files = raw_modified_files
 
             post_dist_root = work_root / "post_dist"
             try:
                 post_reports = build_all(
-                    c_dir, work_m_dir, post_dist_root, eff_env
+                    work_c_dir, work_m_dir, post_dist_root, eff_env
                 )
             except (BuildError, ManifestError) as exc:
                 raise BuildGateError(str(exc)) from exc
@@ -2695,7 +4244,7 @@ def backport_live_to_source(
                 if b_id != canonical_app_id
                 and post_hashes[b_id] == pre_hashes.get(b_id)
             )
-            if scope == "channel":
+            if target == "brand" and scope == "channel":
                 for b_id in sorted(post_hashes):
                     if b_id != canonical_app_id and post_hashes[
                         b_id
@@ -2705,7 +4254,7 @@ def backport_live_to_source(
                             f"{canonical_app_id} unexpectedly mutated sibling "
                             f"bundle {b_id!r}."
                         )
-            else:
+            elif target == "brand" and scope == "brand":
                 for b_id in sorted(post_hashes):
                     if not b_id.startswith(f"{eff_brand}/") and (
                         post_hashes[b_id] != pre_hashes.get(b_id)

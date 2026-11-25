@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 import tokenize
 from collections.abc import Callable, Mapping
@@ -1159,6 +1160,24 @@ def _find_safe_subdir(
                 )
             return resolved_curr
     return None
+
+
+def _ensure_tree_writable(root: Path) -> None:
+    """Ensure staged output files and dirs are owner-writable."""
+    for dirpath, _dirnames, filenames in os.walk(root):
+        dp = Path(dirpath)
+        with contextlib.suppress(OSError):
+            os.chmod(
+                dp,
+                dp.stat().st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR,
+            )
+        for fname in filenames:
+            fp = dp / fname
+            if not fp.is_symlink():
+                with contextlib.suppress(OSError):
+                    os.chmod(
+                        fp, fp.stat().st_mode | stat.S_IRUSR | stat.S_IWUSR
+                    )
 
 
 def _overlay_non_destructive(src_dir: Path, dst_dir: Path) -> None:
@@ -2347,6 +2366,7 @@ def _build_in_staging(
             staging_dir,
             has_env_overrides=bool(env_manifest.overrides),
         )
+    _ensure_tree_writable(staging_dir)
 
     known_agents = (
         {p.name for p in (staging_dir / "agents").iterdir() if p.is_dir()}
