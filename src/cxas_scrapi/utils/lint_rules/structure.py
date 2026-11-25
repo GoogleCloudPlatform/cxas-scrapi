@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Structure validation rules (S002-S020, G001-G002).
+"""Structure validation rules (S002-S021).
 
 Validates app structure and cross-references using the existing
 ``cxas_scrapi.utils.validator.Validator`` for structural checks, plus
@@ -25,13 +25,14 @@ files).
 import json
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
 
 from cxas_scrapi.utils.linter import (
-    _CONFIG_EXTENSIONS,
+    CONFIG_EXTENSIONS,
     AgentGraph,
     LintContext,
     LintResult,
@@ -47,6 +48,7 @@ from cxas_scrapi.utils.linter import (
     discover_local_resources,
     discover_openapi_schema_paths,
     get_toolset_tools,
+    iter_openapi_server_urls,
     match_local_resources,
     parse_config_content,
     rel_to_project,
@@ -1266,6 +1268,24 @@ _URL_FIELD_KEYS_LOWER: frozenset[str] = frozenset(
 _REGEX_META_RE = re.compile(r"[\\^$*+?{}\[\]|()]")
 
 
+def _extract_matching_url(
+    val: object, *, key_lower: str | None, include_all_http: bool
+) -> str | None:
+    """Return stripped URL if ``val`` matches URL field or http(s) criteria."""
+    if not isinstance(val, str):
+        return None
+    stripped = val.strip()
+    if not stripped or stripped == "$env_var":
+        return None
+    if key_lower is not None and key_lower in _URL_FIELD_KEYS_LOWER:
+        return stripped
+    if include_all_http and stripped.lower().startswith(
+        ("http://", "https://")
+    ):
+        return stripped
+    return None
+
+
 def _extract_url_fields(
     obj: object, *, include_all_http: bool = False
 ) -> list[str]:
@@ -1276,39 +1296,23 @@ def _extract_url_fields(
             key_str = str(k)
             if key_str == "$schema" or key_str.startswith("_comment"):
                 continue
-            key_lower = key_str.lower()
-            if isinstance(v, str):
-                stripped = v.strip()
-                if (
-                    stripped
-                    and stripped != "$env_var"
-                    and (
-                        key_lower in _URL_FIELD_KEYS_LOWER
-                        or (
-                            include_all_http
-                            and stripped.lower().startswith(
-                                ("http://", "https://")
-                            )
-                        )
-                    )
-                ):
-                    found.append(stripped)
-            else:
+            url = _extract_matching_url(
+                v, key_lower=key_str.lower(), include_all_http=include_all_http
+            )
+            if url is not None:
+                found.append(url)
+            elif not isinstance(v, str):
                 found.extend(
                     _extract_url_fields(v, include_all_http=include_all_http)
                 )
     elif isinstance(obj, list):
         for item in obj:
-            if isinstance(item, str):
-                stripped = item.strip()
-                if (
-                    include_all_http
-                    and stripped
-                    and stripped != "$env_var"
-                    and stripped.lower().startswith(("http://", "https://"))
-                ):
-                    found.append(stripped)
-            else:
+            url = _extract_matching_url(
+                item, key_lower=None, include_all_http=include_all_http
+            )
+            if url is not None:
+                found.append(url)
+            elif not isinstance(item, str):
                 found.extend(
                     _extract_url_fields(item, include_all_http=include_all_http)
                 )
@@ -1336,6 +1340,103 @@ def _compile_forbidden_url_matchers(
     return matchers
 
 
+def _has_prod_deployment(app_root: Path, context: LintContext) -> bool:
+    """Return True if any deployment manifest targets prod/production."""
+    for dep_path in discover_deployment_files(app_root, context):
+        dep = _load_config_dict(dep_path)
+        env_val = dep.get("environment") if dep is not None else None
+        if (
+            isinstance(env_val, str)
+            and env_val.strip().lower() in _PROD_ENV_VALUES
+        ):
+            return True
+    return False
+
+
+def _collect_prod_url_sources(
+    app_root: Path, context: LintContext
+) -> list[tuple[Path, str]]:
+    """Collect ``(source_path, url)`` pairs across env, tools, and OpenAPI."""
+    url_sources: list[tuple[Path, str]] = []
+
+    env_path = (
+        context.env_file
+        if context.env_file is not None
+        else app_root / "environment.json"
+    )
+    env_doc = _load_config_dict(env_path)
+    if env_doc is not None:
+        url_sources.extend(
+            (env_path, u)
+            for u in _extract_url_fields(env_doc, include_all_http=True)
+        )
+
+    for subdir in ("tools", "toolsets"):
+        for res in discover_local_resources(app_root, subdir):
+            cfg = (
+                _load_config_dict(res.report_path)
+                if res.report_path.is_file()
+                else None
+            )
+            if cfg is not None:
+                url_sources.extend(
+                    (res.report_path, u) for u in _extract_url_fields(cfg)
+                )
+
+    for _kind, _key, schema_path in discover_openapi_schema_paths(app_root):
+        doc = _load_config_dict(schema_path)
+        if doc is None:
+            continue
+        url_sources.extend(
+            (schema_path, u)
+            for u in iter_openapi_server_urls(doc)
+            if u != "$env_var"
+        )
+    return url_sources
+
+
+def _parse_url_scheme_and_host(url: str) -> tuple[str, str]:
+    """Extract lowercase ``(scheme, host)`` safely on malformed IPv6."""
+    try:
+        if "://" in url:
+            parsed = urlparse(url)
+            return (parsed.scheme or "").lower(), (
+                parsed.hostname or ""
+            ).lower()
+        if not url.startswith("/"):
+            parsed = urlparse(f"//{url}")
+            return "", (parsed.hostname or "").lower()
+    except ValueError:
+        scheme = url.split("://", 1)[0].lower() if "://" in url else ""
+        return scheme, ""
+    return "", ""
+
+
+def _is_loopback_host(host: str) -> bool:
+    return (
+        host in _LOOPBACK_HOSTS
+        or host.endswith(".local")
+        or host.endswith(".localhost")
+    )
+
+
+def _match_forbidden_patterns(
+    url: str,
+    matchers: list[tuple[str, re.Pattern[str] | None]],
+) -> list[str]:
+    """Return all forbidden pattern strings matching ``url``."""
+    url_lower = url.lower()
+    return [
+        pat_str
+        for pat_str, pat_re in matchers
+        if (
+            bool(pat_re.search(url))
+            if pat_re is not None
+            else pat_str.lower() in url_lower
+        )
+    ]
+
+
 @rule("structure")
 class ProdUrlSafety(Rule):
     """Prod builds must not contain cleartext, loopback, or non-prod URLs."""
@@ -1349,24 +1450,62 @@ class ProdUrlSafety(Rule):
     default_severity = Severity.ERROR
     target = "app_config"
 
+    def _check_url_violations(
+        self,
+        rel: str,
+        url: str,
+        matchers: list[tuple[str, re.Pattern[str] | None]],
+        seen: set[tuple[str, str, str]],
+    ) -> list[LintResult]:
+        scheme, host = _parse_url_scheme_and_host(url)
+        findings: list[tuple[str, str, str]] = []
+        if scheme == "http":
+            findings.append(
+                (
+                    "cleartext",
+                    (
+                        f"Cleartext http:// URL '{url}' is not allowed in "
+                        "prod builds."
+                    ),
+                    "Use an https:// production endpoint URL.",
+                )
+            )
+        if _is_loopback_host(host):
+            findings.append(
+                (
+                    "loopback",
+                    (
+                        f"Loopback or local-only host in URL '{url}' is not "
+                        "allowed in prod builds."
+                    ),
+                    "Replace with a production endpoint host.",
+                )
+            )
+        for pat_str in _match_forbidden_patterns(url, matchers):
+            findings.append(
+                (
+                    f"pattern:{pat_str}",
+                    (
+                        f"URL '{url}' matches forbidden non-prod pattern "
+                        f"'{pat_str}' in prod build."
+                    ),
+                    "Replace with the production URL before deploying to prod.",
+                )
+            )
+
+        results: list[LintResult] = []
+        for tag, msg, fix in findings:
+            key = (rel, url, tag)
+            if key not in seen:
+                seen.add(key)
+                results.append(self.make_result(file=rel, message=msg, fix=fix))
+        return results
+
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         app_root = resolve_app_root(file_path, context)
-        dep_files = discover_deployment_files(app_root, context)
-        is_prod = False
-        for dep_path in dep_files:
-            dep = _load_config_dict(dep_path)
-            if dep is None:
-                continue
-            env_val = dep.get("environment")
-            if (
-                isinstance(env_val, str)
-                and env_val.strip().lower() in _PROD_ENV_VALUES
-            ):
-                is_prod = True
-                break
-        if not is_prod:
+        if not _has_prod_deployment(app_root, context):
             return []
 
         s019_opts = context.options.get("S019")
@@ -1376,129 +1515,55 @@ class ProdUrlSafety(Rule):
             else context.options.get("forbidden_url_patterns")
         )
         forbidden_matchers = _compile_forbidden_url_matchers(raw_patterns)
-
-        url_sources: list[tuple[Path, str]] = []
-
-        # 1. environment.json
-        env_path = (
-            context.env_file
-            if context.env_file is not None
-            else app_root / "environment.json"
-        )
-        if env_path.is_file() and not env_path.is_symlink():
-            env_doc = _load_config_dict(env_path)
-            if env_doc is not None:
-                for u in _extract_url_fields(env_doc, include_all_http=True):
-                    url_sources.append((env_path, u))
-
-        # 2. tools/ and toolsets/ configs
-        for subdir in ("tools", "toolsets"):
-            for res in discover_local_resources(app_root, subdir):
-                if res.report_path.is_file():
-                    cfg = _load_config_dict(res.report_path)
-                    if cfg is not None:
-                        for u in _extract_url_fields(cfg):
-                            url_sources.append((res.report_path, u))
-
-        # 3. OpenAPI schema servers[].url
-        for _kind, _key, schema_path in discover_openapi_schema_paths(app_root):
-            doc = _load_config_dict(schema_path)
-            if doc is None:
-                continue
-            servers = doc.get("servers")
-            if isinstance(servers, list):
-                for srv in servers:
-                    if isinstance(srv, dict) and isinstance(
-                        srv.get("url"), str
-                    ):
-                        u = srv["url"].strip()
-                        if u and u != "$env_var":
-                            url_sources.append((schema_path, u))
-
-        results: list[LintResult] = []
         seen: set[tuple[str, str, str]] = set()
-
-        for src_path, url in url_sources:
-            rel = rel_to_project(src_path, context)
-            try:
-                if "://" in url:
-                    parsed = urlparse(url)
-                    scheme = (parsed.scheme or "").lower()
-                    host = (parsed.hostname or "").lower()
-                elif not url.startswith("/"):
-                    parsed = urlparse(f"//{url}")
-                    scheme = ""
-                    host = (parsed.hostname or "").lower()
-                else:
-                    scheme = ""
-                    host = ""
-            except ValueError:
-                scheme = url.split("://", 1)[0].lower() if "://" in url else ""
-                host = ""
-
-            if scheme == "http":
-                key = (rel, url, "cleartext")
-                if key not in seen:
-                    seen.add(key)
-                    results.append(
-                        self.make_result(
-                            file=rel,
-                            message=(
-                                f"Cleartext http:// URL '{url}' is not "
-                                "allowed in prod builds."
-                            ),
-                            fix="Use an https:// production endpoint URL.",
-                        )
-                    )
-
-            if (
-                host in _LOOPBACK_HOSTS
-                or host.endswith(".local")
-                or host.endswith(".localhost")
-            ):
-                key = (rel, url, "loopback")
-                if key not in seen:
-                    seen.add(key)
-                    results.append(
-                        self.make_result(
-                            file=rel,
-                            message=(
-                                f"Loopback or local-only host in URL '{url}' "
-                                "is not allowed in prod builds."
-                            ),
-                            fix="Replace with a production endpoint host.",
-                        )
-                    )
-
-            url_lower = url.lower()
-            for pat_str, pat_re in forbidden_matchers:
-                matched = (
-                    bool(pat_re.search(url))
-                    if pat_re is not None
-                    else pat_str.lower() in url_lower
+        results: list[LintResult] = []
+        for src_path, url in _collect_prod_url_sources(app_root, context):
+            results.extend(
+                self._check_url_violations(
+                    rel_to_project(src_path, context),
+                    url,
+                    forbidden_matchers,
+                    seen,
                 )
-                if matched:
-                    key = (rel, url, f"pattern:{pat_str}")
-                    if key not in seen:
-                        seen.add(key)
-                        results.append(
-                            self.make_result(
-                                file=rel,
-                                message=(
-                                    f"URL '{url}' matches forbidden non-prod "
-                                    f"pattern '{pat_str}' in prod build."
-                                ),
-                                fix=(
-                                    "Replace with the production URL before "
-                                    "deploying to prod."
-                                ),
-                            )
-                        )
-
+            )
         return results
 
 
 _AGENT_REF_PATTERN = re.compile(r"\{@AGENT[:\s]+([^}]+)\}", re.IGNORECASE)
+
+
+def _read_agent_instruction(
+    app_root: Path,
+    agent_name: str,
+    agent_dir: Path,
+    graph: AgentGraph,
+    context: LintContext,
+) -> tuple[str, str] | None:
+    """Return ``(instruction_text, report_rel)`` for an agent, or None."""
+    cfg = graph.agent_configs.get(agent_name)
+    raw_inst = cfg.get("instruction") if isinstance(cfg, dict) else None
+    inst_path = (
+        resolve_safe_app_file(app_root, str(raw_inst))
+        if _is_file_path_ref(raw_inst)
+        else None
+    )
+    if inst_path is None:
+        default_inst = agent_dir / "instruction.txt"
+        if default_inst.is_file() and not default_inst.is_symlink():
+            inst_path = default_inst
+
+    if inst_path is not None:
+        try:
+            return (
+                inst_path.read_text(encoding="utf-8"),
+                rel_to_project(inst_path, context),
+            )
+        except (OSError, UnicodeDecodeError):
+            return None
+    if isinstance(raw_inst, str) and raw_inst.strip():
+        cfg_path = graph.agent_config_paths.get(agent_name, agent_dir)
+        return raw_inst, rel_to_project(cfg_path, context)
+    return None
 
 
 @rule("structure")
@@ -1514,6 +1579,59 @@ class AgentRefSelfOrOrphan(Rule):
     default_severity = Severity.WARNING
     target = "app_config"
 
+    def _scan_instruction_refs(
+        self,
+        agent_name: str,
+        inst_text: str,
+        report_rel: str,
+        graph: AgentGraph,
+        resolve_ref: Callable[[object], str | None],
+    ) -> list[LintResult]:
+        results: list[LintResult] = []
+        for line_num, line in enumerate(inst_text.splitlines(), 1):
+            for match in _AGENT_REF_PATTERN.finditer(line):
+                raw_target = match.group(1).strip()
+                resolved = resolve_ref(raw_target)
+                if resolved is None:
+                    continue
+                if resolved == agent_name:
+                    results.append(
+                        self.make_result(
+                            file=report_rel,
+                            line=line_num,
+                            message=(
+                                f"Agent '{agent_name}' references itself "
+                                f"via '{{@AGENT: {raw_target}}}' "
+                                "(self-transfer)."
+                            ),
+                            fix=(
+                                "Remove the self-transfer or target a "
+                                "distinct child/parent agent."
+                            ),
+                        )
+                    )
+                elif (
+                    graph.root_agent_dir is not None
+                    and resolved not in graph.reachable
+                ):
+                    results.append(
+                        self.make_result(
+                            file=report_rel,
+                            line=line_num,
+                            message=(
+                                f"Agent '{agent_name}' references "
+                                f"orphaned/unreachable agent '{resolved}' "
+                                f"via '{{@AGENT: {raw_target}}}'."
+                            ),
+                            fix=(
+                                f"Add '{resolved}' to a reachable parent's "
+                                "childAgents list, or remove the stale "
+                                "{@AGENT:} reference."
+                            ),
+                        )
+                    )
+        return results
+
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
@@ -1526,89 +1644,19 @@ class AgentRefSelfOrOrphan(Rule):
             set(graph.agent_dirs.keys()), graph.agent_configs
         )
         results: list[LintResult] = []
-
         for agent_name, agent_dir in sorted(graph.agent_dirs.items()):
-            cfg = graph.agent_configs.get(agent_name)
-            inst_path: Path | None = None
-            raw_inst = cfg.get("instruction") if isinstance(cfg, dict) else None
-            if _is_file_path_ref(raw_inst):
-                inst_path = resolve_safe_app_file(app_root, str(raw_inst))
-            if inst_path is None:
-                default_inst = agent_dir / "instruction.txt"
-                if default_inst.is_file() and not default_inst.is_symlink():
-                    inst_path = default_inst
-
-            if inst_path is not None:
-                try:
-                    inst_text = inst_path.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
-                    continue
-                report_rel = rel_to_project(inst_path, context)
-            elif isinstance(raw_inst, str) and raw_inst.strip():
-                inst_text = raw_inst
-                cfg_path = graph.agent_config_paths.get(agent_name, agent_dir)
-                report_rel = rel_to_project(cfg_path, context)
-            else:
+            loaded = _read_agent_instruction(
+                app_root, agent_name, agent_dir, graph, context
+            )
+            if loaded is None:
                 continue
-
-            for line_num, line in enumerate(inst_text.splitlines(), 1):
-                for match in _AGENT_REF_PATTERN.finditer(line):
-                    raw_target = match.group(1).strip()
-                    resolved = resolve_ref(raw_target)
-                    if resolved is None:
-                        continue
-                    if resolved == agent_name:
-                        results.append(
-                            self.make_result(
-                                file=report_rel,
-                                line=line_num,
-                                message=(
-                                    f"Agent '{agent_name}' references itself "
-                                    f"via '{{@AGENT: {raw_target}}}' "
-                                    "(self-transfer)."
-                                ),
-                                fix=(
-                                    "Remove the self-transfer or target a "
-                                    "distinct child/parent agent."
-                                ),
-                            )
-                        )
-                    elif (
-                        graph.root_agent_dir is not None
-                        and resolved not in graph.reachable
-                    ):
-                        results.append(
-                            self.make_result(
-                                file=report_rel,
-                                line=line_num,
-                                message=(
-                                    f"Agent '{agent_name}' references "
-                                    f"orphaned/unreachable agent '{resolved}' "
-                                    f"via '{{@AGENT: {raw_target}}}'."
-                                ),
-                                fix=(
-                                    f"Add '{resolved}' to a reachable parent's "
-                                    "childAgents list, or remove the stale "
-                                    "{@AGENT:} reference."
-                                ),
-                            )
-                        )
-
+            inst_text, report_rel = loaded
+            results.extend(
+                self._scan_instruction_refs(
+                    agent_name, inst_text, report_rel, graph, resolve_ref
+                )
+            )
         return results
-
-
-class _LocaleYamlLoader(yaml.SafeLoader):
-    """YAML SafeLoader that keeps unquoted ISO codes (e.g. NO/no) as strings."""
-
-
-_LocaleYamlLoader.yaml_implicit_resolvers = {
-    ch: [
-        (tag, regex)
-        for tag, regex in resolvers
-        if tag != "tag:yaml.org,2002:bool"
-    ]
-    for ch, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
-}
 
 
 def _extract_guardrail_prompts(data: dict) -> list[str]:
@@ -1637,7 +1685,7 @@ def _extract_guardrail_prompts(data: dict) -> list[str]:
 
 @rule("structure")
 class GuardrailJinjaSyntax(Rule):
-    id = "G001"
+    id = "S021"
     target = "guardrail_config"
     name = "guardrail-jinja-syntax"
     description = "Detects Jinja tokens inside guardrail policy prompts."
@@ -1648,9 +1696,9 @@ class GuardrailJinjaSyntax(Rule):
     ) -> list[LintResult]:
         config_paths: list[Path] = []
         if file_path.is_dir():
-            for ext in _CONFIG_EXTENSIONS:
+            for ext in CONFIG_EXTENSIONS:
                 config_paths.extend(sorted(file_path.glob(f"*{ext}")))
-        elif file_path.suffix.lower() in _CONFIG_EXTENSIONS:
+        elif file_path.suffix.lower() in CONFIG_EXTENSIONS:
             config_paths.append(file_path)
 
         results: list[LintResult] = []
@@ -1674,96 +1722,4 @@ class GuardrailJinjaSyntax(Rule):
                         ),
                     )
                 )
-        return results
-
-
-@rule("structure")
-class CrosscheckLocalesContentBlocks(Rule):
-    id = "G002"
-    target = "deployment_config"
-    name = "crosscheck-locales-content-blocks"
-    description = (
-        "Cross-checks (brandId, country, lang) across"
-        " deployments and content_blocks."
-    )
-    default_severity = Severity.ERROR
-
-    def check(
-        self, file_path: Path, content: str, context: LintContext
-    ) -> list[LintResult]:
-        rel = str(file_path.relative_to(context.project_root))
-        content_blocks_path: Path | None = None
-        for root in (context.app_root, context.app_dir, context.project_root):
-            if root is None:
-                continue
-            candidate = root / "manifests" / "locales" / "content_blocks.yaml"
-            if candidate.exists():
-                content_blocks_path = candidate
-                break
-
-        if not content_blocks_path:
-            return []
-
-        try:
-            blocks = yaml.load(
-                content_blocks_path.read_text("utf-8"),
-                Loader=_LocaleYamlLoader,
-            )
-        except (ValueError, OSError, yaml.YAMLError):
-            return []
-        blocks_data = blocks.get("blocks") if isinstance(blocks, dict) else None
-        if not isinstance(blocks_data, dict):
-            return []
-
-        try:
-            dep = yaml.load(content, Loader=_LocaleYamlLoader)
-        except (ValueError, OSError, yaml.YAMLError):
-            return []
-        if not isinstance(dep, dict):
-            return []
-
-        brand = dep.get("brandId") or dep.get("brand_id")
-        countries = (
-            dep["supportedCountries"]
-            if "supportedCountries" in dep
-            else dep.get("supported_countries", [])
-        )
-        langs = (
-            dep["supportedLanguages"]
-            if "supportedLanguages" in dep
-            else dep.get("supported_languages", [])
-        )
-        if not isinstance(countries, list) or not isinstance(langs, list):
-            return []
-
-        brand_blocks = (
-            blocks_data.get(brand) if isinstance(brand, str) else None
-        )
-        results: list[LintResult] = []
-        for country in countries:
-            country_blocks = (
-                brand_blocks.get(country)
-                if isinstance(brand_blocks, dict) and isinstance(country, str)
-                else None
-            )
-            for lang_code in langs:
-                if (
-                    not isinstance(country_blocks, dict)
-                    or not isinstance(lang_code, str)
-                    or lang_code not in country_blocks
-                ):
-                    results.append(
-                        self.make_result(
-                            file=rel,
-                            message=(
-                                f"Tuple (brandId={brand}, country={country},"
-                                f" lang={lang_code}) missing from "
-                                "content_blocks.yaml."
-                            ),
-                            fix=(
-                                "Ensure content_blocks.yaml declares this"
-                                " combination or remove it from deployments."
-                            ),
-                        )
-                    )
         return results

@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 import yaml
 
 from cxas_scrapi.utils.linter import (
-    _CONFIG_EXTENSIONS,
+    CONFIG_EXTENSIONS,
     AgentGraph,
     LintContext,
     LintResult,
@@ -43,6 +43,7 @@ from cxas_scrapi.utils.linter import (
     discover_openapi_schema_paths,
     extract_resource_ref_candidates,
     is_voice_app,
+    iter_openapi_server_urls,
     match_local_resources,
     parse_config_content,
     rel_to_project,
@@ -454,6 +455,138 @@ def _guardrail_invokes_tool(gr_data: dict, candidate_names: set[str]) -> bool:
     return tool_ref in candidate_names or short_ref in candidate_names
 
 
+def _any_py_in_dirs_references_tools(
+    scan_dirs: list[Path], candidate_names: set[str]
+) -> bool:
+    """Return True if any non-symlink .py under ``scan_dirs`` calls a tool."""
+    return any(
+        not py_path.is_symlink()
+        and _py_file_references_tools(py_path, candidate_names)
+        for scan_dir in scan_dirs
+        for py_path in scan_dir.rglob("*.py")
+    )
+
+
+def _tool_candidate_names_for_dir(tool_dir: Path) -> set[str]:
+    """Collect directory name, displayName, and CES resource IDs for a tool."""
+    cands = {tool_dir.name}
+    cfg, _, _ = _load_tool_config_any(
+        tool_dir / "python_function" / "python_code.py"
+    )
+    if not isinstance(cfg, dict):
+        return cands
+    disp = cfg.get("displayName") or cfg.get("display_name")
+    if isinstance(disp, str) and disp.strip():
+        cands.add(disp.strip())
+    raw_name = cfg.get("name")
+    if isinstance(raw_name, str) and raw_name.strip():
+        clean = raw_name.strip()
+        cands.update(extract_resource_ref_candidates(clean, "tools"))
+        cands.add(clean.rsplit("/", 1)[-1])
+    return cands
+
+
+def _tool_referenced_in_agents(
+    app_root: Path,
+    candidate_names: set[str],
+    graph: AgentGraph | None,
+    filter_reachable: bool,
+) -> bool:
+    agents_dir = app_root / "agents"
+    if agents_dir.is_symlink() or not agents_dir.is_dir():
+        return False
+    if filter_reachable and graph is not None:
+        scan_dirs = [
+            graph.agent_dirs[name]
+            for name in sorted(graph.reachable)
+            if name in graph.agent_dirs
+        ]
+    else:
+        scan_dirs = [agents_dir]
+    return _any_py_in_dirs_references_tools(scan_dirs, candidate_names)
+
+
+def _tool_referenced_in_other_tools(
+    app_root: Path,
+    candidate_names: set[str],
+    own_tool_dir: Path,
+    graph: AgentGraph | None,
+    filter_reachable: bool,
+) -> bool:
+    tools_dir = app_root / "tools"
+    if tools_dir.is_symlink() or not tools_dir.is_dir():
+        return False
+    agent_tool_map = (
+        {a: _agent_tool_refs(cfg) for a, cfg in graph.agent_configs.items()}
+        if filter_reachable and graph is not None
+        else {}
+    )
+    eligible_dirs: list[Path] = []
+    for other_dir in sorted(tools_dir.iterdir()):
+        if (
+            other_dir.is_symlink()
+            or not other_dir.is_dir()
+            or other_dir == own_tool_dir
+        ):
+            continue
+        if filter_reachable and graph is not None:
+            other_cands = _tool_candidate_names_for_dir(other_dir)
+            attaching = [
+                a for a, refs in agent_tool_map.items() if other_cands & refs
+            ]
+            if attaching and not any(a in graph.reachable for a in attaching):
+                continue
+        eligible_dirs.append(other_dir)
+    return _any_py_in_dirs_references_tools(eligible_dirs, candidate_names)
+
+
+def _collect_guardrail_config_files(
+    app_root: Path,
+    guardrails_dir: Path,
+    graph: AgentGraph | None,
+    filter_reachable: bool,
+) -> list[Path]:
+    if not (filter_reachable and graph is not None):
+        return [
+            p
+            for ext in CONFIG_EXTENSIONS
+            for p in sorted(guardrails_dir.rglob(f"*{ext}"))
+        ]
+    gr_resources = discover_local_resources(app_root, "guardrails")
+    app_grs, agent_grs = collect_attached_guardrails(graph, gr_resources)
+    gr_files: list[Path] = []
+    for res in gr_resources:
+        if res not in app_grs and not any(
+            a in graph.reachable for a in agent_grs.get(res, ())
+        ):
+            continue
+        if res.report_path.is_file():
+            gr_files.append(res.report_path)
+        elif res.report_path.is_dir():
+            for ext in CONFIG_EXTENSIONS:
+                gr_files.extend(sorted(res.report_path.glob(f"*{ext}")))
+    return gr_files
+
+
+def _tool_referenced_in_guardrails(
+    app_root: Path,
+    candidate_names: set[str],
+    graph: AgentGraph | None,
+    filter_reachable: bool,
+) -> bool:
+    guardrails_dir = app_root / "guardrails"
+    if guardrails_dir.is_symlink() or not guardrails_dir.is_dir():
+        return False
+    gr_files = _collect_guardrail_config_files(
+        app_root, guardrails_dir, graph, filter_reachable
+    )
+    return any(
+        (gr_data := _load_config_dict(gr_path)) is not None
+        and _guardrail_invokes_tool(gr_data, candidate_names)
+        for gr_path in gr_files
+    )
+
+
 def _is_tool_referenced_in_code_or_guardrails(
     app_root: Path,
     candidate_names: set[str],
@@ -462,109 +595,17 @@ def _is_tool_referenced_in_code_or_guardrails(
 ) -> bool:
     """Return True if candidate tool is referenced in code or guardrails."""
     filter_reachable = graph is not None and graph.root_agent_dir is not None
-
-    agents_dir = app_root / "agents"
-    if agents_dir.is_dir() and not agents_dir.is_symlink():
-        if filter_reachable and graph is not None:
-            agent_scan_dirs = [
-                graph.agent_dirs[name]
-                for name in sorted(graph.reachable)
-                if name in graph.agent_dirs
-            ]
-        else:
-            agent_scan_dirs = [agents_dir]
-        for scan_dir in agent_scan_dirs:
-            for py_path in scan_dir.rglob("*.py"):
-                if not py_path.is_symlink() and _py_file_references_tools(
-                    py_path, candidate_names
-                ):
-                    return True
-
-    tools_dir = app_root / "tools"
-    if tools_dir.is_dir() and not tools_dir.is_symlink():
-        agent_tool_map: dict[str, set[str]] = {}
-        if filter_reachable and graph is not None:
-            agent_tool_map = {
-                a: _agent_tool_refs(cfg)
-                for a, cfg in graph.agent_configs.items()
-            }
-        for other_dir in sorted(tools_dir.iterdir()):
-            if (
-                other_dir.is_symlink()
-                or not other_dir.is_dir()
-                or other_dir == own_tool_dir
-            ):
-                continue
-            if filter_reachable and graph is not None:
-                other_cands = {other_dir.name}
-                other_cfg, _, _ = _load_tool_config_any(
-                    other_dir / "python_function" / "python_code.py"
-                )
-                if isinstance(other_cfg, dict):
-                    disp = other_cfg.get("displayName") or other_cfg.get(
-                        "display_name"
-                    )
-                    if isinstance(disp, str) and disp.strip():
-                        other_cands.add(disp.strip())
-                    raw_other_name = other_cfg.get("name")
-                    if (
-                        isinstance(raw_other_name, str)
-                        and raw_other_name.strip()
-                    ):
-                        clean_other = raw_other_name.strip()
-                        other_cands.update(
-                            extract_resource_ref_candidates(
-                                clean_other, "tools"
-                            )
-                        )
-                        other_cands.add(clean_other.rsplit("/", 1)[-1])
-                attaching = [
-                    a
-                    for a, refs in agent_tool_map.items()
-                    if other_cands & refs
-                ]
-                if attaching and not any(
-                    a in graph.reachable for a in attaching
-                ):
-                    continue
-            for py_path in other_dir.rglob("*.py"):
-                if not py_path.is_symlink() and _py_file_references_tools(
-                    py_path, candidate_names
-                ):
-                    return True
-
-    guardrails_dir = app_root / "guardrails"
-    if guardrails_dir.is_dir() and not guardrails_dir.is_symlink():
-        if filter_reachable and graph is not None:
-            gr_resources = discover_local_resources(app_root, "guardrails")
-            app_grs, agent_grs = collect_attached_guardrails(
-                graph, gr_resources
-            )
-            gr_files: list[Path] = []
-            for res in gr_resources:
-                is_attached = res in app_grs or any(
-                    a in graph.reachable for a in agent_grs.get(res, ())
-                )
-                if not is_attached:
-                    continue
-                if res.report_path.is_file():
-                    gr_files.append(res.report_path)
-                elif res.report_path.is_dir():
-                    for ext in ("*.json", "*.yaml", "*.yml"):
-                        gr_files.extend(sorted(res.report_path.glob(ext)))
-        else:
-            gr_files = []
-            for ext in ("*.json", "*.yaml", "*.yml"):
-                gr_files.extend(sorted(guardrails_dir.rglob(ext)))
-
-        for gr_path in gr_files:
-            gr_data = _load_config_dict(gr_path)
-            if gr_data is not None and _guardrail_invokes_tool(
-                gr_data, candidate_names
-            ):
-                return True
-
-    return False
+    return (
+        _tool_referenced_in_agents(
+            app_root, candidate_names, graph, filter_reachable
+        )
+        or _tool_referenced_in_other_tools(
+            app_root, candidate_names, own_tool_dir, graph, filter_reachable
+        )
+        or _tool_referenced_in_guardrails(
+            app_root, candidate_names, graph, filter_reachable
+        )
+    )
 
 
 @rule("tools")
@@ -1167,11 +1208,49 @@ def _load_data_store_tool_config(
 ) -> dict[str, typing.Any] | None:
     """Parse a JSON or YAML tool config file under tools/, else return None."""
     if (
-        file_path.suffix.lower() not in _CONFIG_EXTENSIONS
+        file_path.suffix.lower() not in CONFIG_EXTENSIONS
         or "tools" not in file_path.parts
     ):
         return None
     return parse_config_content(file_path, content)
+
+
+def _append_source_filter(source: typing.Any, filters: list[str]) -> None:
+    if isinstance(source, dict):
+        s_filter = source.get("filter")
+        if isinstance(s_filter, str) and s_filter:
+            filters.append(s_filter)
+
+
+def _collect_container_filters(
+    container: dict[str, typing.Any], filters: list[str]
+) -> None:
+    _append_source_filter(
+        container.get("dataStoreSource") or container.get("data_store_source"),
+        filters,
+    )
+    sources = (
+        container.get("dataStoreSources")
+        or container.get("data_store_sources")
+        or []
+    )
+    if isinstance(sources, list):
+        for source in sources:
+            _append_source_filter(source, filters)
+    engine_source = container.get("engineSource") or container.get(
+        "engine_source"
+    )
+    if not isinstance(engine_source, dict):
+        return
+    _append_source_filter(engine_source, filters)
+    engine_sources = (
+        engine_source.get("dataStoreSources")
+        or engine_source.get("data_store_sources")
+        or []
+    )
+    if isinstance(engine_sources, list):
+        for source in engine_sources:
+            _append_source_filter(source, filters)
 
 
 def _extract_data_store_filters(data: dict[str, typing.Any]) -> list[str]:
@@ -1181,43 +1260,9 @@ def _extract_data_store_filters(data: dict[str, typing.Any]) -> list[str]:
     containers: list[dict[str, typing.Any]] = [data]
     if isinstance(ds_tool, dict):
         containers.insert(0, ds_tool)
-        top_filter = ds_tool.get("filter")
-        if isinstance(top_filter, str) and top_filter:
-            filters.append(top_filter)
-
-    def _collect_source(source: typing.Any) -> None:
-        if isinstance(source, dict):
-            s_filter = source.get("filter")
-            if isinstance(s_filter, str) and s_filter:
-                filters.append(s_filter)
-
+        _append_source_filter(ds_tool, filters)
     for container in containers:
-        _collect_source(
-            container.get("dataStoreSource")
-            or container.get("data_store_source")
-        )
-        sources = (
-            container.get("dataStoreSources")
-            or container.get("data_store_sources")
-            or []
-        )
-        if isinstance(sources, list):
-            for source in sources:
-                _collect_source(source)
-        engine_source = container.get("engineSource") or container.get(
-            "engine_source"
-        )
-        if isinstance(engine_source, dict):
-            _collect_source(engine_source)
-            engine_sources = (
-                engine_source.get("dataStoreSources")
-                or engine_source.get("data_store_sources")
-                or []
-            )
-            if isinstance(engine_sources, list):
-                for source in engine_sources:
-                    _collect_source(source)
-
+        _collect_container_filters(container, filters)
     return filters
 
 
@@ -1313,6 +1358,30 @@ class DataStoreFilterParameterBehavior(Rule):
         return []
 
 
+def _find_audio_modality_config(
+    mod_configs: typing.Any,
+) -> dict[str, typing.Any] | None:
+    """Locate the AUDIO (or enum 2) modality config block."""
+    if isinstance(mod_configs, dict):
+        candidate = mod_configs.get("AUDIO")
+        if candidate is None:
+            candidate = mod_configs.get(2)
+        return candidate if isinstance(candidate, dict) else None
+    if not isinstance(mod_configs, list):
+        return None
+    for mc in mod_configs:
+        if not isinstance(mc, dict):
+            continue
+        mt = mc.get("modalityType")
+        if mt is None:
+            mt = mc.get("modality_type")
+        if mt is None:
+            mt = mc.get("modality")
+        if mt in ("AUDIO", 2):
+            return mc
+    return None
+
+
 @rule("tools")
 class DataStoreVoiceModality(Rule):
     id = "T019"
@@ -1322,25 +1391,66 @@ class DataStoreVoiceModality(Rule):
     )
     default_severity = Severity.WARNING
 
+    _DISABLED_VOICE_BLOCKS = (
+        ("rewriterConfig", "rewriter_config", "rewriter"),
+        ("summarizationConfig", "summarization_config", "summarization"),
+    )
+
+    def _check_audio_gaps(
+        self, rel: str, audio_conf: dict[str, typing.Any]
+    ) -> list[LintResult]:
+        results: list[LintResult] = []
+        snippets = audio_conf.get("snippetsConfig") or audio_conf.get(
+            "snippets_config"
+        )
+        if not isinstance(snippets, dict) or not snippets:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        "dataStoreTool AUDIO modalityConfigs missing"
+                        " snippetsConfig/snippets_config."
+                    ),
+                    fix=(
+                        "Provide snippetsConfig inside the"
+                        " AUDIO modality config."
+                    ),
+                )
+            )
+        for camel_key, snake_key, label in self._DISABLED_VOICE_BLOCKS:
+            raw_block = audio_conf.get(camel_key) or audio_conf.get(snake_key)
+            block = raw_block if isinstance(raw_block, dict) else {}
+            if block.get("disabled") is not True:
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"{camel_key}.disabled is not True in"
+                            " AUDIO modalityConfig."
+                        ),
+                        fix=(
+                            f"Disable {label} for Voice"
+                            " deployments inside AUDIO."
+                        ),
+                    )
+                )
+        return results
+
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         data = _load_data_store_tool_config(file_path, content)
-        if data is None:
+        if data is None or not is_voice_app(context):
             return []
 
         tool_name = file_path.parent.name
         raw_display = data.get("displayName") or data.get("display_name") or ""
         tool_display_name = raw_display if isinstance(raw_display, str) else ""
-
         if (
             context.all_tool_names
             and tool_name not in context.all_tool_names
             and tool_display_name not in context.all_tool_names
         ):
-            return []
-
-        if not is_voice_app(context):
             return []
 
         ds_tool = data.get("dataStoreTool")
@@ -1349,36 +1459,13 @@ class DataStoreVoiceModality(Rule):
         if not isinstance(ds_tool, dict):
             return []
 
-        rel = str(file_path.relative_to(context.project_root))
-        results: list[LintResult] = []
         mod_configs = ds_tool.get("modalityConfigs")
         if mod_configs is None:
             mod_configs = ds_tool.get("modality_configs")
-        if mod_configs is None:
-            mod_configs = []
-
-        audio_conf: dict[str, typing.Any] | None = None
-        if isinstance(mod_configs, dict):
-            candidate = mod_configs.get("AUDIO")
-            if candidate is None:
-                candidate = mod_configs.get(2)
-            if isinstance(candidate, dict):
-                audio_conf = candidate
-        elif isinstance(mod_configs, list):
-            for mc in mod_configs:
-                if not isinstance(mc, dict):
-                    continue
-                mt = mc.get("modalityType")
-                if mt is None:
-                    mt = mc.get("modality_type")
-                if mt is None:
-                    mt = mc.get("modality")
-                if mt in ("AUDIO", 2):
-                    audio_conf = mc
-                    break
-
+        audio_conf = _find_audio_modality_config(mod_configs)
+        rel = str(file_path.relative_to(context.project_root))
         if audio_conf is None:
-            results.append(
+            return [
                 self.make_result(
                     file=rel,
                     message=(
@@ -1387,66 +1474,8 @@ class DataStoreVoiceModality(Rule):
                     ),
                     fix="Add an AUDIO configuration block to modalityConfigs.",
                 )
-            )
-        else:
-            snippets = audio_conf.get("snippetsConfig") or audio_conf.get(
-                "snippets_config"
-            )
-            if not isinstance(snippets, dict) or not snippets:
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            "dataStoreTool AUDIO modalityConfigs missing"
-                            " snippetsConfig/snippets_config."
-                        ),
-                        fix=(
-                            "Provide snippetsConfig inside the"
-                            " AUDIO modality config."
-                        ),
-                    )
-                )
-
-            raw_rewriter = audio_conf.get("rewriterConfig") or audio_conf.get(
-                "rewriter_config"
-            )
-            rewriter = raw_rewriter if isinstance(raw_rewriter, dict) else {}
-            raw_summarizer = audio_conf.get(
-                "summarizationConfig"
-            ) or audio_conf.get("summarization_config")
-            summarizer = (
-                raw_summarizer if isinstance(raw_summarizer, dict) else {}
-            )
-
-            if rewriter.get("disabled") is not True:
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            "rewriterConfig.disabled is not True in"
-                            " AUDIO modalityConfig."
-                        ),
-                        fix=(
-                            "Disable rewriter for Voice"
-                            " deployments inside AUDIO."
-                        ),
-                    )
-                )
-            if summarizer.get("disabled") is not True:
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            "summarizationConfig.disabled is not True"
-                            " in AUDIO modalityConfig."
-                        ),
-                        fix=(
-                            "Disable summarization for Voice"
-                            " deployments inside AUDIO."
-                        ),
-                    )
-                )
-        return results
+            ]
+        return self._check_audio_gaps(rel, audio_conf)
 
 
 def _camel_snake_variants(key: str) -> set[str]:
@@ -1571,6 +1600,28 @@ def _find_matching_env_entry(
     return None, None
 
 
+def _collect_resource_env_placeholders(
+    res: LocalResource,
+    oa_key: str,
+    schema_paths: list[Path],
+) -> list[tuple[Path, tuple[str, ...]]]:
+    """Return deduplicated ``(source_path, field_path)`` placeholder entries."""
+    placeholders: list[tuple[Path, tuple[str, ...]]] = []
+    if res.report_path.is_file():
+        cfg = _load_config_dict(res.report_path)
+        if cfg is not None:
+            placeholders.extend(
+                (res.report_path, p) for p in _find_env_var_placeholders(cfg)
+            )
+    for sp in schema_paths:
+        schema_doc = _load_config_dict(sp)
+        if schema_doc is not None and "$env_var" in iter_openapi_server_urls(
+            schema_doc
+        ):
+            placeholders.append((sp, (oa_key, "url")))
+    return list(dict.fromkeys(placeholders))
+
+
 @rule("tools")
 class ToolToolsetEnvVarParity(Rule):
     """Tool/toolset ``$env_var`` values must resolve in ``environment.json``."""
@@ -1584,6 +1635,80 @@ class ToolToolsetEnvVarParity(Rule):
     default_severity = Severity.ERROR
     target = "app_config"
 
+    def _check_resource_placeholders(
+        self,
+        res: LocalResource,
+        subdir: str,
+        label: str,
+        oa_key: str,
+        schema_paths: list[Path],
+        env_data: dict[str, typing.Any] | None,
+        env_section: dict[str, typing.Any],
+        context: LintContext,
+    ) -> list[LintResult]:
+        placeholders = _collect_resource_env_placeholders(
+            res, oa_key, schema_paths
+        )
+        if not placeholders:
+            return []
+
+        _, env_entry = _find_matching_env_entry(res, subdir, env_section)
+        reason = (
+            "environment.json is missing."
+            if env_data is None
+            else (f"environment.json '{subdir}' has no non-empty value for it.")
+        )
+        results: list[LintResult] = []
+        for src_path, field_path in placeholders:
+            if env_data is not None and _env_entry_resolves_placeholder(
+                env_entry, field_path
+            ):
+                continue
+            field_desc = ".".join(field_path) or "$env_var"
+            results.append(
+                self.make_result(
+                    file=rel_to_project(src_path, context),
+                    severity=Severity.ERROR,
+                    message=(
+                        f"{label} '{res.key}' uses '$env_var' at "
+                        f"'{field_desc}' but {reason}"
+                    ),
+                    fix=(
+                        f"Set '{subdir}.{res.key}' in "
+                        "environment.json to a non-empty value."
+                    ),
+                )
+            )
+        return results
+
+    def _check_dangling_env_keys(
+        self,
+        subdir: str,
+        label: str,
+        resources: list[LocalResource],
+        env_section: dict[str, typing.Any],
+        env_rel: str,
+    ) -> list[LintResult]:
+        return [
+            self.make_result(
+                file=env_rel,
+                severity=Severity.WARNING,
+                message=(
+                    f"environment.json '{subdir}' entry "
+                    f"'{env_key}' does not match any "
+                    f"{label.lower()} under {subdir}/."
+                ),
+                fix=(
+                    f"Remove stale '{env_key}' from "
+                    f"environment.json '{subdir}' or restore "
+                    f"{subdir}/{env_key}."
+                ),
+            )
+            for env_key in sorted(env_section.keys())
+            if isinstance(env_key, str)
+            and not match_local_resources(env_key, subdir, resources)
+        ]
+
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
@@ -1593,131 +1718,48 @@ class ToolToolsetEnvVarParity(Rule):
             if context.env_file is not None
             else app_root / "environment.json"
         )
-
         env_data: dict[str, typing.Any] | None = None
         if env_path.exists():
             env_data = _load_config_dict(env_path)
             if env_data is None:
                 return []
 
-        env_tools = (
-            env_data.get("tools")
-            if env_data and isinstance(env_data.get("tools"), dict)
-            else {}
-        )
-        env_toolsets = (
-            env_data.get("toolsets")
-            if env_data and isinstance(env_data.get("toolsets"), dict)
-            else {}
-        )
-
-        tool_resources = discover_local_resources(app_root, "tools")
-        toolset_resources = discover_local_resources(app_root, "toolsets")
-        schema_paths = discover_openapi_schema_paths(app_root)
         schemas_by_key: dict[tuple[str, str], list[Path]] = {}
-        for kind, key, sp in schema_paths:
+        for kind, key, sp in discover_openapi_schema_paths(app_root):
             schemas_by_key.setdefault((kind, key), []).append(sp)
 
         results: list[LintResult] = []
         sections = (
-            ("tools", "Tool", "openApiTool", tool_resources, env_tools),
-            (
-                "toolsets",
-                "Toolset",
-                "openApiToolset",
-                toolset_resources,
-                env_toolsets,
-            ),
+            ("tools", "Tool", "openApiTool"),
+            ("toolsets", "Toolset", "openApiToolset"),
         )
-
-        for subdir, label, oa_key, resources, env_section in sections:
+        for subdir, label, oa_key in sections:
+            resources = discover_local_resources(app_root, subdir)
+            raw_sec = env_data.get(subdir) if env_data else None
+            env_section = raw_sec if isinstance(raw_sec, dict) else {}
             for res in resources:
-                placeholders: list[tuple[Path, tuple[str, ...]]] = []
-                if res.report_path.is_file():
-                    cfg = _load_config_dict(res.report_path)
-                    if cfg is not None:
-                        for p in _find_env_var_placeholders(cfg):
-                            placeholders.append((res.report_path, p))
-
-                for sp in schemas_by_key.get((subdir, res.key), ()):
-                    schema_doc = _load_config_dict(sp)
-                    if schema_doc is None:
-                        continue
-                    servers = schema_doc.get("servers")
-                    if isinstance(servers, list):
-                        for srv in servers:
-                            if (
-                                isinstance(srv, dict)
-                                and isinstance(srv.get("url"), str)
-                                and srv["url"].strip() == "$env_var"
-                            ):
-                                placeholders.append((sp, (oa_key, "url")))
-                                break
-
-                if not placeholders:
-                    continue
-
-                _, env_entry = _find_matching_env_entry(
-                    res, subdir, env_section
+                results.extend(
+                    self._check_resource_placeholders(
+                        res,
+                        subdir,
+                        label,
+                        oa_key,
+                        schemas_by_key.get((subdir, res.key), []),
+                        env_data,
+                        env_section,
+                        context,
+                    )
                 )
-                seen_paths: set[tuple[Path, tuple[str, ...]]] = set()
-                for src_path, field_path in placeholders:
-                    if (src_path, field_path) in seen_paths:
-                        continue
-                    seen_paths.add((src_path, field_path))
-                    field_desc = ".".join(field_path) or "$env_var"
-                    src_rel = rel_to_project(src_path, context)
-                    if env_data is not None and _env_entry_resolves_placeholder(
-                        env_entry, field_path
-                    ):
-                        continue
-                    reason = (
-                        "environment.json is missing."
-                        if env_data is None
-                        else (
-                            f"environment.json '{subdir}' has no non-empty "
-                            "value for it."
-                        )
-                    )
-                    results.append(
-                        self.make_result(
-                            file=src_rel,
-                            severity=Severity.ERROR,
-                            message=(
-                                f"{label} '{res.key}' uses '$env_var' at "
-                                f"'{field_desc}' but {reason}"
-                            ),
-                            fix=(
-                                f"Set '{subdir}.{res.key}' in "
-                                "environment.json to a non-empty value."
-                            ),
-                        )
-                    )
-
-            # Dangling keys in environment.json
             if env_data is not None and env_section:
-                env_rel = rel_to_project(env_path, context)
-                for env_key in sorted(env_section.keys()):
-                    if not isinstance(env_key, str):
-                        continue
-                    if not match_local_resources(env_key, subdir, resources):
-                        results.append(
-                            self.make_result(
-                                file=env_rel,
-                                severity=Severity.WARNING,
-                                message=(
-                                    f"environment.json '{subdir}' entry "
-                                    f"'{env_key}' does not match any "
-                                    f"{label.lower()} under {subdir}/."
-                                ),
-                                fix=(
-                                    f"Remove stale '{env_key}' from "
-                                    f"environment.json '{subdir}' or restore "
-                                    f"{subdir}/{env_key}."
-                                ),
-                            )
-                        )
-
+                results.extend(
+                    self._check_dangling_env_keys(
+                        subdir,
+                        label,
+                        resources,
+                        env_section,
+                        rel_to_project(env_path, context),
+                    )
+                )
         return results
 
 
@@ -1730,20 +1772,20 @@ def _is_valid_openapi_server_url(url: typing.Any) -> bool:
         return False
     if any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in stripped):
         return False
-    if stripped == "$env_var":
+    if stripped == "$env_var" or stripped.startswith("/"):
         return True
-    if stripped.startswith("/"):
-        return True
-    if stripped.lower().startswith(("http://", "https://")):
-        try:
-            parsed = urlparse(stripped)
-            host = parsed.hostname
-        except ValueError:
-            return False
-        if parsed.scheme.lower() not in ("http", "https") or not host:
-            return False
-        return not host.startswith(".")
-    return False
+    if not stripped.lower().startswith(("http://", "https://")):
+        return False
+    try:
+        parsed = urlparse(stripped)
+        host = parsed.hostname
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.lower() in ("http", "https")
+        and bool(host)
+        and not host.startswith(".")
+    )
 
 
 @rule("tools")
@@ -1759,107 +1801,109 @@ class OpenApiSchemaValidity(Rule):
     default_severity = Severity.ERROR
     target = "app_config"
 
+    def _validate_servers(
+        self, rel: str, servers: typing.Any
+    ) -> list[LintResult]:
+        if not isinstance(servers, list):
+            return [
+                self.make_result(
+                    file=rel,
+                    message="OpenAPI schema 'servers' must be a list.",
+                    fix="Define 'servers' as a list of {url: ...} items.",
+                )
+            ]
+        results: list[LintResult] = []
+        for idx, srv in enumerate(servers):
+            if not isinstance(srv, dict):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"OpenAPI schema servers[{idx}] must "
+                            "be a mapping with a 'url' field."
+                        ),
+                        fix=(
+                            "Use '- url: https://...' for each "
+                            "entry in 'servers'."
+                        ),
+                    )
+                )
+                continue
+            url = srv.get("url")
+            if not _is_valid_openapi_server_url(url):
+                results.append(
+                    self.make_result(
+                        file=rel,
+                        message=(
+                            f"OpenAPI schema servers[{idx}].url "
+                            f"has invalid value {url!r}."
+                        ),
+                        fix=(
+                            "Set 'url' to an http(s):// URL, "
+                            "relative '/' path, or '$env_var'."
+                        ),
+                    )
+                )
+        return results
+
+    def _check_schema_file(
+        self, schema_path: Path, rel: str
+    ) -> list[LintResult]:
+        try:
+            raw = schema_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
+            return [
+                self.make_result(
+                    file=rel,
+                    message=f"OpenAPI schema could not be read as UTF-8: {e}",
+                    fix="Ensure the OpenAPI schema file is valid UTF-8.",
+                )
+            ]
+        try:
+            doc = yaml.safe_load(raw)
+        except yaml.YAMLError as e:
+            return [
+                self.make_result(
+                    file=rel,
+                    message=f"OpenAPI schema is not valid YAML: {e}",
+                    fix="Fix the YAML syntax error in the OpenAPI schema.",
+                )
+            ]
+        if not isinstance(doc, dict):
+            return [
+                self.make_result(
+                    file=rel,
+                    message="OpenAPI schema must be a YAML mapping.",
+                    fix="Provide a valid OpenAPI 3.0 YAML object.",
+                )
+            ]
+
+        results: list[LintResult] = []
+        paths = doc.get("paths")
+        if not isinstance(paths, dict) or not paths:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    message=(
+                        "OpenAPI schema must define a non-empty 'paths' "
+                        "mapping."
+                    ),
+                    fix="Add at least one endpoint under 'paths:'.",
+                )
+            )
+        if "servers" in doc:
+            results.extend(self._validate_servers(rel, doc.get("servers")))
+        return results
+
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         app_root = resolve_app_root(file_path, context)
         results: list[LintResult] = []
-
         for _kind, _key, schema_path in discover_openapi_schema_paths(app_root):
-            rel = rel_to_project(schema_path, context)
-            try:
-                raw = schema_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as e:
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            f"OpenAPI schema could not be read as UTF-8: {e}"
-                        ),
-                        fix="Ensure the OpenAPI schema file is valid UTF-8.",
-                    )
+            results.extend(
+                self._check_schema_file(
+                    schema_path, rel_to_project(schema_path, context)
                 )
-                continue
-
-            try:
-                doc = yaml.safe_load(raw)
-            except yaml.YAMLError as e:
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=f"OpenAPI schema is not valid YAML: {e}",
-                        fix="Fix the YAML syntax error in the OpenAPI schema.",
-                    )
-                )
-                continue
-
-            if not isinstance(doc, dict):
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message="OpenAPI schema must be a YAML mapping.",
-                        fix="Provide a valid OpenAPI 3.0 YAML object.",
-                    )
-                )
-                continue
-
-            paths = doc.get("paths")
-            if not isinstance(paths, dict) or len(paths) == 0:
-                results.append(
-                    self.make_result(
-                        file=rel,
-                        message=(
-                            "OpenAPI schema must define a non-empty 'paths' "
-                            "mapping."
-                        ),
-                        fix="Add at least one endpoint under 'paths:'.",
-                    )
-                )
-
-            if "servers" in doc:
-                servers = doc.get("servers")
-                if not isinstance(servers, list):
-                    results.append(
-                        self.make_result(
-                            file=rel,
-                            message="OpenAPI schema 'servers' must be a list.",
-                            fix=(
-                                "Define 'servers' as a list of {url: ...} "
-                                "items."
-                            ),
-                        )
-                    )
-                else:
-                    for idx, srv in enumerate(servers):
-                        if not isinstance(srv, dict):
-                            results.append(
-                                self.make_result(
-                                    file=rel,
-                                    message=(
-                                        f"OpenAPI schema servers[{idx}] must "
-                                        "be a mapping with a 'url' field."
-                                    ),
-                                    fix=(
-                                        "Use '- url: https://...' for each "
-                                        "entry in 'servers'."
-                                    ),
-                                )
-                            )
-                            continue
-                        url = srv.get("url")
-                        if not _is_valid_openapi_server_url(url):
-                            results.append(
-                                self.make_result(
-                                    file=rel,
-                                    message=(
-                                        f"OpenAPI schema servers[{idx}].url "
-                                        f"has invalid value {url!r}."
-                                    ),
-                                    fix=(
-                                        "Set 'url' to an http(s):// URL, "
-                                        "relative '/' path, or '$env_var'."
-                                    ),
-                                )
-                            )
-
+            )
         return results

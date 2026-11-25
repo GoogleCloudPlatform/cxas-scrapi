@@ -96,10 +96,7 @@ def test_run_rules_discovers_deployments_yml_and_skips_symlinks(
     tmp_path: Path,
 ) -> None:
     outside = tmp_path / "outside.yml"
-    outside.write_text(
-        "brandId: brand_a\nsupportedCountries: [XX]\nsupportedLanguages: [xx]\n",
-        encoding="utf-8",
-    )
+    outside.write_text("entryAgent: escaped_agent\n", encoding="utf-8")
     app = tmp_path / "app"
     _write_json(app / "app.json", {"displayName": "app", "rootAgent": "root"})
     _write_json(
@@ -110,23 +107,15 @@ def test_run_rules_discovers_deployments_yml_and_skips_symlinks(
         "<role>Hi.</role>\n", encoding="utf-8"
     )
     _write_yaml(
-        app / "manifests" / "locales" / "content_blocks.yaml",
-        {"blocks": {"brand_a": {"DE": {"de": {"hi": "Hallo"}}}}},
-    )
-    _write_yaml(
         app / "deployments" / "web.yml",
-        {
-            "brandId": "brand_a",
-            "supportedCountries": ["DE"],
-            "supportedLanguages": ["fr"],
-        },
+        {"entryAgent": "missing_entry"},
     )
     os.symlink(outside, app / "deployments" / "escape.yml")
 
-    rep = _run_specific(app, {"G002"})
+    rep = _run_specific(app, {"S018"})
     assert len(rep.results) == 1
     assert rep.results[0].file == "deployments/web.yml"
-    assert "lang=fr" in rep.results[0].message
+    assert "missing_entry" in rep.results[0].message
 
 
 # ── T020: Tool / Toolset $env_var <-> environment.json parity ───────────
@@ -520,7 +509,7 @@ def test_s020_self_transfer_and_orphaned_agent_target(tmp_path: Path) -> None:
 # ── Sample_Support_Agent Regression Guard ───────────────────────────────
 
 
-def test_sample_support_agent_clean_with_all_120_rules() -> None:
+def test_sample_support_agent_clean_with_all_rules() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     template_root = (
         repo_root
@@ -534,7 +523,7 @@ def test_sample_support_agent_clean_with_all_120_rules() -> None:
     discovery = Discovery(template_root / "cxas_app", template_root / "evals")
     ctx = build_context(template_root, cfg, discovery)
     registry = build_registry()
-    assert len(registry.all_rules()) >= 120  # noqa: PLR2004
+    assert len(registry.all_rules()) == 119  # noqa: PLR2004
     report = LintReport()
     run_rules(registry, cfg, ctx, discovery, report)
     assert report.errors == []
@@ -864,8 +853,6 @@ def test_cli_list_rules_exit_codes_and_sample_template(tmp_path: Path) -> None:
         "T019",
         "T020",
         "T021",
-        "G001",
-        "G002",
         "A015",
         "A018",
         "C024",
@@ -876,6 +863,7 @@ def test_cli_list_rules_exit_codes_and_sample_template(tmp_path: Path) -> None:
         "S018",
         "S019",
         "S020",
+        "S021",
     ):
         assert rule_id in listed.stdout
 

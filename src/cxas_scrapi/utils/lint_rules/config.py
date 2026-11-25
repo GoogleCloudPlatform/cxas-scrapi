@@ -30,8 +30,8 @@ from cxas_scrapi.utils.env_vars import (
     validate_value_for_schema,
 )
 from cxas_scrapi.utils.linter import (
-    _APP_CONFIG_NAMES,
-    _CONFIG_EXTENSIONS,
+    APP_CONFIG_NAMES,
+    CONFIG_EXTENSIONS,
     LintContext,
     LintResult,
     Rule,
@@ -44,6 +44,26 @@ from cxas_scrapi.utils.linter import (
     rule,
 )
 
+_AUDIO_CONFIG_KEYS = ("audioProcessingConfig", "audio_processing_config")
+_SYNTHESIZE_SPEECH_KEYS = (
+    "synthesizeSpeechConfigs",
+    "synthesize_speech_configs",
+)
+_LANGUAGE_SETTINGS_KEYS = ("languageSettings", "language_settings")
+_DEFAULT_LANG_KEYS = ("defaultLanguageCode", "default_language_code")
+_SUPPORTED_LANG_KEYS = ("supportedLanguageCodes", "supported_language_codes")
+_MULTILINGUAL_KEYS = (
+    "enableMultilingualSupport",
+    "enable_multilingual_support",
+)
+
+
+def _get_field(mapping: dict[str, Any], camel: str, snake: str) -> Any:
+    """Return ``mapping[camel]`` if present, else ``mapping.get(snake)``."""
+    if camel in mapping:
+        return mapping[camel]
+    return mapping.get(snake)
+
 
 def _find_agent_config_file(
     agent_dir: Path, root_agent_name: str
@@ -52,7 +72,7 @@ def _find_agent_config_file(
     cfg = _find_dir_config(agent_dir)
     if cfg is not None:
         return cfg
-    for ext in _CONFIG_EXTENSIONS:
+    for ext in CONFIG_EXTENSIONS:
         candidate = agent_dir / f"{root_agent_name}{ext}"
         if candidate.is_file() and not candidate.is_symlink():
             return candidate
@@ -117,7 +137,7 @@ class MissingRequiredFields(Rule):
             return []
 
         results = []
-        if file_path.name in _APP_CONFIG_NAMES:
+        if file_path.name in APP_CONFIG_NAMES:
             for field_name in ["name", "displayName"]:
                 if field_name not in data:
                     results.append(
@@ -141,7 +161,7 @@ class AgentToolNotExists(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name in _APP_CONFIG_NAMES:
+        if file_path.name in APP_CONFIG_NAMES:
             return []
 
         data = parse_config_content(file_path, content)
@@ -229,7 +249,7 @@ class AgentMissingInstruction(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name in _APP_CONFIG_NAMES:
+        if file_path.name in APP_CONFIG_NAMES:
             return []
 
         data = parse_config_content(file_path, content)
@@ -269,7 +289,7 @@ class RootAgentMissingEndSession(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name not in _APP_CONFIG_NAMES:
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
 
         data = parse_config_content(file_path, content)
@@ -335,7 +355,7 @@ class AppRootAgentValidation(Rule):
     ) -> list[LintResult]:
         rel = str(file_path.relative_to(context.project_root))
 
-        if file_path.name not in _APP_CONFIG_NAMES:
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
 
         data = parse_config_content(file_path, content)
@@ -980,7 +1000,7 @@ class AppVariableDefaultsAndEnvVars(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in _APP_CONFIG_NAMES:
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
 
         rel = rel_to_project(file_path, context)
@@ -1175,6 +1195,39 @@ class AppVariableDefaultsAndEnvVars(Rule):
         return results
 
 
+def _extract_supported_languages(ls: dict[str, Any]) -> list[str]:
+    """Return deduplicated non-empty supportedLanguageCodes in order."""
+    raw = _get_field(ls, *_SUPPORTED_LANG_KEYS)
+    if not isinstance(raw, list):
+        return []
+    codes = [
+        item.strip() for item in raw if isinstance(item, str) and item.strip()
+    ]
+    return list(dict.fromkeys(codes))
+
+
+def _missing_voice_tts_languages(
+    data: dict[str, Any], supported: list[str]
+) -> list[str]:
+    """Return supported languages lacking a non-empty TTS config entry."""
+    audio_cfg = _get_field(data, *_AUDIO_CONFIG_KEYS)
+    tts_cfgs = (
+        _get_field(audio_cfg, *_SYNTHESIZE_SPEECH_KEYS)
+        if isinstance(audio_cfg, dict)
+        else None
+    )
+    valid_keys = (
+        {
+            k.strip().lower()
+            for k, v in tts_cfgs.items()
+            if isinstance(k, str) and k.strip() and isinstance(v, dict) and v
+        }
+        if isinstance(tts_cfgs, dict)
+        else set()
+    )
+    return [lang for lang in supported if lang.lower() not in valid_keys]
+
+
 @rule("config")
 class VoiceLanguageTtsParity(Rule):
     """Validates languageSettings parity and voice TTS coverage."""
@@ -1191,47 +1244,26 @@ class VoiceLanguageTtsParity(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in _APP_CONFIG_NAMES:
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
 
         data = parse_config_content(file_path, content)
         if data is None:
             return []
 
-        ls = data.get("languageSettings") or data.get("language_settings")
+        ls = _get_field(data, *_LANGUAGE_SETTINGS_KEYS)
         if not isinstance(ls, dict):
             return []
 
         rel = rel_to_project(file_path, context)
-        raw_default = ls.get("defaultLanguageCode") or ls.get(
-            "default_language_code"
-        )
+        raw_default = _get_field(ls, *_DEFAULT_LANG_KEYS)
         default_lang = (
             raw_default.strip()
             if isinstance(raw_default, str) and raw_default.strip()
             else None
         )
-
-        raw_supported = (
-            ls.get("supportedLanguageCodes")
-            if "supportedLanguageCodes" in ls
-            else ls.get("supported_language_codes")
-        )
-        supported: list[str] = []
-        seen_supported: set[str] = set()
-        if isinstance(raw_supported, list):
-            for item in raw_supported:
-                if isinstance(item, str) and item.strip():
-                    code = item.strip()
-                    if code not in seen_supported:
-                        seen_supported.add(code)
-                        supported.append(code)
-
-        multilingual = (
-            ls["enableMultilingualSupport"]
-            if "enableMultilingualSupport" in ls
-            else ls.get("enable_multilingual_support")
-        )
+        supported = _extract_supported_languages(ls)
+        multilingual = _get_field(ls, *_MULTILINGUAL_KEYS)
 
         results: list[LintResult] = []
         if default_lang and supported and default_lang not in supported:
@@ -1267,47 +1299,22 @@ class VoiceLanguageTtsParity(Rule):
             )
 
         if supported and is_voice_app(context):
-            audio_cfg = data.get("audioProcessingConfig") or data.get(
-                "audio_processing_config"
-            )
-            tts_cfgs = (
-                (
-                    audio_cfg.get("synthesizeSpeechConfigs")
-                    if "synthesizeSpeechConfigs" in audio_cfg
-                    else audio_cfg.get("synthesize_speech_configs")
+            results.extend(
+                self.make_result(
+                    file=rel,
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Voice app language '{lang}' is missing "
+                        "a valid entry in audioProcessingConfig."
+                        "synthesizeSpeechConfigs."
+                    ),
+                    fix=(
+                        f"Add a '{lang}' voice config under "
+                        "audioProcessingConfig."
+                        "synthesizeSpeechConfigs."
+                    ),
                 )
-                if isinstance(audio_cfg, dict)
-                else None
+                for lang in _missing_voice_tts_languages(data, supported)
             )
-            tts_keys_lower = (
-                {
-                    k.strip().lower()
-                    for k, v in tts_cfgs.items()
-                    if isinstance(k, str)
-                    and k.strip()
-                    and isinstance(v, dict)
-                    and bool(v)
-                }
-                if isinstance(tts_cfgs, dict)
-                else set()
-            )
-            for lang in supported:
-                if lang.lower() not in tts_keys_lower:
-                    results.append(
-                        self.make_result(
-                            file=rel,
-                            severity=Severity.WARNING,
-                            message=(
-                                f"Voice app language '{lang}' is missing "
-                                "a valid entry in audioProcessingConfig."
-                                "synthesizeSpeechConfigs."
-                            ),
-                            fix=(
-                                f"Add a '{lang}' voice config under "
-                                "audioProcessingConfig."
-                                "synthesizeSpeechConfigs."
-                            ),
-                        )
-                    )
 
         return results

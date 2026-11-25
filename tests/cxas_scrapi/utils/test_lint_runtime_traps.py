@@ -453,94 +453,15 @@ def test_sample_support_agent_passes_all_runtime_trap_rules() -> None:
     assert report.results == [], [str(r) for r in report.results]
 
 
-def _write_app_with_vars(tmp_path: Path, count: int) -> Path:
-    app_file = tmp_path / "app.json"
-    app_file.write_text(
-        json.dumps(
-            {
-                "displayName": "Demo",
-                "variableDeclarations": [
-                    {"name": f"var{i}"} for i in range(count)
-                ],
-            }
-        )
+def test_a015_supports_app_yml_config(tmp_path: Path) -> None:
+    app_yml = tmp_path / "app.yml"
+    decls = "\n".join(f"  - name: var_{i}" for i in range(96))
+    app_yml.write_text(
+        f"displayName: Demo\nvariableDeclarations:\n{decls}\n",
+        encoding="utf-8",
     )
-    return app_file
-
-
-def test_a015_default_limit_unchanged_without_options(tmp_path: Path) -> None:
-    app_file = _write_app_with_vars(tmp_path, 85)
-    ctx = _ctx(tmp_path)
-    assert VariableCountLimit().check(app_file, app_file.read_text(), ctx) == []
-
-
-def test_a015_rule_scoped_option_lowers_limit(tmp_path: Path) -> None:
-    app_file = _write_app_with_vars(tmp_path, 85)
-    ctx = _ctx(tmp_path)
-    ctx.options = {"A015": {"max_variables_per_app": 80}}
-    results = VariableCountLimit().check(app_file, app_file.read_text(), ctx)
-    assert len(results) == 1
-    assert "recommended ceiling: 76" in results[0].message
-    assert "platform limit: ~80" in results[0].message
-
-
-def test_a015_exact_95_percent_boundary_passes(tmp_path: Path) -> None:
-    app_file = _write_app_with_vars(tmp_path, 76)
-    ctx = _ctx(tmp_path)
-    ctx.options = {"A015": {"max_variables_per_app": 80}}
-    assert VariableCountLimit().check(app_file, app_file.read_text(), ctx) == []
-
-
-def test_a015_global_option_lowers_limit(tmp_path: Path) -> None:
-    app_file = _write_app_with_vars(tmp_path, 85)
-    ctx = _ctx(tmp_path)
-    ctx.options = {"max_variables_per_app": 80}
-    assert (
-        len(VariableCountLimit().check(app_file, app_file.read_text(), ctx))
-        == 1
+    res = VariableCountLimit().check(
+        app_yml, app_yml.read_text(encoding="utf-8"), _ctx(tmp_path)
     )
-
-
-def test_a015_invalid_option_falls_back_to_default(tmp_path: Path) -> None:
-    app_file = _write_app_with_vars(tmp_path, 85)
-    for invalid in (
-        True,
-        False,
-        "80",
-        0,
-        -10,
-        0.5,
-        None,
-        {},
-        float("inf"),
-        float("-inf"),
-        float("nan"),
-    ):
-        ctx = _ctx(tmp_path)
-        ctx.options = {"A015": {"max_variables_per_app": invalid}}
-        assert (
-            VariableCountLimit().check(app_file, app_file.read_text(), ctx)
-            == []
-        )
-
-
-def test_a015_exact_boundaries_and_option_precedence(tmp_path: Path) -> None:
-    rule = VariableCountLimit()
-    for count, opts, expected in [
-        (95, {}, 0),
-        (96, {}, 1),
-        (190, {"A015": {"max_variables_per_app": 200}}, 0),
-        (191, {"A015": {"max_variables_per_app": 200}}, 1),
-        (
-            85,
-            {
-                "max_variables_per_app": 50,
-                "A015": {"max_variables_per_app": 200},
-            },
-            0,
-        ),
-    ]:
-        app_file = _write_app_with_vars(tmp_path, count)
-        ctx = _ctx(tmp_path)
-        ctx.options = opts
-        assert len(rule.check(app_file, app_file.read_text(), ctx)) == expected
+    assert len(res) == 1
+    assert res[0].rule_id == "A015"

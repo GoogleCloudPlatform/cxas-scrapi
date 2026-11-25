@@ -360,6 +360,32 @@ VOICE_CHANNEL_TYPES = frozenset(
 )
 
 
+def _deployment_channel_candidates(
+    data: dict[str, typing.Any],
+) -> list[str]:
+    """Extract non-empty channel strings from a deployment manifest dict."""
+    raw_values: list[object] = [data.get("channel")]
+    for cp_key in ("channelProfile", "channel_profile"):
+        cp = data.get(cp_key)
+        if isinstance(cp, dict):
+            raw_values.extend((cp.get("channelType"), cp.get("channel_type")))
+    return [v.strip() for v in raw_values if isinstance(v, str) and v.strip()]
+
+
+def _check_deployment_voice_channels(context: LintContext) -> bool | None:
+    """Return True/False if any deployment declares a channel, else None."""
+    saw_channel = False
+    for dep_file in discover_deployment_files(context.app_root, context):
+        data = _load_config_dict(dep_file)
+        if data is None:
+            continue
+        for ch in _deployment_channel_candidates(data):
+            saw_channel = True
+            if ch.upper() in VOICE_CHANNEL_TYPES:
+                return True
+    return False if saw_channel else None
+
+
 def is_voice_app(context: LintContext) -> bool:
     """Return True if deployment manifests or app config target a voice channel.
 
@@ -369,48 +395,27 @@ def is_voice_app(context: LintContext) -> bool:
     ``app.yml`` ``audioProcessingConfig`` so digital builds that retain brand
     TTS settings are not misclassified as voice apps.
     """
-    saw_deployment_channel = False
-    for dep_file in discover_deployment_files(context.app_root, context):
-        data = _load_config_dict(dep_file)
-        if data is None:
-            continue
-
-        candidates: list[object] = [data.get("channel")]
-        for cp_key in ("channelProfile", "channel_profile"):
-            cp = data.get(cp_key)
-            if isinstance(cp, dict):
-                candidates.append(cp.get("channelType"))
-                candidates.append(cp.get("channel_type"))
-
-        for raw in candidates:
-            if isinstance(raw, str) and raw.strip():
-                saw_deployment_channel = True
-                if raw.strip().upper() in VOICE_CHANNEL_TYPES:
-                    return True
-
-    if saw_deployment_channel:
-        return False
+    dep_voice = _check_deployment_voice_channels(context)
+    if dep_voice is not None:
+        return dep_voice
 
     app_root = context.app_root or context.app_dir
-    if app_root is not None:
-        for cfg_name in _APP_CONFIG_NAMES:
-            app_cfg = app_root / cfg_name
-            if app_cfg.is_file() and not app_cfg.is_symlink():
-                data = _load_config_dict(app_cfg)
-                if data is not None and (
-                    data.get("audioProcessingConfig")
-                    or data.get("audio_processing_config")
-                ):
-                    return True
-                break
-
-    return False
+    if app_root is None:
+        return False
+    _, app_cfg = _load_app_config(app_root)
+    return bool(
+        app_cfg
+        and (
+            app_cfg.get("audioProcessingConfig")
+            or app_cfg.get("audio_processing_config")
+        )
+    )
 
 
 # ── Shared Config Loading, Local Resources & Agent Graph ────────────────
 
-_CONFIG_EXTENSIONS: tuple[str, ...] = (".json", ".yaml", ".yml")
-_APP_CONFIG_NAMES: tuple[str, ...] = ("app.json", "app.yaml", "app.yml")
+CONFIG_EXTENSIONS: tuple[str, ...] = (".json", ".yaml", ".yml")
+APP_CONFIG_NAMES: tuple[str, ...] = ("app.json", "app.yaml", "app.yml")
 _MAX_AGENT_CYCLES: int = 100
 _CES_AGENT_REF_RE = re.compile(
     r"^(?:projects/[^/]+/locations/[^/]+/apps/[^/]+/)?agents/([^/]+)$"
@@ -437,7 +442,7 @@ def _load_config_dict(path: Path) -> dict[str, typing.Any] | None:
     """Load a JSON or YAML mapping from ``path``, returning None on error."""
     if path.is_symlink() or not path.is_file():
         return None
-    if path.suffix.lower() not in _CONFIG_EXTENSIONS:
+    if path.suffix.lower() not in CONFIG_EXTENSIONS:
         return None
     try:
         raw = path.read_text(encoding="utf-8")
@@ -446,13 +451,24 @@ def _load_config_dict(path: Path) -> dict[str, typing.Any] | None:
     return parse_config_content(path, raw)
 
 
+def _load_app_config(
+    app_root: Path,
+) -> tuple[Path | None, dict[str, typing.Any] | None]:
+    """Return ``(path, data)`` for the first non-symlink app config file."""
+    for name in APP_CONFIG_NAMES:
+        candidate = app_root / name
+        if candidate.is_file() and not candidate.is_symlink():
+            return candidate, _load_config_dict(candidate)
+    return None, None
+
+
 def resolve_app_root(file_path: Path, context: LintContext) -> Path:
     """Resolve the app root directory from ``file_path`` or ``context``."""
-    if file_path.name in _APP_CONFIG_NAMES:
+    if file_path.name in APP_CONFIG_NAMES:
         return file_path.parent
     if context.app_root and context.app_root.exists():
         return context.app_root
-    if any((context.app_dir / name).exists() for name in _APP_CONFIG_NAMES):
+    if any((context.app_dir / name).exists() for name in APP_CONFIG_NAMES):
         return context.app_dir
     resource_dirs = ("agents", "tools", "toolsets", "guardrails")
     if file_path.parent.parent.name in resource_dirs:
@@ -501,10 +517,41 @@ class LocalResource:
 
 def _find_dir_config(resource_dir: Path) -> Path | None:
     """Return ``<dir>.json``, ``<dir>.yaml``, or ``<dir>.yml`` if present."""
-    for ext in _CONFIG_EXTENSIONS:
+    for ext in CONFIG_EXTENSIONS:
         candidate = resource_dir / f"{resource_dir.name}{ext}"
         if candidate.is_file() and not candidate.is_symlink():
             return candidate
+    return None
+
+
+def _extract_resource_identifiers(
+    key: str, cfg: dict[str, typing.Any] | None
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Build exact and normalized lookup identifier sets for a resource."""
+    ids: set[str] = {key, key.replace("_", " ")}
+    if isinstance(cfg, dict):
+        disp = cfg.get("displayName") or cfg.get("display_name")
+        if isinstance(disp, str) and disp.strip():
+            ids.add(disp.strip())
+        cfg_name = cfg.get("name")
+        if isinstance(cfg_name, str) and cfg_name.strip():
+            clean_name = cfg_name.strip()
+            ids.add(clean_name)
+            ids.add(clean_name.rsplit("/", 1)[-1])
+    norm_ids = {i.replace(" ", "_").lower() for i in ids}
+    return frozenset(ids), frozenset(norm_ids)
+
+
+def _load_resource_entry(
+    entry: Path,
+) -> tuple[str, Path, dict[str, typing.Any] | None] | None:
+    """Return ``(key, report_path, cfg)`` for a directory or flat config."""
+    if entry.is_dir():
+        cfg_path = _find_dir_config(entry)
+        cfg = _load_config_dict(cfg_path) if cfg_path is not None else None
+        return entry.name, cfg_path or entry, cfg
+    if entry.is_file() and entry.suffix.lower() in CONFIG_EXTENSIONS:
+        return entry.stem, entry, _load_config_dict(entry)
     return None
 
 
@@ -524,39 +571,17 @@ def discover_local_resources(
             or entry.name == "__pycache__"
         ):
             continue
-
-        cfg: dict[str, typing.Any] | None = None
-        if entry.is_dir():
-            key = entry.name
-            cfg_path = _find_dir_config(entry)
-            report_path = cfg_path or entry
-            if cfg_path is not None:
-                cfg = _load_config_dict(cfg_path)
-        elif entry.is_file() and entry.suffix.lower() in _CONFIG_EXTENSIONS:
-            key = entry.stem
-            report_path = entry
-            cfg = _load_config_dict(entry)
-        else:
+        loaded = _load_resource_entry(entry)
+        if loaded is None:
             continue
-
-        ids: set[str] = {key, key.replace("_", " ")}
-        if isinstance(cfg, dict):
-            disp = cfg.get("displayName") or cfg.get("display_name")
-            if isinstance(disp, str) and disp.strip():
-                ids.add(disp.strip())
-            cfg_name = cfg.get("name")
-            if isinstance(cfg_name, str) and cfg_name.strip():
-                clean_name = cfg_name.strip()
-                ids.add(clean_name)
-                ids.add(clean_name.rsplit("/", 1)[-1])
-
-        norm_ids = {i.replace(" ", "_").lower() for i in ids}
+        key, report_path, cfg = loaded
+        ids, norm_ids = _extract_resource_identifiers(key, cfg)
         resources.append(
             LocalResource(
                 key=key,
                 report_path=report_path,
-                identifiers=frozenset(ids),
-                normalized_identifiers=frozenset(norm_ids),
+                identifiers=ids,
+                normalized_identifiers=norm_ids,
             )
         )
     return resources
@@ -617,85 +642,164 @@ class AgentGraph:
     cycles: list[list[str]] = field(default_factory=list)
 
 
+@dataclass
+class _AgentRefIndex:
+    """Deterministic lookup maps from agent ref variants to directory names."""
+
+    name_set: set[str]
+    exact_name_map: dict[str, str] = field(default_factory=dict)
+    short_name_map: dict[str, str] = field(default_factory=dict)
+    exact_display_map: dict[str, str] = field(default_factory=dict)
+    norm_dir_map: dict[str, str] = field(default_factory=dict)
+    norm_name_map: dict[str, str] = field(default_factory=dict)
+    norm_display_map: dict[str, str] = field(default_factory=dict)
+
+
+def _register_agent_config_refs(
+    dir_name: str, cfg: dict[str, typing.Any], index: _AgentRefIndex
+) -> None:
+    """Populate exact and normalized name/displayName entries for one agent."""
+    cfg_name = cfg.get("name")
+    if isinstance(cfg_name, str) and cfg_name.strip():
+        clean_name = cfg_name.strip()
+        short_id = clean_name.rsplit("/", 1)[-1]
+        index.exact_name_map.setdefault(clean_name, dir_name)
+        index.short_name_map.setdefault(short_id, dir_name)
+        index.norm_name_map.setdefault(
+            clean_name.replace(" ", "_").lower(), dir_name
+        )
+        index.norm_name_map.setdefault(
+            short_id.replace(" ", "_").lower(), dir_name
+        )
+    disp = cfg.get("displayName") or cfg.get("display_name")
+    if isinstance(disp, str) and disp.strip():
+        clean_disp = disp.strip()
+        index.exact_display_map.setdefault(clean_disp, dir_name)
+        index.norm_display_map.setdefault(
+            clean_disp.replace(" ", "_").lower(), dir_name
+        )
+
+
+def _match_exact_agent_ref(
+    raw: str, index: _AgentRefIndex, *, use_short_map: bool = False
+) -> str | None:
+    """Match an agent ref against exact directory, name, and display maps."""
+    if raw in index.name_set:
+        return raw
+    underscored = raw.replace(" ", "_")
+    if underscored in index.name_set:
+        return underscored
+    name_map = index.short_name_map if use_short_map else index.exact_name_map
+    return name_map.get(raw) or index.exact_display_map.get(raw)
+
+
+def _match_normalized_agent_ref(
+    candidates: list[str], index: _AgentRefIndex
+) -> str | None:
+    """Fallback case/space-insensitive match across normalized maps."""
+    lookups = (index.norm_dir_map, index.norm_name_map, index.norm_display_map)
+    for cand in candidates:
+        norm = cand.replace(" ", "_").lower()
+        for lookup in lookups:
+            if norm in lookup:
+                return lookup[norm]
+    return None
+
+
 def _build_agent_ref_resolver(
     agent_names: set[str],
     agent_configs: dict[str, dict[str, typing.Any]],
 ) -> typing.Callable[[typing.Any], str | None]:
     """Build a deterministic resolver from agent ref strings to dir names."""
     sorted_names = sorted(agent_names)
-    name_set = set(sorted_names)
-    exact_name_map: dict[str, str] = {}
-    short_name_map: dict[str, str] = {}
-    exact_display_map: dict[str, str] = {}
-    norm_dir_map: dict[str, str] = {}
-    norm_name_map: dict[str, str] = {}
-    norm_display_map: dict[str, str] = {}
-
+    index = _AgentRefIndex(name_set=set(sorted_names))
     for dir_name in sorted_names:
-        norm_dir_map.setdefault(dir_name.replace(" ", "_").lower(), dir_name)
+        index.norm_dir_map.setdefault(
+            dir_name.replace(" ", "_").lower(), dir_name
+        )
         cfg = agent_configs.get(dir_name)
-        if not isinstance(cfg, dict):
-            continue
-        cfg_name = cfg.get("name")
-        if isinstance(cfg_name, str) and cfg_name.strip():
-            clean_name = cfg_name.strip()
-            short_id = clean_name.rsplit("/", 1)[-1]
-            exact_name_map.setdefault(clean_name, dir_name)
-            short_name_map.setdefault(short_id, dir_name)
-            norm_name_map.setdefault(
-                clean_name.replace(" ", "_").lower(), dir_name
-            )
-            norm_name_map.setdefault(
-                short_id.replace(" ", "_").lower(), dir_name
-            )
-        disp = cfg.get("displayName") or cfg.get("display_name")
-        if isinstance(disp, str) and disp.strip():
-            clean_disp = disp.strip()
-            exact_display_map.setdefault(clean_disp, dir_name)
-            norm_display_map.setdefault(
-                clean_disp.replace(" ", "_").lower(), dir_name
-            )
+        if isinstance(cfg, dict):
+            _register_agent_config_refs(dir_name, cfg, index)
 
     def _resolve(ref: typing.Any) -> str | None:
         if not isinstance(ref, str) or not ref.strip():
             return None
         raw = ref.strip()
-        if raw in name_set:
-            return raw
-        underscored = raw.replace(" ", "_")
-        if underscored in name_set:
-            return underscored
-        if raw in exact_name_map:
-            return exact_name_map[raw]
-        if raw in exact_display_map:
-            return exact_display_map[raw]
+        direct = _match_exact_agent_ref(raw, index)
+        if direct is not None:
+            return direct
 
         candidates = [raw]
         m = _CES_AGENT_REF_RE.match(raw)
         if m:
             short_ref = m.group(1)
-            if short_ref in name_set:
-                return short_ref
-            short_u = short_ref.replace(" ", "_")
-            if short_u in name_set:
-                return short_u
-            if short_ref in short_name_map:
-                return short_name_map[short_ref]
-            if short_ref in exact_display_map:
-                return exact_display_map[short_ref]
+            short_match = _match_exact_agent_ref(
+                short_ref, index, use_short_map=True
+            )
+            if short_match is not None:
+                return short_match
             candidates.append(short_ref)
 
-        if raw in short_name_map:
-            return short_name_map[raw]
-
-        for cand in candidates:
-            norm = cand.replace(" ", "_").lower()
-            for lookup in (norm_dir_map, norm_name_map, norm_display_map):
-                if norm in lookup:
-                    return lookup[norm]
-        return None
+        if raw in index.short_name_map:
+            return index.short_name_map[raw]
+        return _match_normalized_agent_ref(candidates, index)
 
     return _resolve
+
+
+def _canonicalize_cycle(
+    core: list[str], root_agent_dir: str | None
+) -> list[str]:
+    """Rotate a cycle to start at ``root_agent_dir`` or its min node."""
+    pivot = (
+        root_agent_dir
+        if root_agent_dir and root_agent_dir in core
+        else min(core)
+    )
+    rot = core.index(pivot)
+    return [*core[rot:], *core[:rot], pivot]
+
+
+def _dfs_cycles_from(
+    start: str,
+    adjacency: dict[str, list[str]],
+    color: dict[str, int],
+    seen: set[tuple[str, ...]],
+    cycles: list[list[str]],
+    root_agent_dir: str | None,
+    max_cycles: int,
+) -> None:
+    """Run iterative 3-color DFS from ``start``, appending unique cycles."""
+    color[start] = 1
+    path: list[str] = [start]
+    pos_in_path: dict[str, int] = {start: 0}
+    stack: list[tuple[str, int]] = [(start, 0)]
+
+    while stack and len(cycles) < max_cycles:
+        node, idx = stack[-1]
+        nbrs = adjacency.get(node, ())
+        if idx >= len(nbrs):
+            stack.pop()
+            path.pop()
+            pos_in_path.pop(node, None)
+            color[node] = 2
+            continue
+        stack[-1] = (node, idx + 1)
+        nxt = nbrs[idx]
+        if nxt not in adjacency:
+            continue
+        nxt_color = color.get(nxt, 0)
+        if nxt_color == 0:
+            color[nxt] = 1
+            pos_in_path[nxt] = len(path)
+            path.append(nxt)
+            stack.append((nxt, 0))
+        elif nxt_color == 1:
+            full = _canonicalize_cycle(path[pos_in_path[nxt] :], root_agent_dir)
+            key = tuple(full)
+            if key not in seen:
+                seen.add(key)
+                cycles.append(full)
 
 
 def _find_cycles(
@@ -713,61 +817,30 @@ def _find_cycles(
         order = [root_agent_dir, *(n for n in order if n != root_agent_dir)]
 
     for start in order:
-        if color.get(start, 0) != 0 or len(cycles) >= max_cycles:
-            continue
-        color[start] = 1
-        path: list[str] = [start]
-        pos_in_path: dict[str, int] = {start: 0}
-        stack: list[tuple[str, int]] = [(start, 0)]
-
-        while stack and len(cycles) < max_cycles:
-            node, idx = stack[-1]
-            nbrs = adjacency.get(node, ())
-            if idx < len(nbrs):
-                stack[-1] = (node, idx + 1)
-                nxt = nbrs[idx]
-                if nxt not in adjacency:
-                    continue
-                nxt_color = color.get(nxt, 0)
-                if nxt_color == 0:
-                    color[nxt] = 1
-                    pos_in_path[nxt] = len(path)
-                    path.append(nxt)
-                    stack.append((nxt, 0))
-                elif nxt_color == 1:
-                    core = path[pos_in_path[nxt] :]
-                    pivot = (
-                        root_agent_dir
-                        if root_agent_dir and root_agent_dir in core
-                        else min(core)
-                    )
-                    rot = core.index(pivot)
-                    full = [*core[rot:], *core[:rot], pivot]
-                    key = tuple(full)
-                    if key not in seen:
-                        seen.add(key)
-                        cycles.append(full)
-            else:
-                stack.pop()
-                path.pop()
-                pos_in_path.pop(node, None)
-                color[node] = 2
+        if color.get(start, 0) == 0 and len(cycles) < max_cycles:
+            _dfs_cycles_from(
+                start,
+                adjacency,
+                color,
+                seen,
+                cycles,
+                root_agent_dir,
+                max_cycles,
+            )
 
     cycles.sort()
     return cycles
 
 
-def resolve_agent_graph(app_root: Path) -> AgentGraph:
-    """Resolve app config, agent directories, reachability, and cycles."""
-    app_config_path: Path | None = None
-    app_config: dict[str, typing.Any] | None = None
-    for name in _APP_CONFIG_NAMES:
-        candidate = app_root / name
-        if candidate.is_file() and not candidate.is_symlink():
-            app_config_path = candidate
-            app_config = _load_config_dict(candidate)
-            break
-
+def _discover_agent_entries(
+    app_root: Path,
+) -> tuple[
+    dict[str, Path],
+    dict[str, dict[str, typing.Any]],
+    dict[str, Path],
+    dict[str, str],
+]:
+    """Load agent dirs, config paths, parsed configs, and displayNames."""
     agent_dirs: dict[str, Path] = {}
     agent_configs: dict[str, dict[str, typing.Any]] = {}
     agent_config_paths: dict[str, Path] = {}
@@ -776,27 +849,25 @@ def resolve_agent_graph(app_root: Path) -> AgentGraph:
     for entry in _iter_subdirs(app_root / "agents"):
         agent_dirs[entry.name] = entry
         cfg_path = _find_dir_config(entry)
-        if cfg_path is not None:
-            agent_config_paths[entry.name] = cfg_path
-            cfg = _load_config_dict(cfg_path)
-            if cfg is not None:
-                agent_configs[entry.name] = cfg
-                disp = cfg.get("displayName") or cfg.get("display_name")
-                if isinstance(disp, str) and disp.strip():
-                    agent_display_names[entry.name] = disp.strip()
+        if cfg_path is None:
+            continue
+        agent_config_paths[entry.name] = cfg_path
+        cfg = _load_config_dict(cfg_path)
+        if cfg is None:
+            continue
+        agent_configs[entry.name] = cfg
+        disp = cfg.get("displayName") or cfg.get("display_name")
+        if isinstance(disp, str) and disp.strip():
+            agent_display_names[entry.name] = disp.strip()
+    return agent_dirs, agent_configs, agent_config_paths, agent_display_names
 
-    resolve_ref = _build_agent_ref_resolver(
-        set(agent_dirs.keys()), agent_configs
-    )
 
-    root_agent_ref: str | None = None
-    root_agent_dir: str | None = None
-    if isinstance(app_config, dict):
-        raw_root = app_config.get("rootAgent")
-        if isinstance(raw_root, str) and raw_root.strip():
-            root_agent_ref = raw_root.strip()
-            root_agent_dir = resolve_ref(root_agent_ref)
-
+def _build_agent_adjacency(
+    agent_dirs: dict[str, Path],
+    agent_configs: dict[str, dict[str, typing.Any]],
+    resolve_ref: typing.Callable[[typing.Any], str | None],
+) -> dict[str, list[str]]:
+    """Build deduplicated child-agent adjacency lists from agent configs."""
     adjacency: dict[str, list[str]] = {name: [] for name in sorted(agent_dirs)}
     for agent_name in sorted(agent_dirs):
         cfg = agent_configs.get(agent_name)
@@ -815,18 +886,46 @@ def resolve_agent_graph(app_root: Path) -> AgentGraph:
             if resolved is not None and resolved not in seen_children:
                 seen_children.add(resolved)
                 adjacency[agent_name].append(resolved)
+    return adjacency
 
-    reachable: set[str] = set()
-    if root_agent_dir is not None:
-        queue: deque[str] = deque([root_agent_dir])
-        reachable.add(root_agent_dir)
-        while queue:
-            curr = queue.popleft()
-            for nxt in adjacency.get(curr, ()):
-                if nxt not in reachable:
-                    reachable.add(nxt)
-                    queue.append(nxt)
 
+def _compute_reachable_agents(
+    root_agent_dir: str | None, adjacency: dict[str, list[str]]
+) -> set[str]:
+    """Return all agent directory names reachable from ``root_agent_dir``."""
+    if root_agent_dir is None:
+        return set()
+    reachable: set[str] = {root_agent_dir}
+    queue: deque[str] = deque([root_agent_dir])
+    while queue:
+        curr = queue.popleft()
+        for nxt in adjacency.get(curr, ()):
+            if nxt not in reachable:
+                reachable.add(nxt)
+                queue.append(nxt)
+    return reachable
+
+
+def resolve_agent_graph(app_root: Path) -> AgentGraph:
+    """Resolve app config, agent directories, reachability, and cycles."""
+    app_config_path, app_config = _load_app_config(app_root)
+    agent_dirs, agent_configs, agent_config_paths, agent_display_names = (
+        _discover_agent_entries(app_root)
+    )
+    resolve_ref = _build_agent_ref_resolver(
+        set(agent_dirs.keys()), agent_configs
+    )
+
+    root_agent_ref: str | None = None
+    root_agent_dir: str | None = None
+    if isinstance(app_config, dict):
+        raw_root = app_config.get("rootAgent")
+        if isinstance(raw_root, str) and raw_root.strip():
+            root_agent_ref = raw_root.strip()
+            root_agent_dir = resolve_ref(root_agent_ref)
+
+    adjacency = _build_agent_adjacency(agent_dirs, agent_configs, resolve_ref)
+    reachable = _compute_reachable_agents(root_agent_dir, adjacency)
     cycles = _find_cycles(adjacency, root_agent_dir=root_agent_dir)
 
     return AgentGraph(
@@ -956,8 +1055,44 @@ def _looks_like_schema_file_ref(val: typing.Any) -> bool:
         and "://" not in val
         and "\n" not in val
         and not any(c.isspace() for c in val)
-        and val.strip().lower().endswith(_CONFIG_EXTENSIONS)
+        and val.strip().lower().endswith(CONFIG_EXTENSIONS)
     )
+
+
+def _resource_openapi_schema_paths(
+    app_root: Path,
+    subdir: str,
+    default_folder: str,
+    block_keys: tuple[str, ...],
+    res: LocalResource,
+) -> list[Path]:
+    """Collect safe OpenAPI schema paths referenced by a single resource."""
+    candidates: list[Path] = []
+    for ext in (".yaml", ".yml"):
+        safe = resolve_safe_app_file(
+            app_root,
+            f"{subdir}/{res.key}/{default_folder}/open_api_schema{ext}",
+        )
+        if safe is not None:
+            candidates.append(safe)
+
+    cfg = (
+        _load_config_dict(res.report_path)
+        if res.report_path.is_file()
+        else None
+    )
+    if not isinstance(cfg, dict):
+        return candidates
+    for bk in block_keys:
+        block = cfg.get(bk)
+        if not isinstance(block, dict):
+            continue
+        raw_schema = block.get("openApiSchema") or block.get("open_api_schema")
+        if _looks_like_schema_file_ref(raw_schema):
+            safe = resolve_safe_app_file(app_root, raw_schema)
+            if safe is not None:
+                candidates.append(safe)
+    return candidates
 
 
 def discover_openapi_schema_paths(
@@ -976,38 +1111,27 @@ def discover_openapi_schema_paths(
     )
     for subdir, default_folder, block_keys in specs:
         for res in discover_local_resources(app_root, subdir):
-            candidates: list[Path] = []
-            for ext in (".yaml", ".yml"):
-                rel_default = (
-                    f"{subdir}/{res.key}/{default_folder}/open_api_schema{ext}"
-                )
-                safe = resolve_safe_app_file(app_root, rel_default)
-                if safe is not None:
-                    candidates.append(safe)
-
-            cfg = (
-                _load_config_dict(res.report_path)
-                if res.report_path.is_file()
-                else None
-            )
-            if isinstance(cfg, dict):
-                for bk in block_keys:
-                    block = cfg.get(bk)
-                    if not isinstance(block, dict):
-                        continue
-                    raw_schema = block.get("openApiSchema") or block.get(
-                        "open_api_schema"
-                    )
-                    if _looks_like_schema_file_ref(raw_schema):
-                        safe = resolve_safe_app_file(app_root, raw_schema)
-                        if safe is not None:
-                            candidates.append(safe)
-
-            for sp in candidates:
+            for sp in _resource_openapi_schema_paths(
+                app_root, subdir, default_folder, block_keys, res
+            ):
                 if sp not in seen_paths:
                     seen_paths.add(sp)
                     results.append((subdir, res.key, sp))
     return results
+
+
+def iter_openapi_server_urls(schema_doc: dict[str, typing.Any]) -> list[str]:
+    """Return stripped non-empty ``servers[].url`` values from OpenAPI doc."""
+    servers = schema_doc.get("servers")
+    if not isinstance(servers, list):
+        return []
+    return [
+        srv["url"].strip()
+        for srv in servers
+        if isinstance(srv, dict)
+        and isinstance(srv.get("url"), str)
+        and srv["url"].strip()
+    ]
 
 
 # ── Rule Registry ────────────────────────────────────────────────────────
@@ -1195,14 +1319,14 @@ class Discovery:
         """
         if not self.app_dir.exists():
             return None
-        if any((self.app_dir / name).exists() for name in _APP_CONFIG_NAMES):
+        if any((self.app_dir / name).exists() for name in APP_CONFIG_NAMES):
             return self.app_dir
         for d in sorted(self.app_dir.iterdir()):
             if (
                 not d.is_symlink()
                 and d.is_dir()
                 and not d.name.startswith(".")
-                and any((d / name).exists() for name in _APP_CONFIG_NAMES)
+                and any((d / name).exists() for name in APP_CONFIG_NAMES)
             ):
                 return d
         return None
@@ -1254,7 +1378,7 @@ class Discovery:
             if dir_cfg is not None:
                 result[d.name] = dir_cfg
                 continue
-            for ext in _CONFIG_EXTENSIONS:
+            for ext in CONFIG_EXTENSIONS:
                 cfg_files = [
                     p
                     for p in sorted(d.glob(f"*{ext}"))
@@ -1313,7 +1437,7 @@ class Discovery:
         """Return path to ``app.json``, ``app.yaml``, or ``app.yml``."""
         if not self.app_root:
             return None
-        for name in _APP_CONFIG_NAMES:
+        for name in APP_CONFIG_NAMES:
             p = self.app_root / name
             if p.is_file() and not p.is_symlink():
                 return p

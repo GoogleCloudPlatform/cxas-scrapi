@@ -460,7 +460,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A006 | `config-root-agent` | Error | App config must have a valid `rootAgent` pointing to an existing agent directory |
     | A013 | `composite-v2-speech-instruction` | Warning | Legacy Director's Notes in `synthesizeSpeechConfigs` or missing `voiceInstructionMode: "NO_INSTRUCTION"` on `gemini-composite-v2` |
     | A014 | `async-tool-missing-inactivity-timeout` | Error | Apps with `ASYNCHRONOUS` tools must configure `audioProcessingConfig.inactivityTimeout` |
-    | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95% of the configured variable cap (default warning ceiling: 95 of ~100; configurable via `max_variables_per_app`) |
+    | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100) |
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
     | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
     | A018 | `voice-language-tts-parity` | Error | Validates `languageSettings` default/supported/multilingual parity and voice `synthesizeSpeechConfigs` coverage |
@@ -486,14 +486,6 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* `root_agent` (snake_case) is used instead of `rootAgent`, `rootAgent` is missing or not a string, or the referenced agent directory/JSON is missing.
 
     *Fix:* Add or fix the `rootAgent` field in `app.json` and ensure the agent directory and config file exist.
-
-    ---
-
-    **A015 — variable-count-limit**
-
-    Warns when `app.json` / `app.yaml` declares more top-level `variableDeclarations` than the 95% warning ceiling (default: `95` for the ~`100` platform cap). Override the platform cap via `options.A015.max_variables_per_app` (or top-level `options.max_variables_per_app`) in `cxaslint.yaml`; the warning threshold automatically scales to `int(max_variables_per_app * 0.95)`.
-
-    *Fix:* Group related scalar variables into typed `OBJECT` declarations in `variableDeclarations`.
 
     ---
 
@@ -538,8 +530,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S018 | `deployment-entry-agent` | Error | Deployment `entryAgent` must exist under `agents/` (`Warning` if it diverges from `app.rootAgent`) |
     | S019 | `prod-url-safety` | Error | Prod deployments must not contain cleartext `http://`, loopback/local hosts, or configured non-prod URL patterns |
     | S020 | `agent-ref-self-or-orphan` | Warning | Instruction `{@AGENT:}` targets the current agent (self-transfer) or an orphaned/unreachable agent |
-    | G001 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
-    | G002 | `crosscheck-locales-content-blocks` | Error | `(brandId, country, lang)` tuple in `deployments/*.yaml` missing from `content_blocks.yaml` |
+    | S021 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 
@@ -649,19 +640,11 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     ---
 
-    **G001 — guardrail-jinja-syntax**
+    **S021 — guardrail-jinja-syntax**
 
     *Triggers:* When a JSON or YAML guardrail's `llmPolicy.prompt` or `llmPromptSecurity.customPolicy.prompt` contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`).
 
     *Fix:* Use flat `{variable}` placeholders or pre-rendered static text instead of Jinja templates.
-
-    ---
-
-    **G002 — crosscheck-locales-content-blocks**
-
-    *Triggers:* When a combination of `brandId`, `supportedCountries`, and `supportedLanguages` defined in `deployments/*.yaml` is missing from `manifests/locales/content_blocks.yaml`.
-
-    *Fix:* Ensure `content_blocks.yaml` declares the missing combination or remove it from the deployment configuration.
 
 === "V — Schema"
 

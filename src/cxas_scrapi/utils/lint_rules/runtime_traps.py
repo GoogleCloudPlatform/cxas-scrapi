@@ -32,7 +32,6 @@ Catches silent CES platform traps documented in Chapters 3-7 and Appendix A:
 
 import ast
 import json
-import math
 import re
 import warnings
 from pathlib import Path
@@ -41,7 +40,7 @@ import yaml
 
 from cxas_scrapi.utils.lint_rules.callbacks import _resolve_cb_type
 from cxas_scrapi.utils.linter import (
-    _APP_CONFIG_NAMES,
+    APP_CONFIG_NAMES,
     LintContext,
     LintResult,
     Rule,
@@ -1055,7 +1054,7 @@ class AsyncToolMissingInactivityTimeout(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in _APP_CONFIG_NAMES:
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         data = _load_structured(file_path, content)
         if data is None:
@@ -1131,7 +1130,7 @@ class VariableCountLimit(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in _APP_CONFIG_NAMES:
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         data = _load_structured(file_path, content)
         if data is None:
@@ -1142,28 +1141,9 @@ class VariableCountLimit(Rule):
             or data.get("variable_declarations")
             or []
         )
-        a015_opts = context.options.get("A015")
-        custom_limit = (
-            a015_opts.get("max_variables_per_app")
-            if isinstance(a015_opts, dict)
-            else None
-        )
-        if custom_limit is None:
-            custom_limit = context.options.get("max_variables_per_app")
-
-        if (
-            isinstance(custom_limit, (int, float))
-            and not isinstance(custom_limit, bool)
-            and math.isfinite(custom_limit)
-            and custom_limit >= 1
+        if not isinstance(decls, list) or (
+            len(decls) <= VARIABLE_COUNT_WARNING_LIMIT
         ):
-            platform_limit = int(custom_limit)
-            warning_limit = int(custom_limit * 0.95)
-        else:
-            platform_limit = 100
-            warning_limit = VARIABLE_COUNT_WARNING_LIMIT
-
-        if not isinstance(decls, list) or len(decls) <= warning_limit:
             return []
 
         rel = str(file_path.relative_to(context.project_root))
@@ -1172,8 +1152,8 @@ class VariableCountLimit(Rule):
                 file=rel,
                 message=(
                     f"App declares {len(decls)} top-level variables "
-                    f"(recommended ceiling: {warning_limit}; "
-                    f"platform limit: ~{platform_limit})"
+                    f"(recommended ceiling: {VARIABLE_COUNT_WARNING_LIMIT}; "
+                    "platform limit: ~100)"
                 ),
                 fix=(
                     "Group related scalar variables into typed OBJECT "
@@ -1193,7 +1173,7 @@ class LlmPolicyGuardrailLimit(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in _APP_CONFIG_NAMES:
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         data = _load_structured(file_path, content)
         if data is None:
