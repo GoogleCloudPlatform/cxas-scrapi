@@ -21,6 +21,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Any
 
+import pytest
 import yaml
 
 from cxas_scrapi.core.github import init_github_action
@@ -29,8 +30,6 @@ from cxas_scrapi.utils.profiles import load_profile, validate_profile
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 _SHA_RE = re.compile(r"@[0-9a-f]{40}$")
 
@@ -146,3 +145,114 @@ def test_init_github_action_reads_app_json(
     )
     assert "json-proj" in wf
     assert "Jsonsupportbot" in wf
+
+
+def test_scaffold_gitops_repo_gitlab_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify --provider gitlab generates valid .gitlab-ci.yml and MR template."""
+    scaffold_gitops_repo(
+        tmp_path,
+        provider="gitlab",
+        project_id="gl-proj",
+        location="europe-west2",
+        agent_name="Billing Bot",
+    )
+
+    assert (tmp_path / ".gitlab-ci.yml").is_file()
+    assert (
+        tmp_path / ".gitlab" / "merge_request_templates" / "release.md"
+    ).is_file()
+    assert (tmp_path / "CODEOWNERS").is_file()
+    assert not (tmp_path / ".github" / "workflows").exists()
+
+    gl_data = yaml.safe_load(
+        (tmp_path / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    )
+    assert gl_data["stages"] == ["lint", "test", "release", "cleanup"]
+    assert "lint_and_validate" in gl_data
+    assert "pr_snapshot_evals" in gl_data
+    assert "release_qa" in gl_data
+    assert "release_prod" in gl_data
+    assert "nightly_workspace_cleanup" in gl_data
+    raw_gl = (tmp_path / ".gitlab-ci.yml").read_text(encoding="utf-8")
+    assert "ENV_DEV_JSON" in raw_gl
+    assert "ENV_QA_JSON" in raw_gl
+    assert "ENV_PROD_JSON" in raw_gl
+    assert "--on-drift=fail" in raw_gl
+    assert "--fail-if-version-exists" in raw_gl
+
+    # Profiles validate cleanly
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+    for env in ("dev", "qa", "prod"):
+        _, errors, _ = validate_profile(env)
+        assert errors == []
+
+    # No-overwrite behavior when force=False
+    gl_path = tmp_path / ".gitlab-ci.yml"
+    gl_path.write_text("# custom\n", encoding="utf-8")
+    scaffold_gitops_repo(tmp_path, provider="gitlab", force=False)
+    assert gl_path.read_text(encoding="utf-8") == "# custom\n"
+
+
+def test_scaffold_gitops_repo_ssm_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify --provider ssm generates valid Cloud Build YAML + release checklist."""
+    scaffold_gitops_repo(
+        tmp_path,
+        provider="ssm",
+        project_id="ssm-proj",
+        location="us",
+        agent_name="Support Bot",
+    )
+
+    assert (tmp_path / "docs" / "release-checklist.md").is_file()
+    assert (tmp_path / "CODEOWNERS").is_file()
+    assert not (tmp_path / ".github" / "workflows").exists()
+    assert not (tmp_path / ".gitlab-ci.yml").exists()
+
+    for fname in (
+        "cloudbuild-ci.yaml",
+        "cloudbuild-release.yaml",
+        "cloudbuild-cleanup.yaml",
+    ):
+        p = tmp_path / fname
+        assert p.is_file()
+        data = yaml.safe_load(p.read_text(encoding="utf-8"))
+        assert isinstance(data, dict)
+        assert "steps" in data
+        assert "substitutions" in data
+
+    ci_data = yaml.safe_load(
+        (tmp_path / "cloudbuild-ci.yaml").read_text(encoding="utf-8")
+    )
+    assert "availableSecrets" in ci_data
+    assert (
+        ci_data["availableSecrets"]["secretManager"][0]["env"] == "ENV_DEV_JSON"
+    )
+
+    rel_data = yaml.safe_load(
+        (tmp_path / "cloudbuild-release.yaml").read_text(encoding="utf-8")
+    )
+    assert (
+        rel_data["availableSecrets"]["secretManager"][0]["env"]
+        == "ENV_PROD_JSON"
+    )
+    rel_raw = (tmp_path / "cloudbuild-release.yaml").read_text(encoding="utf-8")
+    assert "--with-lock" in rel_raw
+    assert "--on-drift=fail" in rel_raw
+    assert "--fail-if-version-exists" in rel_raw
+
+    # Profiles validate cleanly
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".git").mkdir()
+    for env in ("dev", "qa", "prod"):
+        _, errors, _ = validate_profile(env)
+        assert errors == []
+
+
+def test_scaffold_gitops_repo_rejects_unknown_provider(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Unsupported provider"):
+        scaffold_gitops_repo(tmp_path, provider="bitbucket")

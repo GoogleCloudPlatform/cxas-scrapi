@@ -94,9 +94,19 @@ cxas workspace down --yes
 
 ---
 
-## 4. Alternative CI Provider Recipes
+## 4. Alternative CI Providers (`--provider gitlab` & `--provider ssm`)
 
-`cxas init-gitops` generates SHA-pinned GitHub Actions workflows out of the box. For GitLab CI or Google Cloud Build (Secure Source Manager), call the exact same CLI primitives:
+`cxas init-gitops` defaults to `--provider github` (SHA-pinned GitHub Actions), and also scaffolds ready-to-use pipelines for GitLab CI (`--provider gitlab`) and GCP Secure Source Manager + Cloud Build (`--provider ssm`):
+
+```bash
+# GitLab CI (.gitlab-ci.yml + .gitlab/merge_request_templates/release.md)
+cxas init-gitops --provider gitlab --project-id my-gcp-project --location us
+
+# GCP Secure Source Manager + Cloud Build (cloudbuild-{ci,release,cleanup}.yaml)
+cxas init-gitops --provider ssm --project-id my-gcp-project --location us
+```
+
+Reference layouts:
 
 ### GitLab CI (`.gitlab-ci.yml`)
 

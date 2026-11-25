@@ -52,6 +52,8 @@ SHA_GCP_AUTH = "6fc4af4b145ae7821d527454aa9bd537d1f2dc5f"
 DEFAULT_WIP = "${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
 DEFAULT_SA = "${{ secrets.GCP_SERVICE_ACCOUNT }}"
 
+SUPPORTED_PROVIDERS = ("github", "gitlab", "ssm")
+
 _GITIGNORE_ENTRIES = (
     "# CXAS GitOps local overrides & secrets",
     "*.local.*",
@@ -296,6 +298,256 @@ jobs:
 """
 
 
+def _render_gitlab_ci(
+    *,
+    project_id: str,
+    location: str,
+    app_dir: str,
+) -> str:
+    return f"""stages:
+  - lint
+  - test
+  - release
+  - cleanup
+
+default:
+  image: python:3.11-slim
+
+variables:
+  PROJECT_ID: "{project_id}"
+  LOCATION: "{location}"
+  APP_DIR: "{app_dir}"
+  CI: "true"
+
+.install_cxas: &install_cxas
+  before_script:
+    - pip install --quiet cxas-scrapi
+
+lint_and_validate:
+  stage: lint
+  <<: *install_cxas
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\\.[0-9]+\\.[0-9]+$/'
+  script:
+    - cxas profile validate --all
+    - cxas lint --app-dir "$APP_DIR"
+
+pr_snapshot_evals:
+  stage: test
+  <<: *install_cxas
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - |
+      if [ -n "${{ENV_DEV_JSON:-}}" ]; then
+        mkdir -p envs
+        printf '%s' "$ENV_DEV_JSON" > envs/env-dev.json
+      fi
+    - >
+      cxas ci-test
+      --app-dir "$APP_DIR"
+      --project-id "$PROJECT_ID"
+      --location "$LOCATION"
+      --display-name "[CI] PR-${{CI_MERGE_REQUEST_IID}}"
+      --evals-dir evals/
+      --snapshot
+      --runs 3
+      --min-pass-rate 0.9
+
+release_qa:
+  stage: release
+  <<: *install_cxas
+  environment:
+    name: qa
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\\.[0-9]+\\.[0-9]+$/'
+  script:
+    - |
+      if [ -n "${{ENV_QA_JSON:-}}" ]; then
+        mkdir -p envs
+        printf '%s' "$ENV_QA_JSON" > envs/env-qa.json
+      fi
+    - >
+      cxas push
+      --profile qa
+      --with-lock
+      --create-version
+      --version-name "$CI_COMMIT_TAG"
+      --fail-if-version-exists
+      --on-drift=fail
+    - cxas deployments promote --profile qa --version "$CI_COMMIT_TAG"
+
+release_prod:
+  stage: release
+  <<: *install_cxas
+  needs: [release_qa]
+  environment:
+    name: prod
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\\.[0-9]+\\.[0-9]+$/'
+  script:
+    - |
+      if [ -n "${{ENV_PROD_JSON:-}}" ]; then
+        mkdir -p envs
+        printf '%s' "$ENV_PROD_JSON" > envs/env-prod.json
+      fi
+    - >
+      cxas push
+      --profile prod
+      --with-lock
+      --create-version
+      --version-name "$CI_COMMIT_TAG"
+      --fail-if-version-exists
+      --on-drift=fail
+    - cxas deployments promote --profile prod --version "$CI_COMMIT_TAG"
+
+nightly_workspace_cleanup:
+  stage: cleanup
+  <<: *install_cxas
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  script:
+    - >
+      cxas workspace cleanup
+      --all-users
+      --include-ci
+      --yes
+      --project-id "$PROJECT_ID"
+      --location "$LOCATION"
+"""
+
+
+def _render_cloudbuild_ci(
+    *,
+    project_id: str,
+    location: str,
+    app_dir: str,
+) -> str:
+    return f"""# Cloud Build PR Gate for GCP Secure Source Manager (SSM)
+substitutions:
+  _PROJECT_ID: "{project_id}"
+  _LOCATION: "{location}"
+  _APP_DIR: "{app_dir}"
+  _PR_NUMBER: "0"
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/ENV_DEV_JSON/versions/latest
+      env: ENV_DEV_JSON
+
+steps:
+  - id: lint-and-ci-test
+    name: python:3.11-slim
+    entrypoint: bash
+    secretEnv:
+      - ENV_DEV_JSON
+    env:
+      - CI=true
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        pip install --quiet cxas-scrapi
+        if [ -n "${{ENV_DEV_JSON:-}}" ]; then
+          mkdir -p envs
+          printf '%s' "$ENV_DEV_JSON" > envs/env-dev.json
+        fi
+        cxas profile validate --all
+        cxas lint --app-dir "${{_APP_DIR}}"
+        cxas ci-test \\
+          --app-dir "${{_APP_DIR}}" \\
+          --project-id "${{_PROJECT_ID}}" \\
+          --location "${{_LOCATION}}" \\
+          --display-name "[CI] PR-${{_PR_NUMBER}}" \\
+          --evals-dir evals/ \\
+          --snapshot \\
+          --runs 3 \\
+          --min-pass-rate 0.9
+"""
+
+
+def _render_cloudbuild_release(
+    *,
+    project_id: str,
+    location: str,
+) -> str:
+    return f"""# Cloud Build Tag Release & Promotion (GCP SSM)
+substitutions:
+  _PROJECT_ID: "{project_id}"
+  _LOCATION: "{location}"
+  _TARGET_ENV: "prod"
+  _TAG_NAME: "v0.0.1"
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/ENV_PROD_JSON/versions/latest
+      env: ENV_PROD_JSON
+
+steps:
+  - id: push-and-promote
+    name: python:3.11-slim
+    entrypoint: bash
+    secretEnv:
+      - ENV_PROD_JSON
+    env:
+      - CI=true
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        pip install --quiet cxas-scrapi
+        if [ -n "${{ENV_PROD_JSON:-}}" ]; then
+          mkdir -p envs
+          printf '%s' "$ENV_PROD_JSON" > "envs/env-${{_TARGET_ENV}}.json"
+        fi
+        cxas push \\
+          --profile "${{_TARGET_ENV}}" \\
+          --with-lock \\
+          --create-version \\
+          --version-name "${{_TAG_NAME}}" \\
+          --fail-if-version-exists \\
+          --on-drift=fail
+        cxas deployments promote \\
+          --profile "${{_TARGET_ENV}}" \\
+          --version "${{_TAG_NAME}}"
+"""
+
+
+def _render_cloudbuild_cleanup(
+    *,
+    project_id: str,
+    location: str,
+) -> str:
+    return f"""# Cloud Build Nightly Workspace Cleanup (GCP SSM)
+substitutions:
+  _PROJECT_ID: "{project_id}"
+  _LOCATION: "{location}"
+
+steps:
+  - id: cleanup-workspaces
+    name: python:3.11-slim
+    entrypoint: bash
+    env:
+      - CI=true
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        pip install --quiet cxas-scrapi
+        cxas workspace cleanup \\
+          --all-users \\
+          --include-ci \\
+          --yes \\
+          --project-id "${{_PROJECT_ID}}" \\
+          --location "${{_LOCATION}}"
+"""
+
+
 def _render_codeowners(app_dir: str) -> str:
     return f"""# CXAS GitOps CODEOWNERS
 # Replace @org/cxas-platform-owners with your team handle(s).
@@ -350,6 +602,7 @@ def _ensure_gitignore(root: Path) -> Path:
 def scaffold_gitops_repo(
     target_dir: str | Path = ".",
     *,
+    provider: str = "github",
     project_id: str = "YOUR_GCP_PROJECT_ID",
     location: str = "us",
     agent_name: str = "cxas-agent",
@@ -359,6 +612,13 @@ def scaffold_gitops_repo(
     force: bool = False,
 ) -> list[Path]:
     """Scaffold a CXAS GitOps repository layout under ``target_dir``."""
+    norm_provider = provider.strip().lower()
+    if norm_provider not in SUPPORTED_PROVIDERS:
+        raise ValueError(
+            f"Unsupported provider '{provider}'. "
+            f"Expected one of: {', '.join(SUPPORTED_PROVIDERS)}."
+        )
+
     root = Path(target_dir).resolve()
     root.mkdir(parents=True, exist_ok=True)
     slug = _slug(agent_name)
@@ -429,65 +689,111 @@ def scaffold_gitops_repo(
         if _write_if_needed(e_path, example_env, force=force):
             written.append(e_path)
 
-    # 4. CODEOWNERS, .gitignore, Release PR checklist
+    # 4. CODEOWNERS & .gitignore (common to all providers)
     co_path = root / "CODEOWNERS"
     if _write_if_needed(co_path, _render_codeowners(app_dir), force=force):
         written.append(co_path)
 
     written.append(_ensure_gitignore(root))
 
-    pr_tmpl = root / ".github" / "PULL_REQUEST_TEMPLATE" / "release.md"
-    if _write_if_needed(pr_tmpl, _render_release_pr_template(), force=force):
-        written.append(pr_tmpl)
+    # 5. Provider-specific CI pipelines & release checklist template
+    if norm_provider == "github":
+        pr_tmpl = root / ".github" / "PULL_REQUEST_TEMPLATE" / "release.md"
+        if _write_if_needed(
+            pr_tmpl, _render_release_pr_template(), force=force
+        ):
+            written.append(pr_tmpl)
 
-    # 5. SHA-pinned GitHub Actions workflows
-    workflows = {
-        "cxas_ci.yml": _render_ci_workflow(
-            project_id=project_id,
-            location=location,
-            app_dir=app_dir,
-            wip=workload_identity_provider,
-            sa=service_account,
-        ),
-        "cxas_release.yml": _render_release_workflow(
-            wip=workload_identity_provider,
-            sa=service_account,
-        ),
-        "cxas_cleanup.yml": _render_cleanup_workflow(
-            project_id=project_id,
-            location=location,
-            wip=workload_identity_provider,
-            sa=service_account,
-        ),
-    }
-    for wf_name, content in workflows.items():
-        wf_path = root / ".github" / "workflows" / wf_name
-        if _write_if_needed(wf_path, content, force=force):
-            written.append(wf_path)
+        workflows = {
+            "cxas_ci.yml": _render_ci_workflow(
+                project_id=project_id,
+                location=location,
+                app_dir=app_dir,
+                wip=workload_identity_provider,
+                sa=service_account,
+            ),
+            "cxas_release.yml": _render_release_workflow(
+                wip=workload_identity_provider,
+                sa=service_account,
+            ),
+            "cxas_cleanup.yml": _render_cleanup_workflow(
+                project_id=project_id,
+                location=location,
+                wip=workload_identity_provider,
+                sa=service_account,
+            ),
+        }
+        for wf_name, content in workflows.items():
+            wf_path = root / ".github" / "workflows" / wf_name
+            if _write_if_needed(wf_path, content, force=force):
+                written.append(wf_path)
+    elif norm_provider == "gitlab":
+        mr_tmpl = root / ".gitlab" / "merge_request_templates" / "release.md"
+        if _write_if_needed(
+            mr_tmpl, _render_release_pr_template(), force=force
+        ):
+            written.append(mr_tmpl)
+
+        gl_path = root / ".gitlab-ci.yml"
+        if _write_if_needed(
+            gl_path,
+            _render_gitlab_ci(
+                project_id=project_id,
+                location=location,
+                app_dir=app_dir,
+            ),
+            force=force,
+        ):
+            written.append(gl_path)
+    elif norm_provider == "ssm":
+        checklist = root / "docs" / "release-checklist.md"
+        if _write_if_needed(
+            checklist, _render_release_pr_template(), force=force
+        ):
+            written.append(checklist)
+
+        cb_files = {
+            "cloudbuild-ci.yaml": _render_cloudbuild_ci(
+                project_id=project_id,
+                location=location,
+                app_dir=app_dir,
+            ),
+            "cloudbuild-release.yaml": _render_cloudbuild_release(
+                project_id=project_id,
+                location=location,
+            ),
+            "cloudbuild-cleanup.yaml": _render_cloudbuild_cleanup(
+                project_id=project_id,
+                location=location,
+            ),
+        }
+        for cb_name, content in cb_files.items():
+            cb_path = root / cb_name
+            if _write_if_needed(cb_path, content, force=force):
+                written.append(cb_path)
 
     return written
 
 
 def init_gitops(args: argparse.Namespace) -> None:
     """CLI handler for ``cxas init-gitops``."""
+    provider = getattr(args, "provider", "github") or "github"
     written = scaffold_gitops_repo(
         target_dir=getattr(args, "target_dir", ".") or ".",
+        provider=provider,
         project_id=getattr(args, "project_id", None) or "YOUR_GCP_PROJECT_ID",
         location=getattr(args, "location", None) or "us",
         agent_name=getattr(args, "agent_name", None) or "cxas-agent",
         app_dir=getattr(args, "app_dir", None) or "src/agent",
         workload_identity_provider=(
-            getattr(args, "workload_identity_provider", None)
-            or "${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}"
+            getattr(args, "workload_identity_provider", None) or DEFAULT_WIP
         ),
-        service_account=(
-            getattr(args, "service_account", None)
-            or "${{ secrets.GCP_SERVICE_ACCOUNT }}"
-        ),
+        service_account=(getattr(args, "service_account", None) or DEFAULT_SA),
         force=bool(getattr(args, "force", False)),
     )
     print(
-        f"Scaffolded CXAS GitOps repository ({len(written)} file(s) updated):"
+        f"Scaffolded CXAS GitOps repository [provider={provider}] "
+        f"({len(written)} file(s) updated):"
     )
     for path in written:
         print(f"  - {path}")

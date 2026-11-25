@@ -2467,7 +2467,18 @@ def get_parser() -> argparse.ArgumentParser:
         "init-gitops",
         help=(
             "Scaffold a developer-first GitOps repository (profiles, "
-            "CODEOWNERS, env examples, and SHA-pinned GitHub Actions)."
+            "CODEOWNERS, env examples, and CI/CD pipelines for GitHub, "
+            "GitLab, or GCP Secure Source Manager / Cloud Build)."
+        ),
+    )
+    parser_init_gitops.add_argument(
+        "--provider",
+        choices=["github", "gitlab", "ssm"],
+        default="github",
+        help=(
+            "CI/CD provider template to scaffold: github (GitHub Actions, "
+            "default), gitlab (.gitlab-ci.yml), or ssm (GCP Secure Source "
+            "Manager + Cloud Build)."
         ),
     )
     parser_init_gitops.add_argument(
