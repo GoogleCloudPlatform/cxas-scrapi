@@ -225,22 +225,23 @@ def test_scaffold_gitops_repo_ssm_provider(
         assert "steps" in data
         assert "substitutions" in data
 
-    ci_data = yaml.safe_load(
-        (tmp_path / "cloudbuild-ci.yaml").read_text(encoding="utf-8")
-    )
+    ci_raw = (tmp_path / "cloudbuild-ci.yaml").read_text(encoding="utf-8")
+    ci_data = yaml.safe_load(ci_raw)
     assert "availableSecrets" in ci_data
     assert (
         ci_data["availableSecrets"]["secretManager"][0]["env"] == "ENV_DEV_JSON"
     )
+    assert "$$ENV_DEV_JSON" in ci_raw
+    assert "$${ENV_DEV_JSON:-}" in ci_raw
 
-    rel_data = yaml.safe_load(
-        (tmp_path / "cloudbuild-release.yaml").read_text(encoding="utf-8")
-    )
+    rel_raw = (tmp_path / "cloudbuild-release.yaml").read_text(encoding="utf-8")
+    rel_data = yaml.safe_load(rel_raw)
     assert (
         rel_data["availableSecrets"]["secretManager"][0]["env"]
         == "ENV_PROD_JSON"
     )
-    rel_raw = (tmp_path / "cloudbuild-release.yaml").read_text(encoding="utf-8")
+    assert "$$ENV_PROD_JSON" in rel_raw
+    assert "$${ENV_PROD_JSON:-}" in rel_raw
     assert "--with-lock" in rel_raw
     assert "--on-drift=fail" in rel_raw
     assert "--fail-if-version-exists" in rel_raw

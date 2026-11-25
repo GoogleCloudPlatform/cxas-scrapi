@@ -451,9 +451,9 @@ steps:
       - -c
       - |
         pip install --quiet cxas-scrapi
-        if [ -n "${{ENV_DEV_JSON:-}}" ]; then
+        if [ -n "$${{ENV_DEV_JSON:-}}" ]; then
           mkdir -p envs
-          printf '%s' "$ENV_DEV_JSON" > envs/env-dev.json
+          printf '%s' "$$ENV_DEV_JSON" > envs/env-dev.json
         fi
         cxas profile validate --all
         cxas lint --app-dir "${{_APP_DIR}}"
@@ -500,9 +500,9 @@ steps:
       - -c
       - |
         pip install --quiet cxas-scrapi
-        if [ -n "${{ENV_PROD_JSON:-}}" ]; then
+        if [ -n "$${{ENV_PROD_JSON:-}}" ]; then
           mkdir -p envs
-          printf '%s' "$ENV_PROD_JSON" > "envs/env-${{_TARGET_ENV}}.json"
+          printf '%s' "$$ENV_PROD_JSON" > "envs/env-${{_TARGET_ENV}}.json"
         fi
         cxas push \\
           --profile "${{_TARGET_ENV}}" \\
