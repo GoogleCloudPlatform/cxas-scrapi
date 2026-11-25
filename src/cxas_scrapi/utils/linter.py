@@ -35,6 +35,13 @@ from pathlib import Path
 
 import yaml
 
+# CES built-in system tools: referenced by name in an agent's ``tools`` list,
+# with no ``tools/<name>/`` directory in the export (CES exports them the same
+# way). Single source of truth for lint's known-tool checks (A005, S002, P004).
+CES_PLATFORM_SYSTEM_TOOLS: frozenset[str] = frozenset(
+    {"end_session", "customize_response"}
+)
+
 # ── Severity ─────────────────────────────────────────────────────────────
 
 
@@ -312,7 +319,7 @@ class LintContext:
     all_tool_names: set = field(default_factory=set)
     all_tool_dirs: dict = field(default_factory=dict)
     platform_tools: set = field(
-        default_factory=lambda: {"end_session", "customize_response"}
+        default_factory=lambda: set(CES_PLATFORM_SYSTEM_TOOLS)
     )
     options: dict = field(default_factory=dict)
     bypass_tool_prefixes: set = field(default_factory=set)
@@ -321,6 +328,12 @@ class LintContext:
     agent_to_parents: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set)
     )
+    # Profile-Based Build context for polymorphic rules (P001-P005). Profile and
+    # channel default to the built bundle's deployments/*.yaml written by
+    # `cxas build`; manifests_dir points at the build manifests root.
+    manifests_dir: Path | None = None
+    profile_id: str | None = None
+    channel: str | None = None
 
     @property
     def all_known_tools(self) -> set:
@@ -1066,3 +1079,34 @@ def run_rules(
             files = target_files.get(target_name, {})
             if files:
                 _lint_files(rules, files)
+
+
+def collect_lint_report(
+    app_dir: Path,
+    *,
+    manifests_dir: Path | None = None,
+    profile: str | None = None,
+    channel: str | None = None,
+    rule_options: dict[str, dict] | None = None,
+) -> "LintReport":
+    """Runs every registered lint rule on ``app_dir`` and returns the report.
+
+    Mirrors the full-app path of ``cxas lint`` (loading ``cxaslint.yaml`` if
+    present) with optional Profile-Based Build context for ``P001``-``P005``.
+    """
+    project_root = Path(app_dir).resolve()
+    config = LintConfig.load(project_root)
+    if rule_options:
+        config.options = {**config.options, **rule_options}
+    discovery = Discovery(
+        project_root / config.app_dir, project_root / config.evals_dir
+    )
+    context = build_context(project_root, config, discovery)
+    context.manifests_dir = (
+        Path(manifests_dir).resolve() if manifests_dir else None
+    )
+    context.profile_id = profile
+    context.channel = channel
+    report = LintReport()
+    run_rules(build_registry(), config, context, discovery, report)
+    return report
