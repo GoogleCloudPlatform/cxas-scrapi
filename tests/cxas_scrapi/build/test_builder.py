@@ -25,7 +25,12 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
-from cxas_scrapi.build.builder import BuildError, build_all, build_app
+from cxas_scrapi.build.builder import (
+    BuildError,
+    build_all,
+    build_app,
+    deep_merge,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -469,3 +474,222 @@ def test_build_app_error_cases(tmp_path: Path) -> None:
             "prod",
             tmp_path / "out_cond",
         )
+
+
+def test_deep_merge_no_mutable_aliasing() -> None:
+    target = {
+        "keep_list": [1, 2],
+        "nested": {"keep": {"a": [10]}, "replace_list": ["old"]},
+    }
+    overrides = {
+        "added_dict": {"x": [100]},
+        "nested": {"added": {"b": [20]}, "replace_list": ["new"]},
+    }
+
+    merged = deep_merge(target, overrides)
+    assert merged == {
+        "keep_list": [1, 2],
+        "added_dict": {"x": [100]},
+        "nested": {
+            "keep": {"a": [10]},
+            "added": {"b": [20]},
+            "replace_list": ["new"],
+        },
+    }
+
+    # Mutate every mutable container in the returned dict.
+    merged["keep_list"].append(999)
+    merged["added_dict"]["x"].append(999)
+    merged["nested"]["keep"]["a"].append(999)
+    merged["nested"]["added"]["b"].append(999)
+    merged["nested"]["replace_list"].append("mutated")
+    merged["nested"]["extra"] = True
+
+    assert target == {
+        "keep_list": [1, 2],
+        "nested": {"keep": {"a": [10]}, "replace_list": ["old"]},
+    }
+    assert overrides == {
+        "added_dict": {"x": [100]},
+        "nested": {"added": {"b": [20]}, "replace_list": ["new"]},
+    }
+
+
+def test_yaml_token_rendering_special_chars_openapi_and_verbatim_untouched(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    tricky_name = 'Acme: "Prime" Bank\nLine 2'
+    b1_id_path = manifests_dir / "brands" / "brand_1" / "identity.yaml"
+    b1_id = yaml.safe_load(b1_id_path.read_text("utf-8"))
+    b1_id["display_name"] = tricky_name
+    b1_id_path.write_text(
+        yaml.safe_dump(b1_id, sort_keys=False), encoding="utf-8"
+    )
+
+    b1_pol_path = manifests_dir / "brands" / "brand_1" / "channel_policy.yaml"
+    b1_pol = yaml.safe_load(b1_pol_path.read_text("utf-8"))
+    b1_pol["api_routing"]["api_base"] = "https://api.brand1.example.com/v2"
+    b1_pol_path.write_text(
+        yaml.safe_dump(b1_pol, sort_keys=False), encoding="utf-8"
+    )
+
+    # YAML file with token resolving to quotes, colons, and newlines
+    (core_dir / "agents" / "default_agent" / "metadata.yaml").write_text(
+        'title: "@@brand.display_name@@"\n', encoding="utf-8"
+    )
+
+    # OpenAPI schema YAML with quoted routing token
+    openapi_dir = core_dir / "tools" / "active_tool" / "open_api_tool"
+    openapi_dir.mkdir(parents=True)
+    (openapi_dir / "open_api_schema.yaml").write_text(
+        'openapi: "3.0.3"\n'
+        "info:\n"
+        '  title: "@@brand.display_name@@ API"\n'
+        "servers:\n"
+        '  - url: "@@routing.api_base@@"\n',
+        encoding="utf-8",
+    )
+
+    # Untouched tokenless YAML with comments and custom spacing must be
+    # preserved verbatim (not reformatted by yaml.safe_dump).
+    verbatim_yaml = (
+        "# Preserved comment\n"
+        "openapi:   '3.0.3'\n"
+        "info:\n"
+        "  title:   Static   Schema\n"
+        "  description: Mentions tools in prose only\n"
+    )
+    (openapi_dir / "static_schema.yaml").write_text(
+        verbatim_yaml, encoding="utf-8"
+    )
+
+    out_dir = tmp_path / "out_yaml"
+    build_app(
+        core_dir, manifests_dir, "brand_1", "DIGITAL_APP", "prod", out_dir
+    )
+
+    rendered_meta = yaml.safe_load(
+        (out_dir / "agents" / "default_agent" / "metadata.yaml").read_text(
+            "utf-8"
+        )
+    )
+    assert rendered_meta["title"] == tricky_name
+
+    rendered_openapi = yaml.safe_load(
+        (
+            out_dir
+            / "tools"
+            / "active_tool"
+            / "open_api_tool"
+            / "open_api_schema.yaml"
+        ).read_text("utf-8")
+    )
+    assert rendered_openapi["info"]["title"] == f"{tricky_name} API"
+    assert rendered_openapi["servers"] == [
+        {"url": "https://api.brand1.example.com/v2"}
+    ]
+
+    assert (
+        out_dir
+        / "tools"
+        / "active_tool"
+        / "open_api_tool"
+        / "static_schema.yaml"
+    ).read_text("utf-8") == verbatim_yaml
+
+    # Unquoted @@...@@ in YAML fails loudly with BuildError.
+    (openapi_dir / "bad_unquoted.yaml").write_text(
+        "url: @@routing.api_base@@\n", encoding="utf-8"
+    )
+    with pytest.raises(BuildError, match=r"bad_unquoted\.yaml"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "brand_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_yaml_bad",
+        )
+
+
+def test_yaml_pruning_and_app_yaml_settings(tmp_path: Path) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # Replace JSON pruned agent/tool with YAML/YML equivalents to test Step 2.
+    (
+        core_dir / "agents" / "pruned_agent_dir" / "pruned_agent_dir.json"
+    ).unlink()
+    (
+        core_dir / "agents" / "pruned_agent_dir" / "pruned_agent_dir.yaml"
+    ).write_text("displayName: pruned_agent_display\n", encoding="utf-8")
+
+    (core_dir / "tools" / "secret_tool_dir" / "secret_tool_dir.json").unlink()
+    (core_dir / "tools" / "secret_tool_dir" / "secret_tool_dir.yml").write_text(
+        "displayName: secret_tool_disabled\n", encoding="utf-8"
+    )
+
+    # Surviving tokenless YAML agent referencing disabled childAgent & tool.
+    yaml_agent_dir = core_dir / "agents" / "yaml_parent"
+    yaml_agent_dir.mkdir()
+    (yaml_agent_dir / "yaml_parent.yaml").write_text(
+        "displayName: yaml_parent\n"
+        "childAgents:\n"
+        "  - pruned_agent_display\n"
+        "  - displayName: pruned_agent_display\n"
+        "  - default_agent\n"
+        "tools:\n"
+        "  - secret_tool_disabled\n"
+        "  - active_tool\n",
+        encoding="utf-8",
+    )
+
+    # Surviving tokenless YAML file with dict-shaped tools map.
+    (core_dir / "agents" / "yaml_parent" / "tool_map.yml").write_text(
+        "tools:\n"
+        "  secret_tool_disabled:\n"
+        "    enabled: true\n"
+        "  active_tool:\n"
+        "    enabled: true\n",
+        encoding="utf-8",
+    )
+
+    # Replace app.json with tokenless app.yaml pointing to pruned rootAgent.
+    (core_dir / "app.json").unlink()
+    (core_dir / "app.yaml").write_text(
+        "rootAgent: pruned_agent_display\n", encoding="utf-8"
+    )
+
+    out_dir = tmp_path / "out_yaml_prune"
+    build_app(
+        core_dir, manifests_dir, "brand_1", "VOICE_TELEPHONY", "prod", out_dir
+    )
+
+    assert not (out_dir / "agents" / "pruned_agent_dir").exists()
+    assert not (out_dir / "tools" / "secret_tool_dir").exists()
+
+    parent_cfg = yaml.safe_load(
+        (out_dir / "agents" / "yaml_parent" / "yaml_parent.yaml").read_text(
+            "utf-8"
+        )
+    )
+    assert parent_cfg["childAgents"] == ["default_agent"]
+    assert parent_cfg["tools"] == ["active_tool"]
+
+    tool_map = yaml.safe_load(
+        (out_dir / "agents" / "yaml_parent" / "tool_map.yml").read_text("utf-8")
+    )
+    assert tool_map["tools"] == {"active_tool": {"enabled": True}}
+
+    app_cfg = yaml.safe_load((out_dir / "app.yaml").read_text("utf-8"))
+    assert app_cfg["rootAgent"] == "custom_entry"
+    assert (
+        app_cfg["audioProcessingConfig"]["synthesizeSpeechConfigs"]["en"][
+            "voice"
+        ]
+        == "en-US-Standard-A"
+    )
+    assert app_cfg["languageSettings"]["defaultLanguageCode"] == "en"
+    assert app_cfg["languageSettings"]["supportedLanguageCodes"] == ["en", "es"]
+    assert app_cfg["languageSettings"]["enableMultilingualSupport"] is True

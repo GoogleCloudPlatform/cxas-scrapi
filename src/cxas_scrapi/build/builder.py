@@ -17,12 +17,14 @@
 from __future__ import annotations
 
 import ast
+import copy
 import io
 import json
 import os
 import re
 import shutil
 import tokenize
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -65,15 +67,15 @@ class BuildReport(BaseModel):
 
 
 def deep_merge(
-    target: dict[str, Any], overrides: dict[str, Any]
+    target: Mapping[str, Any], overrides: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Recursively merge ``overrides`` into a shallow copy of ``target``."""
-    merged = dict(target)
+    """Recursively merge ``overrides`` into a deep copy of ``target``."""
+    merged: dict[str, Any] = copy.deepcopy(dict(target))
     for k, v in overrides.items():
-        if isinstance(v, dict) and k in merged and isinstance(merged[k], dict):
+        if isinstance(v, Mapping) and isinstance(merged.get(k), Mapping):
             merged[k] = deep_merge(merged[k], v)
         else:
-            merged[k] = v
+            merged[k] = copy.deepcopy(v)
     return merged
 
 
@@ -362,6 +364,25 @@ def _read_json_strict(path: Path) -> Any:
         raise BuildError(f"{path}: invalid JSON: {exc}") from exc
 
 
+def _read_resource_display_name(resource_dir: Path) -> str:
+    """Read ``displayName`` from ``<id>.{json,yaml,yml}`` if present."""
+    for suffix in (".json", ".yaml", ".yml"):
+        cfg_path = resource_dir / f"{resource_dir.name}{suffix}"
+        if not cfg_path.is_file():
+            continue
+        if suffix == ".json":
+            data = _read_json_strict(cfg_path)
+        else:
+            try:
+                data = yaml.safe_load(cfg_path.read_text("utf-8"))
+            except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
+                raise BuildError(f"{cfg_path}: invalid YAML: {exc}") from exc
+        if isinstance(data, dict) and isinstance(data.get("displayName"), str):
+            return data["displayName"]
+        return ""
+    return ""
+
+
 def build_app(
     core_dir: str | Path,
     manifests_dir: str | Path,
@@ -435,12 +456,7 @@ def build_app(
     if agents_dir.exists():
         for agent_path in sorted(agents_dir.iterdir()):
             if agent_path.is_dir():
-                a_json = agent_path / f"{agent_path.name}.json"
-                display_name = ""
-                if a_json.exists():
-                    d = _read_json_strict(a_json)
-                    if isinstance(d, dict):
-                        display_name = d.get("displayName", "")
+                display_name = _read_resource_display_name(agent_path)
                 if (
                     agent_path.name in disabled_agents
                     or display_name in disabled_agents
@@ -453,12 +469,7 @@ def build_app(
     if tools_dir.exists():
         for tool_path in sorted(tools_dir.iterdir()):
             if tool_path.is_dir():
-                t_json = tool_path / f"{tool_path.name}.json"
-                display_name = ""
-                if t_json.exists():
-                    d = _read_json_strict(t_json)
-                    if isinstance(d, dict):
-                        display_name = d.get("displayName", "")
+                display_name = _read_resource_display_name(tool_path)
                 if (
                     tool_path.name in disabled_tools
                     or display_name in disabled_tools
@@ -647,6 +658,86 @@ def build_app(
             return process_string(val)
         return val
 
+    def _prune_resource_refs(data: dict[str, Any]) -> bool:
+        pruned = False
+        if isinstance(data.get("childAgents"), list):
+            new_children = [
+                c
+                for c in data["childAgents"]
+                if (c.get("displayName") if isinstance(c, dict) else c)
+                not in all_disabled_agents
+            ]
+            if len(new_children) != len(data["childAgents"]):
+                data["childAgents"] = new_children
+                pruned = True
+
+        if isinstance(data.get("tools"), list):
+            new_tools = [
+                t
+                for t in data["tools"]
+                if (t.get("displayName") if isinstance(t, dict) else t)
+                not in all_disabled_tools
+            ]
+            if len(new_tools) != len(data["tools"]):
+                data["tools"] = new_tools
+                pruned = True
+        elif isinstance(data.get("tools"), dict):
+            new_tools_map = {
+                t_key: t_val
+                for t_key, t_val in data["tools"].items()
+                if t_key not in all_disabled_tools
+            }
+            if len(new_tools_map) != len(data["tools"]):
+                data["tools"] = new_tools_map
+                pruned = True
+        return pruned
+
+    def _apply_app_manifest_settings(data: dict[str, Any]) -> bool:
+        # Do NOT unconditionally overwrite rootAgent; set only if missing or
+        # pointing to a pruned agent.
+        updated = False
+        current_root = data.get("rootAgent")
+        root_pruned = current_root in all_disabled_agents
+        if root_pruned:
+            if not channel_caps.entry_agent:
+                raise BuildError(
+                    f"rootAgent '{current_root}' is disabled "
+                    f"for channel '{channel}' and no "
+                    "replacement entry_agent is configured."
+                )
+            data["rootAgent"] = channel_caps.entry_agent
+            updated = True
+        elif not current_root and channel_caps.entry_agent:
+            data["rootAgent"] = channel_caps.entry_agent
+            updated = True
+
+        if brand.tts_voices:
+            if not isinstance(data.get("audioProcessingConfig"), dict):
+                data["audioProcessingConfig"] = {}
+            synth_configs = {
+                lang: {
+                    "voice": tts.voice,
+                    "speakingRate": tts.speaking_rate,
+                }
+                for lang, tts in brand.tts_voices.items()
+            }
+            data["audioProcessingConfig"]["synthesizeSpeechConfigs"] = (
+                synth_configs
+            )
+            updated = True
+
+        if brand.languages:
+            if not isinstance(data.get("languageSettings"), dict):
+                data["languageSettings"] = {}
+            data["languageSettings"]["defaultLanguageCode"] = brand.languages[0]
+            data["languageSettings"]["supportedLanguageCodes"] = brand.languages
+            data["languageSettings"]["enableMultilingualSupport"] = (
+                len(brand.languages) > 1
+            )
+            updated = True
+
+        return updated
+
     # 4. Prune references & render tokens across surviving files
     for root, dirs, files in os.walk(out_dir):
         dirs.sort()
@@ -662,82 +753,10 @@ def build_app(
                     if file == "environment.json" and env_manifest.overrides:
                         data = deep_merge(data, env_manifest.overrides)
 
-                    if isinstance(data.get("childAgents"), list):
-                        data["childAgents"] = [
-                            c
-                            for c in data["childAgents"]
-                            if (
-                                c.get("displayName")
-                                if isinstance(c, dict)
-                                else c
-                            )
-                            not in all_disabled_agents
-                        ]
-
-                    if isinstance(data.get("tools"), list):
-                        data["tools"] = [
-                            t
-                            for t in data["tools"]
-                            if (
-                                t.get("displayName")
-                                if isinstance(t, dict)
-                                else t
-                            )
-                            not in all_disabled_tools
-                        ]
-                    elif isinstance(data.get("tools"), dict):
-                        data["tools"] = {
-                            t_key: t_val
-                            for t_key, t_val in data["tools"].items()
-                            if t_key not in all_disabled_tools
-                        }
+                    _prune_resource_refs(data)
 
                     if file == "app.json":
-                        # Do NOT unconditionally overwrite app.json["rootAgent"]
-                        # Set only if missing or pointing to a pruned agent.
-                        current_root = data.get("rootAgent")
-                        root_pruned = current_root in all_disabled_agents
-                        if root_pruned:
-                            if not channel_caps.entry_agent:
-                                raise BuildError(
-                                    f"rootAgent '{current_root}' is disabled "
-                                    f"for channel '{channel}' and no "
-                                    "replacement entry_agent is configured."
-                                )
-                            data["rootAgent"] = channel_caps.entry_agent
-                        elif not current_root and channel_caps.entry_agent:
-                            data["rootAgent"] = channel_caps.entry_agent
-
-                        if brand.tts_voices:
-                            if not isinstance(
-                                data.get("audioProcessingConfig"), dict
-                            ):
-                                data["audioProcessingConfig"] = {}
-                            synth_configs = {
-                                lang: {
-                                    "voice": tts.voice,
-                                    "speakingRate": tts.speaking_rate,
-                                }
-                                for lang, tts in brand.tts_voices.items()
-                            }
-                            data["audioProcessingConfig"][
-                                "synthesizeSpeechConfigs"
-                            ] = synth_configs
-
-                        if brand.languages:
-                            if not isinstance(
-                                data.get("languageSettings"), dict
-                            ):
-                                data["languageSettings"] = {}
-                            data["languageSettings"]["defaultLanguageCode"] = (
-                                brand.languages[0]
-                            )
-                            data["languageSettings"][
-                                "supportedLanguageCodes"
-                            ] = brand.languages
-                            data["languageSettings"][
-                                "enableMultilingualSupport"
-                            ] = len(brand.languages) > 1
+                        _apply_app_manifest_settings(data)
 
                 try:
                     data = process_json(data)
@@ -783,6 +802,48 @@ def build_app(
 
                 path.write_text(text, "utf-8")
                 validate_modalities(text, path.relative_to(out_dir))
+
+            elif file.endswith((".yaml", ".yml")):
+                try:
+                    text = path.read_text("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise BuildError(
+                        f"{path}: file is not valid UTF-8: {exc}"
+                    ) from exc
+                has_tokens = (
+                    "@@" in text or "{@start" in text or "{@end" in text
+                )
+                needs_prune_check = bool(
+                    all_disabled_agents or all_disabled_tools
+                ) and ("childAgents" in text or "tools" in text)
+                is_app_yaml = file in ("app.yaml", "app.yml")
+                if has_tokens or needs_prune_check or is_app_yaml:
+                    try:
+                        if has_tokens and (
+                            "{@start" in text or "{@end" in text
+                        ):
+                            text = process_conditional_blocks(text)
+                        data = yaml.safe_load(text)
+                    except (yaml.YAMLError, BuildError) as exc:
+                        raise BuildError(f"{path}: {exc}") from exc
+                    modified = False
+                    if isinstance(data, dict):
+                        if _prune_resource_refs(data):
+                            modified = True
+                        if is_app_yaml and _apply_app_manifest_settings(data):
+                            modified = True
+                    if has_tokens:
+                        try:
+                            data = process_json(data)
+                        except BuildError as e:
+                            raise BuildError(f"{path}: {e}") from e
+                    if has_tokens or modified:
+                        path.write_text(
+                            yaml.safe_dump(
+                                data, sort_keys=False, allow_unicode=True
+                            ),
+                            "utf-8",
+                        )
 
             elif file.endswith(".py"):
                 text = path.read_text("utf-8")

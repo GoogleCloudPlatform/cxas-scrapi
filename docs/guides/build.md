@@ -131,8 +131,10 @@ cxas package \
 
 ## Placeholders and Conditional Blocks
 
-`cxas build` resolves tokens across `.json`, `.txt`, and `.py` files and fails
-fast if any unresolved `@@...@@` token remains:
+`cxas build` resolves tokens across `.json`, `.yaml`/`.yml`, `.txt`, and `.py`
+files and fails fast if any unresolved `@@...@@` token remains. In YAML files,
+quote `@@...@@` scalars (for example, `url: "@@routing.api_base@@"`) because
+`@` is a reserved YAML indicator.
 
 - **Brand**: `@@brand.brand_id@@`, `@@brand.display_name@@`,
   `@@brand.assistant_title@@`, `@@brand.legal_entity@@`,
@@ -158,8 +160,9 @@ Each built app directory includes:
 - Pruned `agents/` and `tools/` (and cleaned `childAgents` / `tools`
   references, plus warnings for stale `{@AGENT: ...}` or `{@TOOL: ...}`
   mentions in surviving `.txt` files)
-- Updated `app.json` (`audioProcessingConfig.synthesizeSpeechConfigs`,
-  `languageSettings`, and `rootAgent` fallback when missing or pruned)
+- Updated `app.json` (or `app.yaml` / `app.yml`)
+  (`audioProcessingConfig.synthesizeSpeechConfigs`, `languageSettings`, and
+  `rootAgent` fallback when missing or pruned)
 - Merged `environment.json`
 - Generated `deployments/<channel-slug>.yaml` describing the channel profile,
   countries, languages, and modalities
