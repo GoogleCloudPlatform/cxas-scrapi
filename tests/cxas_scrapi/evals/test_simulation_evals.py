@@ -3437,6 +3437,159 @@ def test_voice_config_for_deterministic_and_locale_aware() -> None:
     }
 
 
+def test_voice_config_for_adds_run_level_tts_model() -> None:
+    evals = _naturalness_evals(
+        sim_user_voices=["en-US-Standard-A"], sim_user_tts_model=""
+    )
+
+    assert evals._voice_config_for({"name": "order_status"}) == {
+        "voice_name": "en-US-Standard-A",
+        "language_code": "en-US",
+        "model_name": "",
+    }
+
+    own_model = {
+        "name": "custom_model_case",
+        "voice_config": {
+            "voice_name": "Aoede",
+            "model_name": "gemini-3.8-flash-lite-tts",
+        },
+    }
+    assert evals._voice_config_for(own_model) == own_model["voice_config"]
+
+    own_voice = {
+        "name": "custom_voice_case",
+        "voice_config": {"voice_name": "en-GB-Standard-A"},
+    }
+    assert evals._voice_config_for(own_voice) == {
+        "voice_name": "en-GB-Standard-A",
+        "model_name": "",
+    }
+
+
+def test_voice_config_for_tts_model_without_voice_pool() -> None:
+    evals = _naturalness_evals(sim_user_tts_model="gemini-3.8-flash-lite-tts")
+
+    assert evals._voice_config_for({"name": "case"}) == {
+        "model_name": "gemini-3.8-flash-lite-tts"
+    }
+
+
+def test_voice_config_for_partial_existing_voice_config() -> None:
+    evals = _naturalness_evals(
+        sim_user_voices=["es-US-Standard-A"], sim_user_tts_model="  "
+    )
+    partial = {
+        "name": "partial",
+        "voice_config": {"language_code": "es-US"},
+    }
+    assert evals._voice_config_for(partial) == {
+        "voice_name": "es-US-Standard-A",
+        "language_code": "es-US",
+        "model_name": "",
+    }
+
+
+def test_voice_config_for_without_tts_model_is_unchanged() -> None:
+    evals = _naturalness_evals(sim_user_voices=["en-US-Journey-D"])
+
+    assert evals._voice_config_for({"name": "case"}) == {
+        "voice_name": "en-US-Journey-D",
+        "language_code": "en-US",
+    }
+    assert _naturalness_evals()._voice_config_for({"name": "case"}) is None
+
+
+def test_run_single_simulation_job_forwards_merged_voice_config() -> None:
+    evals = _naturalness_evals(sim_user_tts_model="")
+    conv = _passing_conv(naturalness_result=None)
+    tc = {
+        "name": "own_voice_no_model",
+        "steps": [{"goal": "Check order"}],
+        "voice_config": {"voice_name": "en-US-Standard-A"},
+    }
+
+    with patch.object(
+        evals, "simulate_conversation", return_value=conv
+    ) as mock_sim:
+        evals._run_single_simulation_job(
+            tc=tc,
+            run_idx=0,
+            runs=1,
+            sim_user_model="sim-m",
+            eval_model="eval-m",
+            modality="audio",
+            verbose=False,
+            parallel=1,
+        )
+
+    passed_tc = mock_sim.call_args.kwargs["test_case"]
+    assert passed_tc["voice_config"] == {
+        "voice_name": "en-US-Standard-A",
+        "model_name": "",
+    }
+
+
+def test_run_simulations_sets_sim_user_tts_model() -> None:
+    evals = _naturalness_evals()
+
+    with patch.object(evals, "_aggregate_simulation_results", return_value=[]):
+        evals.run_simulations(
+            test_cases=[], runs=1, parallel=1, sim_user_tts_model="  "
+        )
+
+    assert evals.sim_user_tts_model == ""
+
+
+def test_run_simulations_plain_cloud_tts_needs_a_voice() -> None:
+    evals = _naturalness_evals(sim_user_tts_model="")
+
+    with (
+        patch.object(evals, "_aggregate_simulation_results") as mock_agg,
+        pytest.raises(ValueError, match="Missing for: no_voice"),
+    ):
+        evals.run_simulations(
+            test_cases=[
+                {"name": "no_voice"},
+                {
+                    "name": "own_voice",
+                    "voice_config": {"voice_name": "en-US-Standard-A"},
+                },
+            ],
+            runs=1,
+            parallel=1,
+            modality="audio",
+        )
+    mock_agg.assert_not_called()
+
+
+def test_run_simulations_plain_cloud_tts_allows_text_or_pinned_model() -> None:
+    evals = _naturalness_evals(sim_user_tts_model="")
+
+    with patch.object(
+        evals, "_aggregate_simulation_results", return_value=[]
+    ) as mock_agg:
+        evals.run_simulations(
+            test_cases=[{"name": "text_only_case"}],
+            runs=1,
+            parallel=1,
+            modality="text",
+        )
+        evals.run_simulations(
+            test_cases=[
+                {
+                    "name": "pinned_model_case",
+                    "voice_config": {"model_name": "gemini-3.8-flash-lite-tts"},
+                }
+            ],
+            runs=1,
+            parallel=1,
+            modality="audio",
+        )
+
+    assert mock_agg.call_count == 2
+
+
 def test_inconclusive_reason_detects_zero_caller_turns_and_retries() -> None:
     from cxas_scrapi.evals.simulation_evals import (  # noqa: PLC0415
         actual_caller_turns,

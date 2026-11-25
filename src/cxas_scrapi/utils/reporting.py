@@ -7557,6 +7557,7 @@ def generate_combined_report_from_dir(
     platform_sims: bool = False,
     exclude_files: list[str] | None = None,
     sim_user_voices: list[str] | None = None,
+    sim_user_tts_model: str | None = None,
     junit_xml: str | None = None,
     testsuite_prefix: str = "cxas_evals",
     report_title: str | None = None,
@@ -7668,6 +7669,8 @@ def generate_combined_report_from_dir(
             extra_run_kwargs["exclude_files"] = exclude_files
         if sim_user_voices:
             extra_run_kwargs["sim_user_voices"] = sim_user_voices
+        if sim_user_tts_model is not None:
+            extra_run_kwargs["sim_user_tts_model"] = sim_user_tts_model
         run_results = run_all_evals(
             app_name=app_name,
             app_dir=app_dir,
@@ -8278,6 +8281,7 @@ def run_all_evals(
     platform_sims: bool = False,
     exclude_files: list[str] | None = None,
     sim_user_voices: list[str] | None = None,
+    sim_user_tts_model: str | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -8335,6 +8339,8 @@ def run_all_evals(
         extra_kwargs["exclude_files"] = exclude_files
     if sim_user_voices:
         extra_kwargs["sim_user_voices"] = sim_user_voices
+    if sim_user_tts_model is not None:
+        extra_kwargs["sim_user_tts_model"] = sim_user_tts_model
     return evals_runner.run_all_evals(
         app_name=app_name,
         modality=modality,

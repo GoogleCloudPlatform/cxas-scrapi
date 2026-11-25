@@ -868,6 +868,9 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         extra_report_kwargs["exclude_files"] = exclude_files_list
     if sim_user_voices_list:
         extra_report_kwargs["sim_user_voices"] = sim_user_voices_list
+    sim_user_tts_model = getattr(args, "sim_user_tts_model", None)
+    if sim_user_tts_model is not None:
+        extra_report_kwargs["sim_user_tts_model"] = sim_user_tts_model.strip()
     if getattr(args, "junit_xml", None):
         extra_report_kwargs["junit_xml"] = args.junit_xml
     if (
@@ -2338,6 +2341,17 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Optional: Comma-separated list of Google Cloud TTS voice names "
             "for simulated callers (e.g. en-US-Journey-D,es-US-Journey-F)."
+        ),
+    )
+    parser_report.add_argument(
+        "--sim-user-tts-model",
+        default=None,
+        help=(
+            "Optional: TTS model for simulated callers (e.g. "
+            'gemini-3.8-flash-lite-tts). Pass an empty string ("") for plain '
+            "Cloud TTS voices such as en-US-Standard-A, set with "
+            "--sim-user-voices or a test case's voice_config. Defaults to "
+            "the built-in model."
         ),
     )
     parser_report.add_argument(

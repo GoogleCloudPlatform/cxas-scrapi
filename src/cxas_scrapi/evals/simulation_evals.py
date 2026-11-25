@@ -651,6 +651,7 @@ class SimulationEvals(Apps):
         naturalness: bool | dict[str, Any] | None = None,
         audio_analysis: bool = False,
         sim_user_voices: Sequence[str] | None = None,
+        sim_user_tts_model: str | None = None,
         **kwargs: typing.Any,
     ) -> None:
         self.expectations_only = expectations_only
@@ -663,6 +664,11 @@ class SimulationEvals(Apps):
         self.sim_user_voices: list[str] = [
             v.strip() for v in (sim_user_voices or []) if v and v.strip()
         ]
+        self.sim_user_tts_model: str | None = (
+            sim_user_tts_model.strip()
+            if sim_user_tts_model is not None
+            else None
+        )
         project_id = app_name.split("/")[1]
         location = app_name.split("/")[3]
         super().__init__(project_id=project_id, location=location, **kwargs)
@@ -686,13 +692,25 @@ class SimulationEvals(Apps):
 
     def _voice_config_for(
         self, test_case: Mapping[str, Any]
-    ) -> dict[str, str] | None:
+    ) -> dict[str, Any] | None:
         """Deterministically selects a TTS voice_config for a test case."""
-        existing = test_case.get("voice_config")
-        if isinstance(existing, dict) and existing.get("voice_name"):
-            return dict(existing)
+        model = self.sim_user_tts_model
+        raw_existing = test_case.get("voice_config")
+        existing = (
+            dict(raw_existing) if isinstance(raw_existing, Mapping) else {}
+        )
+        if existing.get("voice_name"):
+            config = dict(existing)
+            if model is not None:
+                config.setdefault("model_name", model)
+            return config
         if not self.sim_user_voices:
-            return None
+            if existing:
+                config = dict(existing)
+                if model is not None:
+                    config.setdefault("model_name", model)
+                return config
+            return None if model is None else {"model_name": model}
         locale = _scenario_locale(test_case.get("session_parameters"))
         candidates = [
             v
@@ -704,10 +722,14 @@ class SimulationEvals(Apps):
         name = str(test_case.get("name") or "")
         idx = zlib.crc32(name.encode("utf-8")) % len(candidates)
         voice_name = candidates[idx]
-        return {
+        config = {
             "voice_name": voice_name,
             "language_code": _voice_locale(voice_name),
+            **existing,
         }
+        if model is not None:
+            config.setdefault("model_name", model)
+        return config
 
     @staticmethod
     def requires_local_execution(
@@ -2071,7 +2093,7 @@ class SimulationEvals(Apps):
         label = f"{name} (run {run_idx + 1}/{runs})"
         session_id = str(uuid.uuid4())
         voice_config = self._voice_config_for(tc)
-        if voice_config and not tc.get("voice_config"):
+        if voice_config is not None and voice_config != tc.get("voice_config"):
             tc = {**tc, "voice_config": voice_config}
         try:
             _start = time.time()
@@ -2540,6 +2562,7 @@ class SimulationEvals(Apps):
         run_on_platform: bool = False,
         platform_timeout: int = 600,
         sim_user_voices: Sequence[str] | None = None,
+        sim_user_tts_model: str | None = None,
     ) -> list[dict[str, Any]]:
         """Runs multiple simulations, optionally in parallel.
 
@@ -2561,6 +2584,9 @@ class SimulationEvals(Apps):
             run_on_platform: If True, executes platform-compatible cases via
                 CES Milestone evals.
             platform_timeout: Max seconds to wait for platform evaluation run.
+            sim_user_voices: TTS voice pool for simulated callers.
+            sim_user_tts_model: TTS model for simulated callers. Leave as
+                None for the default; "" uses plain Cloud TTS (no model).
         """
         if expectations_only is not None:
             self.expectations_only = expectations_only
@@ -2568,6 +2594,30 @@ class SimulationEvals(Apps):
             self.sim_user_voices = [
                 v.strip() for v in sim_user_voices if v and v.strip()
             ]
+        if sim_user_tts_model is not None:
+            self.sim_user_tts_model = sim_user_tts_model.strip()
+        if self.sim_user_tts_model == "" and not self.sim_user_voices:
+            missing = [
+                str(tc.get("name") or "")
+                for tc in test_cases
+                if isinstance(tc, Mapping)
+                and str(tc.get("modality") or modality or "text").lower()
+                == "audio"
+                and not (
+                    isinstance(tc.get("voice_config"), Mapping)
+                    and (
+                        tc["voice_config"].get("voice_name")
+                        or tc["voice_config"].get("model_name")
+                    )
+                )
+            ]
+            if missing:
+                raise ValueError(
+                    'sim_user_tts_model="" (plain Cloud TTS) needs a Cloud '
+                    "TTS voice: pass sim_user_voices or set "
+                    "voice_config.voice_name on each test case. Missing for: "
+                    + ", ".join(missing[:5])
+                )
         if run_on_platform:
             platform_cases: list[dict[str, Any]] = []
             local_cases: list[dict[str, Any]] = []
@@ -2672,6 +2722,7 @@ class SimulationEvals(Apps):
                         retry_cooldown=retry_cooldown,
                         run_on_platform=False,
                         sim_user_voices=sim_user_voices,
+                        sim_user_tts_model=sim_user_tts_model,
                     )
                 )
             return results
