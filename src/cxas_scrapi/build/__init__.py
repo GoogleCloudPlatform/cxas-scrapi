@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multi-Brand Build package (``cxas build``).
+"""Profile-Based Build package (``cxas build``).
 
 The ``build`` package turns one shared ``core/`` app plus a set of
-Pydantic-validated YAML manifests (brand identity, channel policy,
-environment templates, locale content blocks) into one built CES app
-per ``brand x channel``. The build pipeline is fully deterministic — no LLM,
-no timestamps, and no runtime Python code is generated.
+Pydantic-validated YAML manifests (profile identity, channel policy,
+environment templates, locale content blocks) into one built CES app per
+``profile x channel`` (where a profile can represent a brand, subsidiary,
+region, business unit, or modality). The build pipeline is fully
+deterministic — no LLM, no timestamps, and no runtime Python code is
+generated.
 """
 
 from cxas_scrapi.build.builder import (
@@ -28,19 +30,18 @@ from cxas_scrapi.build.builder import (
     build_app,
 )
 from cxas_scrapi.build.manifests import (
-    BrandIdentity,
     ChannelCapabilities,
     ChannelPolicy,
     ContentBlockCatalog,
     EnvManifest,
     ManifestError,
     Manifests,
+    ProfileIdentity,
     TtsVoice,
     load_manifests,
 )
 
 __all__ = [
-    "BrandIdentity",
     "BuildError",
     "BuildReport",
     "ChannelCapabilities",
@@ -49,6 +50,7 @@ __all__ = [
     "EnvManifest",
     "ManifestError",
     "Manifests",
+    "ProfileIdentity",
     "TtsVoice",
     "build_all",
     "build_app",

@@ -3475,7 +3475,7 @@ def get_parser() -> argparse.ArgumentParser:
     # Subparsers for 'trace' — observability/debugging for past conversations.
     register_trace_subparser(subparsers)
 
-    # Subparsers for 'build' and 'package' — Multi-Brand Build & ZIP packaging.
+    # Subparsers for 'build' and 'package' — Profile-Based Build & ZIP packaging.
     register_build_subparsers(subparsers)
 
     # Subparsers for 'arc' — the CX Agent Studio AI assistant.

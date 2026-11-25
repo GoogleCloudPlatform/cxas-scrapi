@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Deterministic Multi-Brand Build engine for CXAS."""
+"""Deterministic Profile-Based Build engine for CXAS."""
 
 from __future__ import annotations
 
@@ -36,12 +36,12 @@ from pydantic import BaseModel, Field
 
 from cxas_scrapi.build.manifests import (
     CHANNEL_PROFILE_TYPES,
-    BrandIdentity,
     ChannelCapabilities,
     ChannelPolicy,
     ContentBlockCatalog,
     EnvManifest,
     Manifests,
+    ProfileIdentity,
     Yaml12SafeLoader,
     load_manifests,
 )
@@ -55,21 +55,21 @@ JsonValue: TypeAlias = Any
 ConfigMap: TypeAlias = dict[str, JsonValue]
 
 _ALLOWED_ENV_TEMPLATE_VARS = frozenset(
-    {"brand", "brand_slug", "env", "channel", "service"}
+    {"profile", "profile_slug", "env", "channel", "service"}
 )
 _ENV_TEMPLATE_BRACE_RE = re.compile(r"\{([^{}]*)\}")
 _UNRESOLVED_TOKEN_RE = re.compile(r"@@[^@\s]+@@")
 _DANGLING_TOKEN_RE = re.compile(
-    r"@@(?:brand|env|routing|build)\.[A-Za-z0-9_.:-]+"
+    r"@@(?:profile|env|routing|build)\.[A-Za-z0-9_.:-]+"
 )
 _COND_START_RE = re.compile(
-    r"^\{@start(Channel|Brand|AgentEnabled|ToolEnabled)_([^}]+)\}$"
+    r"^\{@start(Channel|Profile|AgentEnabled|ToolEnabled)_([^}]+)\}$"
 )
 _COND_END_RE = re.compile(
-    r"^\{@end(Channel|Brand|AgentEnabled|ToolEnabled)_([^}]+)\}$"
+    r"^\{@end(Channel|Profile|AgentEnabled|ToolEnabled)_([^}]+)\}$"
 )
 _COND_TOKEN_RE = re.compile(
-    r"\{@(start|end)(Channel|Brand|AgentEnabled|ToolEnabled)_([^}]+)\}"
+    r"\{@(start|end)(Channel|Profile|AgentEnabled|ToolEnabled)_([^}]+)\}"
 )
 _MODALITY_TAG_RE = re.compile(r"({@startModality_[^}]+}|{@endModality_[^}]+})")
 _PY_STR_PREFIX_RE = re.compile(r"^([rRuUbBfF]*)('''|\"\"\"|'|\")")
@@ -81,13 +81,13 @@ _RESOURCE_CONFIG_SUFFIXES = (".json", ".yaml", ".yml")
 
 
 class BuildError(Exception):
-    """Raised when building a brand/channel app fails."""
+    """Raised when building a profile/channel app fails."""
 
 
 class BuildReport(BaseModel):
-    """Summary of one built brand/channel CES app."""
+    """Summary of one built profile/channel CES app."""
 
-    brand_id: str
+    profile_id: str
     channel: str
     environment: str
     out_dir: Path
@@ -162,7 +162,7 @@ def _check_remaining_tokens(
 class _BuildRenderer:
     """Evaluates build-time conditional blocks and ``@@...@@`` tokens."""
 
-    brand_id: str
+    profile_id: str
     channel: str
     disabled_agents: frozenset[str]
     disabled_tools: frozenset[str]
@@ -173,7 +173,7 @@ class _BuildRenderer:
     @classmethod
     def from_context(
         cls,
-        brand: BrandIdentity,
+        profile: ProfileIdentity,
         policy: ChannelPolicy,
         env_manifest: EnvManifest,
         channel: str,
@@ -182,20 +182,23 @@ class _BuildRenderer:
         disabled_tools: frozenset[str],
     ) -> _BuildRenderer:
         replacements: dict[str, str] = {
-            "@@brand.brand_id@@": brand.brand_id,
-            "@@brand.display_name@@": brand.display_name,
-            "@@brand.assistant_title@@": brand.assistant_title or "",
-            "@@brand.legal_entity@@": brand.legal_entity or "",
-            "@@brand.tone_guidelines@@": brand.tone_guidelines or "",
+            "@@profile.profile_id@@": profile.profile_id,
+            "@@profile.display_name@@": profile.display_name,
+            "@@profile.assistant_title@@": profile.assistant_title or "",
+            "@@profile.legal_entity@@": profile.legal_entity or "",
+            "@@profile.tone_guidelines@@": profile.tone_guidelines or "",
             "@@build.channel@@": channel,
             "@@build.environment@@": environment,
-            **{f"@@brand.lexicon.{k}@@": v for k, v in brand.lexicon.items()},
-            **{f"@@brand.urls.{k}@@": v for k, v in brand.urls.items()},
+            **{
+                f"@@profile.lexicon.{k}@@": v
+                for k, v in profile.lexicon.items()
+            },
+            **{f"@@profile.urls.{k}@@": v for k, v in profile.urls.items()},
             **{f"@@routing.{k}@@": v for k, v in policy.api_routing.items()},
         }
         template_values = {
-            "brand": brand.brand_id,
-            "brand_slug": brand.brand_id.replace("_", "-"),
+            "profile": profile.profile_id,
+            "profile_slug": profile.profile_id.replace("_", "-"),
             "env": environment,
             "channel": channel,
             "service": "{service}",
@@ -210,12 +213,12 @@ class _BuildRenderer:
 
         predicates: dict[str, Callable[[str], bool]] = {
             "Channel": lambda arg: arg == channel,
-            "Brand": lambda arg: arg == brand.brand_id,
+            "Profile": lambda arg: arg == profile.profile_id,
             "AgentEnabled": lambda arg: arg not in disabled_agents,
             "ToolEnabled": lambda arg: arg not in disabled_tools,
         }
         return cls(
-            brand_id=brand.brand_id,
+            profile_id=profile.profile_id,
             channel=channel,
             disabled_agents=disabled_agents,
             disabled_tools=disabled_tools,
@@ -606,7 +609,7 @@ def _format_kv_section(title: str, mapping: Mapping[str, str]) -> list[str]:
 
 def _format_locale_blocks(
     catalog: ContentBlockCatalog | None,
-    brand_id: str,
+    profile_id: str,
     countries: Sequence[str],
     languages: Sequence[str],
 ) -> list[str]:
@@ -615,7 +618,7 @@ def _format_locale_blocks(
     lines: list[str] = []
     for country in sorted(countries):
         for lang in sorted(languages):
-            blocks = catalog.blocks_for(brand_id, country, lang)
+            blocks = catalog.blocks_for(profile_id, country, lang)
             if blocks:
                 lines.extend(
                     f"[{country}-{lang}] {bk}: {bv}"
@@ -624,24 +627,24 @@ def _format_locale_blocks(
     return lines
 
 
-def _build_identity_block(manifests: Manifests, brand_id: str) -> str:
-    brand = manifests.brand(brand_id)
-    policy = manifests.policy(brand_id)
+def _build_identity_block(manifests: Manifests, profile_id: str) -> str:
+    profile = manifests.profile(profile_id)
+    policy = manifests.policy(profile_id)
     scalar_fields = (
-        ("Title", brand.assistant_title),
-        ("Legal Entity", brand.legal_entity),
-        ("Tone", brand.tone_guidelines),
+        ("Title", profile.assistant_title),
+        ("Legal Entity", profile.legal_entity),
+        ("Tone", profile.tone_guidelines),
     )
     lines = [
-        f"# Brand: {brand.display_name}",
+        f"# Profile: {profile.display_name}",
         *(f"{label}: {val}" for label, val in scalar_fields if val),
-        *_format_kv_section("Lexicon", brand.lexicon),
-        *_format_kv_section("URLs", brand.urls),
+        *_format_kv_section("Lexicon", profile.lexicon),
+        *_format_kv_section("URLs", profile.urls),
         *_format_locale_blocks(
             manifests.content_blocks,
-            brand_id,
+            profile_id,
             policy.supported_countries,
-            brand.languages,
+            profile.languages,
         ),
     ]
     return "\n".join(lines)
@@ -938,7 +941,7 @@ def _update_root_agent(
 
 def _apply_app_manifest_settings(
     data: ConfigMap,
-    brand: BrandIdentity,
+    profile: ProfileIdentity,
     channel: str,
     channel_caps: ChannelCapabilities,
     disabled_agents: frozenset[str],
@@ -946,21 +949,21 @@ def _apply_app_manifest_settings(
     updated = _update_root_agent(
         data, channel, channel_caps.entry_agent, disabled_agents
     )
-    if brand.tts_voices:
+    if profile.tts_voices:
         audio_cfg = _ensure_dict_section(data, "audioProcessingConfig")
         audio_cfg["synthesizeSpeechConfigs"] = {
             lang: {"voice": tts.voice, "speakingRate": tts.speaking_rate}
-            for lang, tts in brand.tts_voices.items()
+            for lang, tts in profile.tts_voices.items()
         }
         updated = True
 
-    if brand.languages:
+    if profile.languages:
         lang_cfg = _ensure_dict_section(data, "languageSettings")
         lang_cfg.update(
             {
-                "defaultLanguageCode": brand.languages[0],
-                "supportedLanguageCodes": brand.languages,
-                "enableMultilingualSupport": len(brand.languages) > 1,
+                "defaultLanguageCode": profile.languages[0],
+                "supportedLanguageCodes": profile.languages,
+                "enableMultilingualSupport": len(profile.languages) > 1,
             }
         )
         updated = True
@@ -994,7 +997,7 @@ def _collect_pruned_mentions(
 def _render_json_file(
     path: Path,
     renderer: _BuildRenderer,
-    brand: BrandIdentity,
+    profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
 ) -> None:
@@ -1015,7 +1018,7 @@ def _render_json_file(
     if path.name == "app.json" and isinstance(rendered, dict):
         _apply_app_manifest_settings(
             rendered,
-            brand,
+            profile,
             renderer.channel,
             channel_caps,
             renderer.disabled_agents,
@@ -1031,9 +1034,9 @@ def _render_text_file(
 ) -> list[str]:
     text = path.read_text("utf-8")
     if path.name == "global_instruction.txt":
-        identity_block = _build_identity_block(manifests, renderer.brand_id)
-        if "@@brand.identity_block@@" in text:
-            text = text.replace("@@brand.identity_block@@", identity_block)
+        identity_block = _build_identity_block(manifests, renderer.profile_id)
+        if "@@profile.identity_block@@" in text:
+            text = text.replace("@@profile.identity_block@@", identity_block)
         else:
             text = identity_block + "\n\n" + text
 
@@ -1072,7 +1075,7 @@ def _yaml_render_flags(
 def _apply_yaml_mutations(
     data: JsonValue,
     renderer: _BuildRenderer,
-    brand: BrandIdentity,
+    profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     *,
     is_app_yaml: bool,
@@ -1085,7 +1088,7 @@ def _apply_yaml_mutations(
         and isinstance(data, dict)
         and _apply_app_manifest_settings(
             data,
-            brand,
+            profile,
             renderer.channel,
             channel_caps,
             renderer.disabled_agents,
@@ -1097,7 +1100,7 @@ def _apply_yaml_mutations(
 def _render_yaml_file(
     path: Path,
     renderer: _BuildRenderer,
-    brand: BrandIdentity,
+    profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
 ) -> None:
     try:
@@ -1122,7 +1125,7 @@ def _render_yaml_file(
             lambda: renderer.render_data(data, evaluate_conditionals=False),
         )
     modified = _apply_yaml_mutations(
-        data, renderer, brand, channel_caps, is_app_yaml=is_app_yaml
+        data, renderer, profile, channel_caps, is_app_yaml=is_app_yaml
     )
     if has_tokens or modified:
         path.write_text(
@@ -1145,17 +1148,17 @@ def _render_single_file(
     out_dir: Path,
     manifests: Manifests,
     renderer: _BuildRenderer,
-    brand: BrandIdentity,
+    profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
 ) -> list[str]:
     suffix = path.suffix
     if suffix == ".json":
-        _render_json_file(path, renderer, brand, channel_caps, env_overrides)
+        _render_json_file(path, renderer, profile, channel_caps, env_overrides)
     elif suffix == ".txt":
         return _render_text_file(path, out_dir, manifests, renderer)
     elif suffix in (".yaml", ".yml"):
-        _render_yaml_file(path, renderer, brand, channel_caps)
+        _render_yaml_file(path, renderer, profile, channel_caps)
     elif suffix == ".py":
         _render_python_file(path, renderer)
     return []
@@ -1165,7 +1168,7 @@ def _render_staged_tree(
     out_dir: Path,
     manifests: Manifests,
     renderer: _BuildRenderer,
-    brand: BrandIdentity,
+    profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
 ) -> list[str]:
@@ -1180,7 +1183,7 @@ def _render_staged_tree(
                     out_dir,
                     manifests,
                     renderer,
-                    brand,
+                    profile,
                     channel_caps,
                     env_overrides,
                 )
@@ -1190,7 +1193,7 @@ def _render_staged_tree(
 
 def _write_deployment_manifest(
     out_dir: Path,
-    brand: BrandIdentity,
+    profile: ProfileIdentity,
     policy: ChannelPolicy,
     channel: str,
     environment: str,
@@ -1200,13 +1203,13 @@ def _write_deployment_manifest(
     deployments_dir.mkdir(exist_ok=True)
     slug = channel.lower().replace("_", "-")
     dep_data: ConfigMap = {
-        "displayName": f"{brand.display_name} {channel}",
-        "brandId": brand.brand_id,
+        "displayName": f"{profile.display_name} {channel}",
+        "profileId": profile.profile_id,
         "channel": channel,
         "environment": environment,
         "channelProfile": {"channelType": CHANNEL_PROFILE_TYPES[channel]},
         "supportedCountries": policy.supported_countries,
-        "supportedLanguages": brand.languages,
+        "supportedLanguages": profile.languages,
         "supportedModalities": channel_caps.supported_modalities,
         "deeplinkWidgets": channel_caps.deeplink_widgets,
     }
@@ -1221,7 +1224,7 @@ def _build_in_staging(
     core_dir: Path,
     staging_dir: Path,
     manifests: Manifests,
-    brand: BrandIdentity,
+    profile: ProfileIdentity,
     policy: ChannelPolicy,
     env_manifest: EnvManifest,
     channel: str,
@@ -1245,7 +1248,7 @@ def _build_in_staging(
     )
 
     renderer = _BuildRenderer.from_context(
-        brand,
+        profile,
         policy,
         env_manifest,
         channel,
@@ -1257,15 +1260,15 @@ def _build_in_staging(
         staging_dir,
         manifests,
         renderer,
-        brand,
+        profile,
         channel_caps,
         env_manifest.overrides,
     )
     slug = _write_deployment_manifest(
-        staging_dir, brand, policy, channel, environment, channel_caps
+        staging_dir, profile, policy, channel, environment, channel_caps
     )
     if package_zip:
-        staged_zip = staging_dir / f"{brand.brand_id}_{slug}.zip"
+        staged_zip = staging_dir / f"{profile.profile_id}_{slug}.zip"
         try:
             package_app_archive(staging_dir, staged_zip)
         except (OSError, ValueError) as exc:
@@ -1277,7 +1280,7 @@ def _build_app_from_manifests(
     core_dir: Path,
     manifests_path: Path,
     manifests: Manifests,
-    brand_id: str,
+    profile_id: str,
     channel: str,
     environment: str,
     out_dir: Path,
@@ -1285,15 +1288,15 @@ def _build_app_from_manifests(
     package_zip: bool = False,
 ) -> BuildReport:
     _validate_build_paths(core_dir, manifests_path, out_dir)
-    brand = manifests.brand(brand_id)
-    policy = manifests.policy(brand_id)
+    profile = manifests.profile(profile_id)
+    policy = manifests.policy(profile_id)
     env_manifest = manifests.env(environment)
 
     try:
         channel_caps = policy.channels[channel]
     except KeyError as exc:
         raise BuildError(
-            f"Channel {channel} not permitted for brand {brand_id}."
+            f"Channel {channel} not permitted for profile {profile_id}."
         ) from exc
 
     out_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -1305,7 +1308,7 @@ def _build_app_from_manifests(
             core_dir,
             staging_dir,
             manifests,
-            brand,
+            profile,
             policy,
             env_manifest,
             channel,
@@ -1319,9 +1322,9 @@ def _build_app_from_manifests(
             shutil.rmtree(staging_dir, ignore_errors=True)
         raise
 
-    zip_path = out_dir / f"{brand_id}_{slug}.zip" if package_zip else None
+    zip_path = out_dir / f"{profile_id}_{slug}.zip" if package_zip else None
     return BuildReport(
-        brand_id=brand_id,
+        profile_id=profile_id,
         channel=channel,
         environment=environment,
         out_dir=out_dir,
@@ -1333,14 +1336,14 @@ def _build_app_from_manifests(
 def build_app(
     core_dir: str | Path,
     manifests_dir: str | Path,
-    brand_id: str,
+    profile_id: str,
     channel: str,
     environment: str,
     out_dir: str | Path,
     *,
     package_zip: bool = False,
 ) -> BuildReport:
-    """Build one CES app for ``(brand_id, channel, environment)``."""
+    """Build one CES app for ``(profile_id, channel, environment)``."""
     core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
     out_path = _validate_output_target(Path(out_dir), "output directory")
     _validate_build_paths(core_path, manifests_path, out_path)
@@ -1349,7 +1352,7 @@ def build_app(
         core_path,
         manifests_path,
         manifests,
-        brand_id,
+        profile_id,
         channel,
         environment,
         out_path,
@@ -1365,7 +1368,7 @@ def build_all(
     *,
     package_zip: bool = False,
 ) -> list[BuildReport]:
-    """Build every ``(brand_id, channel)`` pair declared in manifests."""
+    """Build every ``(profile_id, channel)`` pair declared in manifests."""
     core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
     if not core_path.is_dir():
         raise BuildError(
@@ -1378,20 +1381,20 @@ def build_all(
     manifests.env(environment)
 
     reports: list[BuildReport] = []
-    for brand_id, policy in sorted(manifests.policies.items()):
-        brand_out_dir = _validate_output_target(
-            out_root_path / brand_id, "brand output directory"
+    for profile_id, policy in sorted(manifests.policies.items()):
+        profile_out_dir = _validate_output_target(
+            out_root_path / profile_id, "profile output directory"
         )
         for channel in sorted(policy.channels):
             channel_out_dir = _validate_output_target(
-                brand_out_dir / channel.lower(), "output directory"
+                profile_out_dir / channel.lower(), "output directory"
             )
             reports.append(
                 _build_app_from_manifests(
                     core_path,
                     manifests_path,
                     manifests,
-                    brand_id,
+                    profile_id,
                     channel,
                     environment,
                     channel_out_dir,

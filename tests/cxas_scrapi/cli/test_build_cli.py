@@ -52,17 +52,17 @@ def _setup_cli_workspace(tmp_path: Path) -> tuple[Path, Path]:
         json.dumps({"rootAgent": "root"}), encoding="utf-8"
     )
     (core_dir / "global_instruction.txt").write_text(
-        "Hello @@brand.display_name@@\n", encoding="utf-8"
+        "Hello @@profile.display_name@@\n", encoding="utf-8"
     )
 
     manifests_dir = tmp_path / "manifests"
-    b1 = manifests_dir / "brands" / "brand_1"
-    b1.mkdir(parents=True)
-    (b1 / "identity.yaml").write_text(
-        "brand_id: brand_1\ndisplay_name: Brand One\n", encoding="utf-8"
+    p1 = manifests_dir / "profiles" / "profile_1"
+    p1.mkdir(parents=True)
+    (p1 / "identity.yaml").write_text(
+        "profile_id: profile_1\ndisplay_name: Profile One\n", encoding="utf-8"
     )
-    (b1 / "channel_policy.yaml").write_text(
-        "brand_id: brand_1\n"
+    (p1 / "channel_policy.yaml").write_text(
+        "profile_id: profile_1\n"
         "channels:\n"
         "  WEB:\n"
         "    supported_modalities: ['TEXT']\n"
@@ -100,7 +100,7 @@ def test_parser_registers_build_and_package() -> None:
     assert build_args.json is True
 
     pkg_args = parser.parse_args(
-        ["package", "--app-dir", "dist/brand_1/web", "--zip", "out.zip"]
+        ["package", "--app-dir", "dist/profile_1/web", "--zip", "out.zip"]
     )
     assert pkg_args.func is app_package
     assert pkg_args.zip == "out.zip"
@@ -115,7 +115,7 @@ def test_cli_build_single_json_and_package(
         argparse.Namespace(
             core_dir=str(core_dir),
             manifests_dir=str(manifests_dir),
-            brand="brand_1",
+            profile="profile_1",
             channel="WEB",
             env="prod",
             out=str(out_dir),
@@ -125,7 +125,7 @@ def test_cli_build_single_json_and_package(
         )
     )
     payload = json.loads(capsys.readouterr().out)
-    assert payload["brand_id"] == "brand_1"
+    assert payload["profile_id"] == "profile_1"
     assert payload["channel"] == "WEB"
     assert Path(payload["zip_path"]).is_file()
 
@@ -148,7 +148,7 @@ def test_cli_build_all_json(
         argparse.Namespace(
             core_dir=str(core_dir),
             manifests_dir=str(manifests_dir),
-            brand=None,
+            profile=None,
             channel=None,
             env="prod",
             out=str(out_root),
@@ -167,13 +167,13 @@ def test_cli_build_and_package_error_exits(
 ) -> None:
     core_dir, manifests_dir = _setup_cli_workspace(tmp_path)
 
-    # Missing --brand / --channel without --all
+    # Missing --profile / --channel without --all
     with pytest.raises(SystemExit) as exc:
         app_build(
             argparse.Namespace(
                 core_dir=str(core_dir),
                 manifests_dir=str(manifests_dir),
-                brand=None,
+                profile=None,
                 channel=None,
                 env="prod",
                 out=str(tmp_path / "out1"),
@@ -183,7 +183,7 @@ def test_cli_build_and_package_error_exits(
             )
         )
     assert exc.value.code == 1
-    assert "--brand and --channel are required" in capsys.readouterr().err
+    assert "--profile and --channel are required" in capsys.readouterr().err
 
     # ManifestError caught cleanly
     with pytest.raises(SystemExit) as exc2:
@@ -191,7 +191,7 @@ def test_cli_build_and_package_error_exits(
             argparse.Namespace(
                 core_dir=str(core_dir),
                 manifests_dir=str(tmp_path / "missing_manifests"),
-                brand="brand_1",
+                profile="profile_1",
                 channel="WEB",
                 env="prod",
                 out=str(tmp_path / "out2"),
@@ -229,8 +229,8 @@ def test_cli_e2e_build_all_zip_and_package_env_resolution(
             str(core_dir),
             "--manifests-dir",
             str(manifests_dir),
-            "--brand",
-            "brand_1",
+            "--profile",
+            "profile_1",
             "--channel",
             "WEB",
             "--env",
@@ -243,7 +243,7 @@ def test_cli_e2e_build_all_zip_and_package_env_resolution(
     )
     assert r1.returncode == 0, r1.stderr
     payload = json.loads(r1.stdout)
-    assert payload["brand_id"] == "brand_1"
+    assert payload["profile_id"] == "profile_1"
     assert payload["channel"] == "WEB"
     assert Path(payload["zip_path"]).is_file()
 
@@ -353,8 +353,8 @@ def test_cli_e2e_user_errors_no_tracebacks_and_help_intact(
             str(core_dir),
             "--manifests-dir",
             str(tmp_path / "missing_manifests"),
-            "--brand",
-            "brand_1",
+            "--profile",
+            "profile_1",
             "--channel",
             "WEB",
             "--env",
@@ -368,8 +368,8 @@ def test_cli_e2e_user_errors_no_tracebacks_and_help_intact(
             str(core_dir),
             "--manifests-dir",
             str(manifests_dir),
-            "--brand",
-            "brand_1",
+            "--profile",
+            "profile_1",
             "--channel",
             "WHATSAPP",
             "--env",

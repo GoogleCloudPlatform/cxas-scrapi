@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for Multi-Brand Build manifest models and loader."""
+"""Unit tests for Profile-Based Build manifest models and loader."""
 
 from __future__ import annotations
 
@@ -32,12 +32,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _write_minimal_brand(root: Path, brand_id: str = "brand_1") -> Path:
-    brand_dir = root / "brands" / brand_id
-    brand_dir.mkdir(parents=True, exist_ok=True)
-    (brand_dir / "identity.yaml").write_text(
-        f"brand_id: {brand_id}\n"
-        "display_name: Brand One\n"
+def _write_minimal_profile(root: Path, profile_id: str = "profile_1") -> Path:
+    profile_dir = root / "profiles" / profile_id
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    (profile_dir / "identity.yaml").write_text(
+        f"profile_id: {profile_id}\n"
+        "display_name: Profile One\n"
         "tts_voices:\n"
         "  en:\n"
         "    voice: en-US-Standard-A\n"
@@ -46,8 +46,8 @@ def _write_minimal_brand(root: Path, brand_id: str = "brand_1") -> Path:
         "    voice: fr-FR-Standard-A\n",
         encoding="utf-8",
     )
-    (brand_dir / "channel_policy.yaml").write_text(
-        f"brand_id: {brand_id}\n"
+    (profile_dir / "channel_policy.yaml").write_text(
+        f"profile_id: {profile_id}\n"
         "supported_countries: ['US', 'CA']\n"
         "channels:\n"
         "  WEB:\n"
@@ -58,13 +58,13 @@ def _write_minimal_brand(root: Path, brand_id: str = "brand_1") -> Path:
         "    supported_modalities: ['TEXT']\n",
         encoding="utf-8",
     )
-    return brand_dir
+    return profile_dir
 
 
 def test_load_manifests_happy_path_and_template_shorthand(
     tmp_path: Path,
 ) -> None:
-    _write_minimal_brand(tmp_path)
+    _write_minimal_profile(tmp_path)
     envs_dir = tmp_path / "envs"
     envs_dir.mkdir()
     (envs_dir / "prod.yaml").write_text(
@@ -79,28 +79,28 @@ def test_load_manifests_happy_path_and_template_shorthand(
     locales_dir = tmp_path / "locales"
     locales_dir.mkdir()
     (locales_dir / "content_blocks.yaml").write_text(
-        "blocks:\n  brand_1:\n    US:\n      en:\n        greeting: Hello\n",
+        "blocks:\n  profile_1:\n    US:\n      en:\n        greeting: Hello\n",
         encoding="utf-8",
     )
 
     manifests = load_manifests(tmp_path)
-    brand = manifests.brand("brand_1")
-    assert brand.display_name == "Brand One"
-    assert brand.languages == ["en", "fr"]
+    profile = manifests.profile("profile_1")
+    assert profile.display_name == "Profile One"
+    assert profile.languages == ["en", "fr"]
     assert (
         manifests.env("prod").templates["gcp_project"]
         == "example-prod-from-root"
     )
     assert manifests.content_blocks is not None
-    assert manifests.content_blocks.blocks_for("brand_1", "US", "en") == {
+    assert manifests.content_blocks.blocks_for("profile_1", "US", "en") == {
         "greeting": "Hello"
     }
     assert manifests.content_blocks.missing_tuples(
-        "brand_1", ["US", "CA"], ["en", "fr"]
+        "profile_1", ["US", "CA"], ["en", "fr"]
     ) == [
-        ("brand_1", "US", "fr"),
-        ("brand_1", "CA", "en"),
-        ("brand_1", "CA", "fr"),
+        ("profile_1", "US", "fr"),
+        ("profile_1", "CA", "en"),
+        ("profile_1", "CA", "fr"),
     ]
 
 
@@ -120,30 +120,30 @@ def test_load_manifests_validation_errors(tmp_path: Path) -> None:
     with pytest.raises(ManifestError, match="Missing"):
         load_manifests(empty)
 
-    # Brand ID directory mismatch
+    # Profile ID directory mismatch
     bad_dir = tmp_path / "bad_mismatch"
-    brand_dir = bad_dir / "brands" / "brand_1"
-    brand_dir.mkdir(parents=True)
-    (brand_dir / "identity.yaml").write_text(
-        "brand_id: brand_2\ndisplay_name: Brand Two\n", encoding="utf-8"
+    profile_dir = bad_dir / "profiles" / "profile_1"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "identity.yaml").write_text(
+        "profile_id: profile_2\ndisplay_name: Profile Two\n", encoding="utf-8"
     )
     with pytest.raises(ManifestError, match="does not match directory name"):
         load_manifests(bad_dir)
 
     # Unknown channel
     bad_ch = tmp_path / "bad_channel"
-    bdir = _write_minimal_brand(bad_ch)
-    (bdir / "channel_policy.yaml").write_text(
-        "brand_id: brand_1\nchannels:\n  PIGEON: {}\n", encoding="utf-8"
+    pdir = _write_minimal_profile(bad_ch)
+    (pdir / "channel_policy.yaml").write_text(
+        "profile_id: profile_1\nchannels:\n  PIGEON: {}\n", encoding="utf-8"
     )
     with pytest.raises(ManifestError, match="unknown channel"):
         load_manifests(bad_ch)
 
     # Bad ISO country code
     bad_iso = tmp_path / "bad_iso"
-    bdir = _write_minimal_brand(bad_iso)
-    (bdir / "channel_policy.yaml").write_text(
-        "brand_id: brand_1\n"
+    pdir = _write_minimal_profile(bad_iso)
+    (pdir / "channel_policy.yaml").write_text(
+        "profile_id: profile_1\n"
         "supported_countries: ['USA']\n"
         "channels:\n"
         "  WEB: {}\n",
@@ -154,9 +154,12 @@ def test_load_manifests_validation_errors(tmp_path: Path) -> None:
 
     # Empty supported_modalities
     bad_mod = tmp_path / "bad_mod"
-    bdir = _write_minimal_brand(bad_mod)
-    (bdir / "channel_policy.yaml").write_text(
-        "brand_id: brand_1\nchannels:\n  WEB:\n    supported_modalities: []\n",
+    pdir = _write_minimal_profile(bad_mod)
+    (pdir / "channel_policy.yaml").write_text(
+        "profile_id: profile_1\n"
+        "channels:\n"
+        "  WEB:\n"
+        "    supported_modalities: []\n",
         encoding="utf-8",
     )
     with pytest.raises(
@@ -166,9 +169,9 @@ def test_load_manifests_validation_errors(tmp_path: Path) -> None:
 
     # Extra unknown key rejected (extra="forbid")
     bad_extra = tmp_path / "bad_extra"
-    bdir = _write_minimal_brand(bad_extra)
-    (bdir / "identity.yaml").write_text(
-        "brand_id: brand_1\ndisplay_name: Brand One\nextra_field: nope\n",
+    pdir = _write_minimal_profile(bad_extra)
+    (pdir / "identity.yaml").write_text(
+        "profile_id: profile_1\ndisplay_name: Profile One\nextra_field: nope\n",
         encoding="utf-8",
     )
     with pytest.raises(ManifestError, match="Extra inputs are not permitted"):
@@ -176,7 +179,7 @@ def test_load_manifests_validation_errors(tmp_path: Path) -> None:
 
     # Environment filename mismatch
     bad_env = tmp_path / "bad_env"
-    _write_minimal_brand(bad_env)
+    _write_minimal_profile(bad_env)
     (bad_env / "envs").mkdir()
     (bad_env / "envs" / "prod.yaml").write_text(
         "environment: staging\n", encoding="utf-8"
@@ -186,14 +189,14 @@ def test_load_manifests_validation_errors(tmp_path: Path) -> None:
 
     # Invalid YAML
     bad_yaml = tmp_path / "bad_yaml"
-    bdir = _write_minimal_brand(bad_yaml)
-    (bdir / "identity.yaml").write_text(":\n  - [unclosed", encoding="utf-8")
+    pdir = _write_minimal_profile(bad_yaml)
+    (pdir / "identity.yaml").write_text(":\n  - [unclosed", encoding="utf-8")
     with pytest.raises(ManifestError, match="invalid YAML"):
         load_manifests(bad_yaml)
 
     # Non-dict templates in env YAML must raise ManifestError (not TypeError)
     bad_tpl = tmp_path / "bad_tpl"
-    _write_minimal_brand(bad_tpl)
+    _write_minimal_profile(bad_tpl)
     (bad_tpl / "envs").mkdir()
     (bad_tpl / "envs" / "prod.yaml").write_text(
         "environment: prod\ntemplates: 123\n", encoding="utf-8"
@@ -203,30 +206,30 @@ def test_load_manifests_validation_errors(tmp_path: Path) -> None:
 
 
 def test_manifests_lookup_errors(tmp_path: Path) -> None:
-    _write_minimal_brand(tmp_path)
+    _write_minimal_profile(tmp_path)
     manifests = load_manifests(tmp_path)
-    with pytest.raises(ManifestError, match="Unknown brand"):
-        manifests.brand("missing_brand")
+    with pytest.raises(ManifestError, match="Unknown profile"):
+        manifests.profile("missing_profile")
     with pytest.raises(ManifestError, match="Unknown environment"):
         manifests.env("prod")
 
     catalog = ContentBlockCatalog()
-    assert catalog.blocks_for("brand_1", "US", "en") is None
+    assert catalog.blocks_for("profile_1", "US", "en") is None
 
 
 def test_yaml12_preserves_unquoted_country_no_and_booleans(
     tmp_path: Path,
 ) -> None:
-    brand_dir = tmp_path / "brands" / "nordic_brand"
-    brand_dir.mkdir(parents=True)
-    (brand_dir / "identity.yaml").write_text(
-        "brand_id: nordic_brand\n"
-        "display_name: Nordic Brand\n"
+    profile_dir = tmp_path / "profiles" / "nordic_profile"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "identity.yaml").write_text(
+        "profile_id: nordic_profile\n"
+        "display_name: Nordic Profile\n"
         "languages: [en, no]\n",
         encoding="utf-8",
     )
-    (brand_dir / "channel_policy.yaml").write_text(
-        "brand_id: nordic_brand\n"
+    (profile_dir / "channel_policy.yaml").write_text(
+        "profile_id: nordic_profile\n"
         "supported_countries: [NO, US]\n"
         "channels:\n"
         "  WEB:\n"
@@ -247,11 +250,11 @@ def test_yaml12_preserves_unquoted_country_no_and_booleans(
     )
 
     manifests = load_manifests(tmp_path)
-    brand = manifests.brand("nordic_brand")
-    assert brand.languages == ["en", "no"]
-    assert brand.tts_voices == {}
+    profile = manifests.profile("nordic_profile")
+    assert profile.languages == ["en", "no"]
+    assert profile.tts_voices == {}
 
-    policy = manifests.policy("nordic_brand")
+    policy = manifests.policy("nordic_profile")
     assert policy.supported_countries == ["NO", "US"]
     assert policy.channels["WEB"].deeplink_widgets is True
     assert policy.channels["API"].deeplink_widgets is False

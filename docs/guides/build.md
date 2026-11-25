@@ -1,22 +1,25 @@
-# Multi-Brand Build and Packaging
+# Profile-Based Build and Packaging
 
 ## Overview
 
-The `cxas build` command builds deterministic, brand- and channel-specific CES
+The `cxas build` command builds deterministic, profile- and channel-specific CES
 apps from one shared `core/` app directory and a set of Pydantic-validated YAML
-manifests. No LLM calls, timestamps, or generated runtime code are involved:
-running `cxas build` twice on the same inputs produces identical output trees
-and ZIP archives.
+manifests. A **build profile** (or **app profile**) can represent a brand,
+subsidiary, region, business unit, or modality variant—distinct from the CES
+`Deployment.channelProfile` field, which describes the transport channel type
+(such as `WEB_UI` or `GOOGLE_TELEPHONY_PLATFORM`). No LLM calls, timestamps, or
+generated runtime code are involved: running `cxas build` twice on the same
+inputs produces identical output trees and ZIP archives.
 
 ## Manifest Layout
 
 ```text
 manifests/
-  brands/
-    brand_1/
+  profiles/
+    profile_1/
       identity.yaml
       channel_policy.yaml
-    brand_2/
+    profile_2/
       identity.yaml
       channel_policy.yaml
   envs/
@@ -26,21 +29,21 @@ manifests/
     content_blocks.yaml  # optional
 ```
 
-### `brands/brand_1/identity.yaml`
+### `profiles/profile_1/identity.yaml`
 
-Business-owned brand identity, lexicon, URLs, explicit `languages` (optional;
+Domain-owned profile identity, lexicon, URLs, explicit `languages` (optional;
 defaults to `tts_voices` keys when omitted), and TTS voice bindings:
 
 ```yaml
-brand_id: brand_1
-display_name: Brand One
+profile_id: profile_1
+display_name: Profile One
 assistant_title: Virtual Assistant
-legal_entity: Brand One Financial Inc.
+legal_entity: Profile One Financial Inc.
 tone_guidelines: Clear, concise, and helpful.
 lexicon:
   account: Checking Account
 urls:
-  support: https://support.brand1.example.com
+  support: https://support.profile1.example.com
 languages: ["en"]
 tts_voices:
   en:
@@ -48,16 +51,16 @@ tts_voices:
     speaking_rate: 1.0
 ```
 
-### `brands/brand_1/channel_policy.yaml`
+### `profiles/profile_1/channel_policy.yaml`
 
 Platform-owned channel capabilities, agent/tool pruning, API routing, and
 supported ISO-3166 alpha-2 countries:
 
 ```yaml
-brand_id: brand_1
+profile_id: profile_1
 supported_countries: ["US", "CA"]
 api_routing:
-  core_api: https://api.brand1.example.com
+  core_api: https://api.profile1.example.com
 channels:
   WEB:
     supported_modalities: ["TEXT"]
@@ -72,12 +75,12 @@ channels:
 ### `envs/prod.yaml`
 
 Environment templates and `environment.json` overrides. Template values may use
-`{brand}`, `{brand_slug}`, `{env}`, `{channel}`, and `{service}`:
+`{profile}`, `{profile_slug}`, `{env}`, `{channel}`, and `{service}`:
 
 ```yaml
 environment: prod
 templates:
-  gcp_project: example-prod-{brand_slug}-{env}
+  gcp_project: example-prod-{profile_slug}-{env}
   api: https://api.example.com/{env}/{service}
 overrides:
   endpoint_region: us-central1
@@ -85,50 +88,50 @@ overrides:
 
 ### `locales/content_blocks.yaml` (Optional)
 
-Verbatim regulated copy keyed `brand_id -> country -> language -> key`:
+Verbatim regulated copy keyed `profile_id -> country -> language -> key`:
 
 ```yaml
 blocks:
-  brand_1:
+  profile_1:
     US:
       en:
-        greeting: "Hello from Brand One!"
+        greeting: "Hello from Profile One!"
 ```
 
 ## Commands
 
-Build every `(brand, channel)` pair declared in `manifests/`:
+Build every `(profile, channel)` pair declared in `manifests/`:
 
 ```bash
 cxas build --core-dir core/ --manifests-dir manifests/ --env prod --out dist/ --all
 ```
 
-Build a single `(brand, channel)` target and package it to a deterministic ZIP:
+Build a single `(profile, channel)` target and package it to a deterministic ZIP:
 
 ```bash
 cxas build \
   --core-dir core/ \
   --manifests-dir manifests/ \
-  --brand brand_1 \
+  --profile profile_1 \
   --channel WEB \
   --env prod \
-  --out dist/brand_1/web \
+  --out dist/profile_1/web \
   --zip
 ```
 
 Package any CES app directory into a deterministic ZIP archive:
 
 ```bash
-cxas package --app-dir dist/brand_1/web --zip dist/brand_1_web.zip
+cxas package --app-dir dist/profile_1/web --zip dist/profile_1_web.zip
 ```
 
 Inject a custom `environment.json` while packaging:
 
 ```bash
 cxas package \
-  --app-dir dist/brand_1/web \
+  --app-dir dist/profile_1/web \
   --env-file envs/prod_environment.json \
-  --zip dist/brand_1_web.zip
+  --zip dist/profile_1_web.zip
 ```
 
 ## Placeholders and Conditional Blocks
@@ -138,20 +141,21 @@ files and fails fast if any unresolved `@@...@@` token remains. In YAML files,
 quote `@@...@@` scalars (for example, `url: "@@routing.api_base@@"`) because
 `@` is a reserved YAML indicator.
 
-- **Brand**: `@@brand.brand_id@@`, `@@brand.display_name@@`,
-  `@@brand.assistant_title@@`, `@@brand.legal_entity@@`,
-  `@@brand.tone_guidelines@@`, `@@brand.lexicon.<key>@@`, `@@brand.urls.<key>@@`
-- **Global identity block**: `@@brand.identity_block@@` in
+- **Profile**: `@@profile.profile_id@@`, `@@profile.display_name@@`,
+  `@@profile.assistant_title@@`, `@@profile.legal_entity@@`,
+  `@@profile.tone_guidelines@@`, `@@profile.lexicon.<key>@@`,
+  `@@profile.urls.<key>@@`
+- **Global identity block**: `@@profile.identity_block@@` in
   `global_instruction.txt` (prepended automatically if omitted)
 - **Routing & build metadata**: `@@routing.<key>@@`, `@@build.channel@@`,
   `@@build.environment@@`
 - **Environment templates**: `@@env.<key>@@` and `@@env.<key>:<service>@@`
 
 Conditional blocks let shared prompts and Python files branch cleanly by
-channel, brand, or active resource without runtime branching:
+channel, profile, or active resource without runtime branching:
 
 - `{@startChannel_<CHANNEL>} ... {@endChannel_<CHANNEL>}`
-- `{@startBrand_<BRAND_ID>} ... {@endBrand_<BRAND_ID>}`
+- `{@startProfile_<PROFILE_ID>} ... {@endProfile_<PROFILE_ID>}`
 - `{@startAgentEnabled_<AGENT>} ... {@endAgentEnabled_<AGENT>}`
 - `{@startToolEnabled_<TOOL>} ... {@endToolEnabled_<TOOL>}`
 
@@ -167,6 +171,6 @@ Each built app directory includes:
   `rootAgent` synced to any configured `entry_agent`—which must match a
   surviving agent under `agents/`)
 - Merged `environment.json`
-- Generated `deployments/<channel-slug>.yaml` describing the channel profile,
-  countries, languages, and modalities
-- Optional `<brand_id>_<channel-slug>.zip` when `--zip` is passed
+- Generated `deployments/<channel-slug>.yaml` describing the `profileId`, CES
+  `channelProfile`, countries, languages, and modalities
+- Optional `<profile_id>_<channel-slug>.zip` when `--zip` is passed

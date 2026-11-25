@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CLI subcommands for Multi-Brand Build (`cxas build`) and `cxas package`."""
+"""CLI subcommands for Profile-Based Build (`cxas build`) and `cxas package`."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 
 def _print_build_report(report: BuildReport) -> None:
-    print(f"Built {report.brand_id} {report.channel} to {report.out_dir}")
+    print(f"Built {report.profile_id} {report.channel} to {report.out_dir}")
     for warning in report.warnings:
         print(f"  Warning: {warning}")
 
@@ -56,9 +56,9 @@ def _run_all_builds(args: argparse.Namespace) -> None:
 
 
 def _run_single_build(args: argparse.Namespace) -> None:
-    if not args.brand or not args.channel:
+    if not args.profile or not args.channel:
         print(
-            "Error: --brand and --channel are required unless "
+            "Error: --profile and --channel are required unless "
             "--all is specified.",
             file=sys.stderr,
         )
@@ -67,7 +67,7 @@ def _run_single_build(args: argparse.Namespace) -> None:
     report = build_app(
         core_dir=args.core_dir,
         manifests_dir=args.manifests_dir,
-        brand_id=args.brand,
+        profile_id=args.profile,
         channel=args.channel,
         environment=args.env,
         out_dir=args.out,
@@ -80,7 +80,7 @@ def _run_single_build(args: argparse.Namespace) -> None:
 
 
 def app_build(args: argparse.Namespace) -> None:
-    """Build one target or the full brand/channel matrix and emit reports."""
+    """Build one target or the full profile/channel matrix and emit reports."""
     try:
         if args.all:
             _run_all_builds(args)
@@ -114,7 +114,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     """Register `build` and `package` subcommands on the root CLI parser."""
     parser_build = subparsers.add_parser(
         "build",
-        help="Build brand/channel CES apps from a core app and manifests.",
+        help="Build profile/channel CES apps from a core app and manifests.",
     )
     parser_build.add_argument(
         "--core-dir", required=True, help="Core app directory."
@@ -122,14 +122,14 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser_build.add_argument(
         "--manifests-dir", required=True, help="Manifests directory."
     )
-    parser_build.add_argument("--brand", help="Brand ID.")
+    parser_build.add_argument("--profile", help="Build profile ID.")
     parser_build.add_argument("--channel", help="Channel name.")
     parser_build.add_argument("--env", required=True, help="Environment name.")
     parser_build.add_argument(
         "--out", required=True, help="Output directory or root."
     )
     parser_build.add_argument(
-        "--all", action="store_true", help="Build all brand/channel pairs."
+        "--all", action="store_true", help="Build all profile/channel pairs."
     )
     parser_build.add_argument(
         "--zip", action="store_true", help="Package each built app to a ZIP."

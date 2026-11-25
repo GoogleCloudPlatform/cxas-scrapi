@@ -16,14 +16,15 @@
 
 Layout under ``<manifests_root>/``::
 
-    brands/<brand_id>/identity.yaml        -> BrandIdentity
-    brands/<brand_id>/channel_policy.yaml  -> ChannelPolicy
-    envs/<environment>.yaml                -> EnvManifest
-    locales/content_blocks.yaml            -> ContentBlockCatalog (optional)
+    profiles/<profile_id>/identity.yaml        -> ProfileIdentity
+    profiles/<profile_id>/channel_policy.yaml  -> ChannelPolicy
+    envs/<environment>.yaml                    -> EnvManifest
+    locales/content_blocks.yaml                -> ContentBlockCatalog (optional)
 
-Brand *identity* (who the brand is) and channel *policy* (what a given
-brand/channel may do) are deliberately separate files so that business
-owners edit the former and platform owners the latter.
+Profile *identity* (who the profile represents — e.g. a brand, subsidiary,
+region, or business unit) and channel *policy* (what a given profile/channel
+may do) are deliberately separate files so that business owners edit the former
+and platform owners the latter.
 """
 
 from __future__ import annotations
@@ -44,8 +45,8 @@ from pydantic import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-BRAND_ID_PATTERN = r"^[a-z0-9_-]{2,64}$"
-_BRAND_ID_RE = re.compile(BRAND_ID_PATTERN)
+PROFILE_ID_PATTERN = r"^[a-z0-9_-]{2,64}$"
+_PROFILE_ID_RE = re.compile(PROFILE_ID_PATTERN)
 _YAML12_BOOL_RE = re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$")
 _T = TypeVar("_T")
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
@@ -100,16 +101,17 @@ class TtsVoice(_StrictModel):
     speaking_rate: float = Field(default=1.0, gt=0.0, le=4.0)
 
 
-class BrandIdentity(_StrictModel):
-    """Business-owned description of who a brand is.
+class ProfileIdentity(_StrictModel):
+    """Business-owned description of a build profile.
 
-    Rendered by ``cxas build`` into the persona/lexicon block of
-    ``global_instruction.txt``, into ``app.json`` / ``app.yaml`` / ``app.yml``
-    ``synthesizeSpeechConfigs`` and ``languageSettings``, and into
-    ``@@brand.*@@`` placeholders across app files.
+    A profile can represent a brand, subsidiary, region, business unit, or
+    specialized persona. Rendered by ``cxas build`` into the persona/lexicon
+    block of ``global_instruction.txt``, into ``app.json`` / ``app.yaml`` /
+    ``app.yml`` ``synthesizeSpeechConfigs`` and ``languageSettings``, and into
+    ``@@profile.*@@`` placeholders across app files.
     """
 
-    brand_id: str = Field(pattern=BRAND_ID_PATTERN)
+    profile_id: str = Field(pattern=PROFILE_ID_PATTERN)
     display_name: str = Field(min_length=1)
     assistant_title: str | None = None
     legal_entity: str | None = None
@@ -120,14 +122,14 @@ class BrandIdentity(_StrictModel):
     languages: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _default_languages_from_tts(self) -> BrandIdentity:
+    def _default_languages_from_tts(self) -> ProfileIdentity:
         if not self.languages and self.tts_voices:
             object.__setattr__(self, "languages", list(self.tts_voices))
         return self
 
 
 class ChannelCapabilities(_StrictModel):
-    """What a single channel of a brand may do."""
+    """What a single channel of a profile may do."""
 
     entry_agent: str | None = None
     disabled_agents: list[str] = Field(default_factory=list)
@@ -144,9 +146,9 @@ class ChannelCapabilities(_StrictModel):
 
 
 class ChannelPolicy(_StrictModel):
-    """Platform-owned policy: channels, routing and countries for a brand."""
+    """Platform-owned policy: channels, routing and countries for a profile."""
 
-    brand_id: str = Field(pattern=BRAND_ID_PATTERN)
+    profile_id: str = Field(pattern=PROFILE_ID_PATTERN)
     channels: dict[str, ChannelCapabilities]
     api_routing: dict[str, str] = Field(default_factory=dict)
     supported_countries: list[str] = Field(default_factory=list)
@@ -181,7 +183,7 @@ class ChannelPolicy(_StrictModel):
 class EnvManifest(_StrictModel):
     """Environment template manifest (``envs/<environment>.yaml``).
 
-    ``templates`` values may contain ``{brand}``, ``{brand_slug}``,
+    ``templates`` values may contain ``{profile}``, ``{profile_slug}``,
     ``{env}``, ``{channel}`` and ``{service}`` placeholders. They are
     exposed to app files as ``@@env.<key>@@`` (or
     ``@@env.<key>:<service>@@`` when the template uses ``{service}``).
@@ -214,30 +216,30 @@ class EnvManifest(_StrictModel):
 
 
 class ContentBlockCatalog(_StrictModel):
-    """Verbatim regulated copy keyed ``brand -> country -> lang -> key``."""
+    """Verbatim regulated copy keyed ``profile -> country -> lang -> key``."""
 
     blocks: dict[str, dict[str, dict[str, dict[str, str]]]] = Field(
         default_factory=dict
     )
 
     def blocks_for(
-        self, brand_id: str, country: str, lang: str
+        self, profile_id: str, country: str, lang: str
     ) -> dict[str, str] | None:
         """Return the block map for one tuple, or ``None`` if undeclared."""
         try:
-            return self.blocks[brand_id][country][lang]
+            return self.blocks[profile_id][country][lang]
         except KeyError:
             return None
 
     def missing_tuples(
-        self, brand_id: str, countries: list[str], langs: list[str]
+        self, profile_id: str, countries: list[str], langs: list[str]
     ) -> list[tuple[str, str, str]]:
-        """List ``(brand, country, lang)`` tuples without any block."""
+        """List ``(profile, country, lang)`` tuples without any block."""
         return [
-            (brand_id, country, lang)
+            (profile_id, country, lang)
             for country in countries
             for lang in langs
-            if not self.blocks_for(brand_id, country, lang)
+            if not self.blocks_for(profile_id, country, lang)
         ]
 
 
@@ -259,20 +261,22 @@ class Manifests(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     root: Path
-    brands: dict[str, BrandIdentity]
+    profiles: dict[str, ProfileIdentity]
     policies: dict[str, ChannelPolicy]
     envs: dict[str, EnvManifest]
     content_blocks: ContentBlockCatalog | None = None
 
-    def brand(self, brand_id: str) -> BrandIdentity:
-        return _lookup_known(self.brands, brand_id, "brand", "Known brands")
+    def profile(self, profile_id: str) -> ProfileIdentity:
+        return _lookup_known(
+            self.profiles, profile_id, "profile", "Known profiles"
+        )
 
-    def policy(self, brand_id: str) -> ChannelPolicy:
-        if brand_id not in self.policies:
+    def policy(self, profile_id: str) -> ChannelPolicy:
+        if profile_id not in self.policies:
             raise ManifestError(
-                f"Brand '{brand_id}' has no channel_policy.yaml."
+                f"Profile '{profile_id}' has no channel_policy.yaml."
             )
-        return self.policies[brand_id]
+        return self.policies[profile_id]
 
     def env(self, environment: str) -> EnvManifest:
         return _lookup_known(self.envs, environment, "environment", "Known")
@@ -313,50 +317,51 @@ def _assert_matching_id(
         )
 
 
-def _load_brand_dir(
-    brand_dir: Path,
-) -> tuple[BrandIdentity, ChannelPolicy | None]:
-    if not _BRAND_ID_RE.fullmatch(brand_dir.name):
+def _load_profile_dir(
+    profile_dir: Path,
+) -> tuple[ProfileIdentity, ChannelPolicy | None]:
+    if not _PROFILE_ID_RE.fullmatch(profile_dir.name):
         raise ManifestError(
-            f"Brand directory '{brand_dir.name}' must match {BRAND_ID_PATTERN}"
+            f"Profile directory '{profile_dir.name}' must match "
+            f"{PROFILE_ID_PATTERN}"
         )
-    identity_path = brand_dir / "identity.yaml"
+    identity_path = profile_dir / "identity.yaml"
     if not identity_path.is_file():
         raise ManifestError(f"Missing '{identity_path}'")
-    identity = _load_model(BrandIdentity, identity_path)
+    identity = _load_model(ProfileIdentity, identity_path)
     _assert_matching_id(
         identity_path,
-        "brand_id",
-        identity.brand_id,
-        brand_dir.name,
+        "profile_id",
+        identity.profile_id,
+        profile_dir.name,
         "directory name",
     )
 
-    policy_path = brand_dir / "channel_policy.yaml"
+    policy_path = profile_dir / "channel_policy.yaml"
     if not policy_path.is_file():
         return identity, None
     policy = _load_model(ChannelPolicy, policy_path)
     _assert_matching_id(
         policy_path,
-        "brand_id",
-        policy.brand_id,
-        brand_dir.name,
+        "profile_id",
+        policy.profile_id,
+        profile_dir.name,
         "directory name",
     )
     return identity, policy
 
 
-def _load_brand_manifests(
-    brands_dir: Path,
-) -> tuple[dict[str, BrandIdentity], dict[str, ChannelPolicy]]:
-    brands: dict[str, BrandIdentity] = {}
+def _load_profile_manifests(
+    profiles_dir: Path,
+) -> tuple[dict[str, ProfileIdentity], dict[str, ChannelPolicy]]:
+    profiles: dict[str, ProfileIdentity] = {}
     policies: dict[str, ChannelPolicy] = {}
-    for brand_dir in sorted(p for p in brands_dir.iterdir() if p.is_dir()):
-        identity, policy = _load_brand_dir(brand_dir)
-        brands[identity.brand_id] = identity
+    for profile_dir in sorted(p for p in profiles_dir.iterdir() if p.is_dir()):
+        identity, policy = _load_profile_dir(profile_dir)
+        profiles[identity.profile_id] = identity
         if policy is not None:
-            policies[policy.brand_id] = policy
-    return brands, policies
+            policies[policy.profile_id] = policy
+    return profiles, policies
 
 
 def _load_env_manifests(envs_dir: Path) -> dict[str, EnvManifest]:
@@ -377,18 +382,18 @@ def load_manifests(root: str | Path) -> Manifests:
 
     Raises:
         ManifestError: when the directory layout is wrong, a YAML file is
-            malformed, a model fails validation, or a brand directory name
-            disagrees with the ``brand_id`` declared inside its files.
+            malformed, a model fails validation, or a profile directory name
+            disagrees with the ``profile_id`` declared inside its files.
     """
     root_path = Path(root)
     if not root_path.is_dir():
         raise ManifestError(f"Manifests root '{root_path}' is not a directory")
 
-    brands_dir = root_path / "brands"
-    if not brands_dir.is_dir():
-        raise ManifestError(f"Missing '{brands_dir}' directory")
+    profiles_dir = root_path / "profiles"
+    if not profiles_dir.is_dir():
+        raise ManifestError(f"Missing '{profiles_dir}' directory")
 
-    brands, policies = _load_brand_manifests(brands_dir)
+    profiles, policies = _load_profile_manifests(profiles_dir)
     envs = _load_env_manifests(root_path / "envs")
 
     blocks_path = root_path / "locales" / "content_blocks.yaml"
@@ -400,7 +405,7 @@ def load_manifests(root: str | Path) -> Manifests:
 
     return Manifests(
         root=root_path,
-        brands=brands,
+        profiles=profiles,
         policies=policies,
         envs=envs,
         content_blocks=content_blocks,
