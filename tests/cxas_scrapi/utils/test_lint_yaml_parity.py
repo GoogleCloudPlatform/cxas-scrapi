@@ -397,11 +397,21 @@ def test_discovery_and_runner_skip_symlinks_and_non_utf8(
     bad_dir.mkdir()
     (bad_dir / "bad_utf8.yaml").write_bytes(b"\xff\xfe\x00\x01")
     (bad_dir / "instruction.txt").write_bytes(b"\xff\xfe\x00\x01")
+    cb_dir = bad_dir / "before_model_callbacks" / "bad_cb"
+    cb_dir.mkdir(parents=True)
+    (cb_dir / "python_code.py").write_bytes(b"\xff\xfe\x00not-utf8")
 
     disc = Discovery(tmp_path, tmp_path / "evals")
     assert "sym_agent" not in disc.discover_agent_configs()
     cfg = LintConfig()
     ctx = build_context(tmp_path, cfg, disc)
     report = LintReport()
-    run_rules(build_registry(), cfg, ctx, disc, report, specific_rules={"A001"})
+    run_rules(
+        build_registry(),
+        cfg,
+        ctx,
+        disc,
+        report,
+        specific_rules={"A001", "T008"},
+    )
     assert isinstance(report.results, list)
