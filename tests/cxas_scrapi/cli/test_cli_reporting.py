@@ -572,6 +572,7 @@ def test_combined_evals_report_cmd_new_upstream_flags(
             self.eval_model = None
             self.exclude_files = "broken.yaml,wip.json"
             self.sim_user_voices = "en-US-Journey-D,es-US-Journey-F"
+            self.sim_user_tts_model = ""
             self.junit_xml = str(evals_dir / "sponge_log.xml")
             self.testsuite_prefix = "custom_evals"
             self.report_title = "Custom Eval Dashboard"
@@ -594,6 +595,7 @@ def test_combined_evals_report_cmd_new_upstream_flags(
             "en-US-Journey-D",
             "es-US-Journey-F",
         ]
+        assert call_kwargs["sim_user_tts_model"] == ""
         assert call_kwargs["junit_xml"] == str(evals_dir / "sponge_log.xml")
         assert call_kwargs["testsuite_prefix"] == "custom_evals"
         assert call_kwargs["report_title"] == "Custom Eval Dashboard"
