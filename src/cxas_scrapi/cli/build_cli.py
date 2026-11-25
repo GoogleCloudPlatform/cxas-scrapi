@@ -52,6 +52,7 @@ def _run_all_builds(args: argparse.Namespace) -> None:
         package_zip=args.zip,
         native_python_env=getattr(args, "native_python_env", False),
         write_locks=getattr(args, "write_locks", False),
+        composition_mode=getattr(args, "composition_mode", None),
     )
     if args.json:
         print(json.dumps([r.model_dump(mode="json") for r in reports]))
@@ -79,6 +80,7 @@ def _run_single_build(args: argparse.Namespace) -> None:
         package_zip=args.zip,
         native_python_env=getattr(args, "native_python_env", False),
         write_lock=getattr(args, "write_locks", False),
+        composition_mode=getattr(args, "composition_mode", None),
     )
     if args.json:
         print(report.model_dump_json())
@@ -200,6 +202,15 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     parser_build.add_argument(
         "--zip", action="store_true", help="Package each built app to a ZIP."
+    )
+    parser_build.add_argument(
+        "--composition-mode",
+        choices=["canonical_overlay", "brand_native"],
+        default=None,
+        help=(
+            "Override the profile's composition_mode "
+            "(canonical_overlay or brand_native)."
+        ),
     )
     parser_build.add_argument(
         "--json", action="store_true", help="Emit JSON build report(s)."

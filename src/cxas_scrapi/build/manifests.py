@@ -18,6 +18,7 @@ Layout under ``<manifests_root>/``::
 
     profiles/<profile_id>/identity.yaml        -> ProfileIdentity
     profiles/<profile_id>/channel_policy.yaml  -> ChannelPolicy
+    profiles/<profile_id>/overrides.yaml       -> BrandOverrides (optional)
     envs/<environment>.yaml                    -> EnvManifest
     locales/content_blocks.yaml                -> ContentBlockCatalog (optional)
 
@@ -32,7 +33,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, TypeAlias, TypeVar
+from typing import Any, Literal, TypeAlias, TypeVar
 
 import yaml
 from pydantic import (
@@ -79,6 +80,11 @@ CHANNEL_PROFILE_TYPES: dict[str, str] = {
     "INSTAGRAM": "INSTAGRAM",
 }
 
+CompositionMode = Literal["canonical_overlay", "brand_native"]
+COMPOSITION_MODES: frozenset[str] = frozenset(
+    {"canonical_overlay", "brand_native"}
+)
+
 
 class ManifestError(ValueError):
     """Raised when a manifest file is missing or fails validation."""
@@ -115,6 +121,7 @@ class ProfileIdentity(_StrictModel):
     tts_voices: dict[str, TtsVoice] = Field(default_factory=dict)
     languages: list[str] = Field(default_factory=list)
     forbidden_tokens: list[str] = Field(default_factory=list)
+    composition_mode: CompositionMode = "canonical_overlay"
 
     @model_validator(mode="after")
     def _default_languages_from_tts(self) -> ProfileIdentity:
@@ -311,6 +318,147 @@ class ContentBlockCatalog(_StrictModel):
         ]
 
 
+def _validate_override_channel_keys(value: dict[str, Any]) -> dict[str, Any]:
+    unknown = sorted(set(value) - set(CHANNEL_PROFILE_TYPES))
+    if unknown:
+        raise ValueError(
+            f"unknown channel(s) {unknown}; expected one of "
+            f"{sorted(CHANNEL_PROFILE_TYPES)}"
+        )
+    return value
+
+
+def _validate_override_resource_ids(value: dict[str, Any]) -> dict[str, Any]:
+    """Rejects override keys that could escape ``core/`` or ``out_dir``."""
+    bad = sorted(
+        str(k)
+        for k in value
+        if not isinstance(k, str)
+        or not k
+        or k != k.strip()
+        or k in {".", ".."}
+        or any(sep in k for sep in ("/", "\\", "\x00", ":"))
+    )
+    if bad:
+        raise ValueError(
+            f"invalid resource id(s) {bad}; override keys must be a single "
+            "directory name (no '.', '..', whitespace padding, or path "
+            "separators)"
+        )
+    return value
+
+
+class LineReplacement(_StrictModel):
+    """Deterministic line or unique-substring replacement inside text."""
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, populate_by_name=True
+    )
+
+    match: str = Field(min_length=1)
+    replace_with: str = Field(alias="with")
+
+    @field_validator("match")
+    @classmethod
+    def _non_whitespace_match(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("match must not be empty or whitespace")
+        return value
+
+
+class InstructionOverride(_StrictModel):
+    """Structured prompt override (`instruction`, `replace_lines`, rules)."""
+
+    instruction: str | None = None
+    replace_lines: list[LineReplacement] = Field(default_factory=list)
+    append_rules: list[str] = Field(default_factory=list)
+
+
+class GlobalInstructionOverride(InstructionOverride):
+    """Profile-wide and per-channel overrides for ``global_instruction.txt``."""
+
+    channels: dict[str, InstructionOverride] = Field(default_factory=dict)
+
+    @field_validator("channels")
+    @classmethod
+    def _known_channels(
+        cls, value: dict[str, InstructionOverride]
+    ) -> dict[str, InstructionOverride]:
+        return _validate_override_channel_keys(value)
+
+
+class AgentChannelOverride(InstructionOverride):
+    """Channel-scoped overrides for a single subagent or root agent."""
+
+    description: str | None = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    model: str | None = None
+
+    @field_validator("temperature", mode="before")
+    @classmethod
+    def _reject_bool_temperature(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            raise ValueError("temperature must be a number, not a boolean")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def _non_empty_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("model must not be empty or whitespace")
+        return stripped
+
+
+class AgentOverride(AgentChannelOverride):
+    """Profile-wide and channel-scoped overrides for a single agent."""
+
+    channels: dict[str, AgentChannelOverride] = Field(default_factory=dict)
+
+    @field_validator("channels")
+    @classmethod
+    def _known_channels(
+        cls, value: dict[str, AgentChannelOverride]
+    ) -> dict[str, AgentChannelOverride]:
+        return _validate_override_channel_keys(value)
+
+
+class ToolChannelOverride(_StrictModel):
+    """Channel-scoped overrides for a single tool."""
+
+    description: str | None = None
+    url: str | None = None
+
+
+class ToolOverride(ToolChannelOverride):
+    """Profile-wide and channel-scoped overrides for a single tool."""
+
+    channels: dict[str, ToolChannelOverride] = Field(default_factory=dict)
+
+    @field_validator("channels")
+    @classmethod
+    def _known_channels(
+        cls, value: dict[str, ToolChannelOverride]
+    ) -> dict[str, ToolChannelOverride]:
+        return _validate_override_channel_keys(value)
+
+
+class BrandOverrides(_StrictModel):
+    """Optional profile/channel overrides (`profiles/<id>/overrides.yaml`)."""
+
+    profile_id: str = Field(pattern=PROFILE_ID_PATTERN)
+    global_instruction: GlobalInstructionOverride | None = None
+    agents: dict[str, AgentOverride] = Field(default_factory=dict)
+    tools: dict[str, ToolOverride] = Field(default_factory=dict)
+
+    @field_validator("agents", "tools")
+    @classmethod
+    def _safe_resource_ids(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return _validate_override_resource_ids(value)
+
+
 def _lookup_known(
     mapping: Mapping[str, _T], key: str, kind: str, known_label: str
 ) -> _T:
@@ -333,6 +481,7 @@ class Manifests(BaseModel):
     policies: dict[str, ChannelPolicy]
     envs: dict[str, EnvManifest]
     content_blocks: ContentBlockCatalog | None = None
+    overrides: dict[str, BrandOverrides] = Field(default_factory=dict)
 
     def profile(self, profile_id: str) -> ProfileIdentity:
         return _lookup_known(
@@ -349,6 +498,9 @@ class Manifests(BaseModel):
     def env(self, environment: str) -> EnvManifest:
         return _lookup_known(self.envs, environment, "environment", "Known")
 
+    def profile_overrides(self, profile_id: str) -> BrandOverrides | None:
+        return self.overrides.get(profile_id)
+
 
 def _read_yaml(path: Path) -> dict[str, ManifestValue]:
     try:
@@ -357,6 +509,8 @@ def _read_yaml(path: Path) -> dict[str, ManifestValue]:
         )
     except yaml.YAMLError as exc:
         raise ManifestError(f"{path}: invalid YAML: {exc}") from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ManifestError(f"{path}: unreadable manifest: {exc}") from exc
     if data is None:
         return {}
     if not isinstance(data, dict):
@@ -387,7 +541,7 @@ def _assert_matching_id(
 
 def _load_profile_dir(
     profile_dir: Path,
-) -> tuple[ProfileIdentity, ChannelPolicy | None]:
+) -> tuple[ProfileIdentity, ChannelPolicy | None, BrandOverrides | None]:
     if not _PROFILE_ID_RE.fullmatch(profile_dir.name):
         raise ManifestError(
             f"Profile directory '{profile_dir.name}' must match "
@@ -405,31 +559,51 @@ def _load_profile_dir(
         "directory name",
     )
 
+    policy: ChannelPolicy | None = None
     policy_path = profile_dir / "channel_policy.yaml"
-    if not policy_path.is_file():
-        return identity, None
-    policy = _load_model(ChannelPolicy, policy_path)
-    _assert_matching_id(
-        policy_path,
-        "profile_id",
-        policy.profile_id,
-        profile_dir.name,
-        "directory name",
-    )
-    return identity, policy
+    if policy_path.is_file():
+        policy = _load_model(ChannelPolicy, policy_path)
+        _assert_matching_id(
+            policy_path,
+            "profile_id",
+            policy.profile_id,
+            profile_dir.name,
+            "directory name",
+        )
+
+    ov: BrandOverrides | None = None
+    overrides_path = profile_dir / "overrides.yaml"
+    if overrides_path.is_file():
+        ov = _load_model(BrandOverrides, overrides_path)
+        _assert_matching_id(
+            overrides_path,
+            "profile_id",
+            ov.profile_id,
+            profile_dir.name,
+            "directory name",
+        )
+
+    return identity, policy, ov
 
 
 def _load_profile_manifests(
     profiles_dir: Path,
-) -> tuple[dict[str, ProfileIdentity], dict[str, ChannelPolicy]]:
+) -> tuple[
+    dict[str, ProfileIdentity],
+    dict[str, ChannelPolicy],
+    dict[str, BrandOverrides],
+]:
     profiles: dict[str, ProfileIdentity] = {}
     policies: dict[str, ChannelPolicy] = {}
+    overrides: dict[str, BrandOverrides] = {}
     for profile_dir in sorted(p for p in profiles_dir.iterdir() if p.is_dir()):
-        identity, policy = _load_profile_dir(profile_dir)
+        identity, policy, ov = _load_profile_dir(profile_dir)
         profiles[identity.profile_id] = identity
         if policy is not None:
             policies[policy.profile_id] = policy
-    return profiles, policies
+        if ov is not None:
+            overrides[ov.profile_id] = ov
+    return profiles, policies, overrides
 
 
 def _load_env_manifests(envs_dir: Path) -> dict[str, EnvManifest]:
@@ -461,7 +635,7 @@ def load_manifests(root: str | Path) -> Manifests:
     if not profiles_dir.is_dir():
         raise ManifestError(f"Missing '{profiles_dir}' directory")
 
-    profiles, policies = _load_profile_manifests(profiles_dir)
+    profiles, policies, overrides = _load_profile_manifests(profiles_dir)
     envs = _load_env_manifests(root_path / "envs")
 
     blocks_path = root_path / "locales" / "content_blocks.yaml"
@@ -477,4 +651,5 @@ def load_manifests(root: str | Path) -> Manifests:
         policies=policies,
         envs=envs,
         content_blocks=content_blocks,
+        overrides=overrides,
     )

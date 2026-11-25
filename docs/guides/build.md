@@ -29,14 +29,16 @@ manifests/
     profile_1/
       identity.yaml
       channel_policy.yaml
+      overrides.yaml       # optional
     profile_2/
       identity.yaml
       channel_policy.yaml
+      overrides.yaml       # optional
   envs/
     prod.yaml
     staging.yaml
   locales/
-    content_blocks.yaml  # optional
+    content_blocks.yaml    # optional
 ```
 
 ### `profiles/profile_1/identity.yaml`
@@ -162,6 +164,85 @@ blocks:
     US:
       en:
         greeting: "Hello from Profile One!"
+```
+
+### `profiles/profile_1/overrides.yaml` (Optional)
+
+Per-profile and per-channel overrides apply cleanly after token rendering in
+four deterministic stages:
+
+1. **`global_instruction`**: Full replacement (`instruction`), strict
+   line/unique-substring edits (`replace_lines`), and idempotent appended rules
+   (`append_rules`). Automatically preserves the `# Profile: ...` identity
+   block prefix unless already present.
+2. **`agents`**: Per-agent `description`, `modelSettings.temperature`,
+   `modelSettings.model`, and instruction overrides (`instruction`,
+   `replace_lines`, `append_rules`).
+3. **`tools`**: Per-tool `description` (updates `openApiTool`, `dataStoreTool`,
+   or `pythonFunction` descriptions) and OpenAPI `url` overrides (syncs
+   `environment.json`, tool config, and OpenAPI schema `servers[].url` while
+   preserving `$env_var` placeholders).
+4. **`channels`**: Per-channel blocks (`channels.<CHANNEL>`) nested inside
+   `global_instruction`, `agents.<id>`, or `tools.<id>` that layer on top of
+   profile-wide overrides for a specific channel.
+
+```yaml
+profile_id: profile_1
+global_instruction:
+  append_rules:
+    - "Always greet callers as @@profile.display_name@@."
+  channels:
+    VOICE_TELEPHONY:
+      append_rules:
+        - "Keep spoken answers under two sentences."
+agents:
+  root_agent:
+    temperature: 0.2
+    model: gemini-3.5-pro
+    replace_lines:
+      - match: "Standard greeting."
+        with: "Welcome to @@profile.display_name@@."
+    channels:
+      VOICE_TELEPHONY:
+        temperature: 0.1
+tools:
+  order_api:
+    description: "Query @@profile.display_name@@ orders."
+    url: https://orders.profile1.example.com/v1
+```
+
+Strict safety checks:
+- `replace_lines` fails loudly if an anchor matches zero times or more than once.
+- `append_rules` is idempotent: rules already present in the target instruction
+  are not duplicated.
+- Override resource IDs reject path traversal (`..`, `/`, `\`, `:`), and
+  channel-scoped overrides targeting pruned/disabled agents or tools fail the
+  build.
+
+## Composition Modes (`canonical_overlay` vs. `brand_native`)
+
+Set `composition_mode` in `profiles/<profile_id>/identity.yaml` (default:
+`canonical_overlay`) or pass `--composition-mode` on the CLI:
+
+- **`canonical_overlay`** (default): Stages the shared `core/` directory as the
+  base app and applies profile identity, channel pruning, token rendering, and
+  `overrides.yaml`.
+- **`brand_native`**: Stages profile-owned domain files from
+  `profiles/<profile_id>/domains/` as the base layer, overlays shared `traits/`
+  non-destructively (profile-owned files always win; `traits/` may be a flat
+  CES resource tree or named trait packs), and then runs the exact same token
+  rendering, conditional blocks, channel pruning, `overrides.yaml`, and
+  `deployments/<channel>.yaml` emission.
+
+```bash
+cxas build \
+  --core-dir workspace/ \
+  --manifests-dir workspace/manifests/ \
+  --profile profile_1 \
+  --channel WEB \
+  --env prod \
+  --composition-mode brand_native \
+  --out dist/profile_1/web
 ```
 
 ## Commands
