@@ -50,6 +50,7 @@ from cxas_scrapi.utils.linter import (
     resolve_agent_graph,
     resolve_app_root,
     rule,
+    safe_ast_parse,
 )
 
 FUNC_DEF_RE = re.compile(r"def\s+(\w+)\s*\(([^)]*)\)")
@@ -367,11 +368,8 @@ def _extract_py_referenced_tools_cached(
         text = py_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return frozenset()
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    tree = safe_ast_parse(text)
+    if tree is None:
         return frozenset(_TOOL_ATTR_RE.findall(text))
 
     found: set[str] = set()
@@ -1333,9 +1331,17 @@ class DataStoreFilterParameterBehavior(Rule):
         )
 
         if is_brand_scoped:
-            behavior = ds_tool.get("filterParameterBehavior")
-            if behavior is None:
-                behavior = ds_tool.get("filter_parameter_behavior")
+            behavior = (
+                ds_tool.get("filterParameterBehavior")
+                if "filterParameterBehavior" in ds_tool
+                else ds_tool.get("filter_parameter_behavior")
+            )
+            if behavior is None and not ds_tool:
+                behavior = (
+                    data.get("filterParameterBehavior")
+                    if "filterParameterBehavior" in data
+                    else data.get("filter_parameter_behavior")
+                )
             if behavior not in ("NEVER_INCLUDE", 3):
                 rel = str(file_path.relative_to(context.project_root))
                 reason = (

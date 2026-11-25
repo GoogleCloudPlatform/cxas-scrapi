@@ -31,6 +31,7 @@ from pathlib import Path
 import yaml
 
 from cxas_scrapi.utils.linter import (
+    APP_CONFIG_NAMES,
     CONFIG_EXTENSIONS,
     AgentGraph,
     LintContext,
@@ -40,15 +41,11 @@ from cxas_scrapi.utils.linter import (
     Severity,
     ToolsetValidationBehavior,
     _build_agent_ref_resolver,
-    _extract_dict_agent_refs,
-    _find_dir_config,
     _load_config_dict,
     collect_attached_guardrails,
     discover_local_resources,
-    extract_resource_ref_candidates,
     get_toolset_tools,
     match_local_resources,
-    parse_config_content,
     rel_to_project,
     resolve_agent_graph,
     resolve_app_root,
@@ -79,12 +76,13 @@ class AgentToolReferences(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         agent_dir = file_path.parent
-        agent_json = _find_dir_config(agent_dir)
-        if agent_json is None:
+        agent_json = agent_dir / f"{agent_dir.name}.json"
+        if not agent_json.exists():
             return []
 
-        agent_config = _load_config_dict(agent_json)
-        if agent_config is None:
+        try:
+            agent_config = json.loads(agent_json.read_text())
+        except (json.JSONDecodeError, OSError):
             return []
 
         app_root = file_path.parent.parent.parent
@@ -196,16 +194,16 @@ class CallbackFileReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        agent_config = parse_config_content(file_path, content)
-        if agent_config is None:
+        try:
+            agent_config = json.loads(content)
+        except json.JSONDecodeError:
             return []
 
         results = []
         code_paths = [
             cb.get("pythonCode", "")
             for cb_type in _CALLBACK_TYPES
-            for cb in (agent_config.get(cb_type) or [])
-            if isinstance(cb, dict)
+            for cb in agent_config.get(cb_type, [])
         ]
         for code_path in filter(None, code_paths):
             resolved = _resolve_path(context.app_dir, code_path)
@@ -224,29 +222,9 @@ class CallbackFileReferences(Rule):
         return results
 
 
-def _extract_child_agent_candidates(
-    child_entry: object,
-) -> tuple[set[str], str]:
-    """Return ``(lookup_candidates, display_label)`` for a childAgents entry."""
-    if isinstance(child_entry, dict):
-        raws = _extract_dict_agent_refs(child_entry)
-        cands = {
-            c
-            for raw in raws
-            for c in extract_resource_ref_candidates(raw, "agents")
-        }
-        return cands, (raws[0] if raws else str(child_entry))
-    if isinstance(child_entry, str):
-        return (
-            extract_resource_ref_candidates(child_entry, "agents"),
-            child_entry,
-        )
-    return set(), str(child_entry)
-
-
 @rule("structure")
 class ChildAgentReferences(Rule):
-    """Agent config references child agents that don't exist."""
+    """Agent JSON references child agents that don't exist."""
 
     id = "S004"
     name = "child-agent-references"
@@ -259,26 +237,22 @@ class ChildAgentReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        agent_config = parse_config_content(file_path, content)
-        if agent_config is None:
+        try:
+            agent_config = json.loads(content)
+        except json.JSONDecodeError:
             return []
 
         results = []
-        child_agents = agent_config.get("childAgents") or []
-        if not isinstance(child_agents, list):
-            return []
+        child_agents = agent_config.get("childAgents", [])
         valid_agents = context.all_agent_names | context.all_agent_display_names
-        for child_entry in child_agents:
-            candidates, child_label = _extract_child_agent_candidates(
-                child_entry
-            )
-            if not (candidates & valid_agents):
+        for child_name in child_agents:
+            if child_name not in valid_agents:
                 results.append(
                     self.make_result(
                         str(file_path),
                         (
                             "References child agent"
-                            f" '{child_label}' but no"
+                            f" '{child_name}' but no"
                             " agent directory found."
                             " Available agents:"
                             f" {sorted(valid_agents)}"
@@ -304,8 +278,9 @@ class StrictAgentPathLayout(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         agent_name = file_path.stem
-        agent_config = parse_config_content(file_path, content)
-        if agent_config is None:
+        try:
+            agent_config = json.loads(content)
+        except json.JSONDecodeError:
             return []
 
         results = []
@@ -557,6 +532,28 @@ class SingletonGuardrailTypes(Rule):
         return results
 
 
+def _find_app_root_for_path(file_path: Path, context: LintContext) -> Path:
+    """Resolve the app root directory from context or file_path hierarchy."""
+    if context.app_root and context.app_root.exists():
+        return context.app_root
+    if (context.app_dir / "app.json").exists() or (
+        context.app_dir / "app.yaml"
+    ).exists():
+        return context.app_dir
+    if file_path.name in ("app.json", "app.yaml"):
+        return file_path.parent
+    if file_path.parent.parent.name in (
+        "agents",
+        "tools",
+        "toolsets",
+        "guardrails",
+    ):
+        return file_path.parent.parent.parent
+    if file_path.parent.name in ("agents", "tools", "toolsets", "guardrails"):
+        return file_path.parent.parent
+    return context.app_dir
+
+
 def _load_resource_dir_config(
     resource_dir: Path,
 ) -> tuple[dict | None, Path | None]:
@@ -675,11 +672,18 @@ class AppResourceReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        app_config = parse_config_content(file_path, content)
-        if app_config is None:
+        try:
+            app_config = (
+                json.loads(content)
+                if file_path.suffix == ".json"
+                else yaml.safe_load(content)
+            )
+        except Exception:
+            return []
+        if not isinstance(app_config, dict):
             return []
 
-        app_root = resolve_app_root(file_path, context)
+        app_root = _find_app_root_for_path(file_path, context)
         known_guardrails = _collect_known_resource_names(app_root, "guardrails")
         results: list[LintResult] = []
 
@@ -744,11 +748,14 @@ class AgentResourceReferences(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        agent_config = parse_config_content(file_path, content)
-        if agent_config is None:
+        try:
+            agent_config = json.loads(content)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(agent_config, dict):
             return []
 
-        app_root = resolve_app_root(file_path, context)
+        app_root = _find_app_root_for_path(file_path, context)
         known_guardrails = _collect_known_resource_names(app_root, "guardrails")
         known_toolsets = _collect_known_resource_names(app_root, "toolsets")
         results: list[LintResult] = []
@@ -842,7 +849,7 @@ class ToolFileReferences(Rule):
         if not config_data or not target_path:
             return []
 
-        app_root = resolve_app_root(tool_dir, context)
+        app_root = _find_app_root_for_path(tool_dir, context)
         results: list[LintResult] = []
 
         py_fn = config_data.get("pythonFunction") or config_data.get(
@@ -928,7 +935,7 @@ class ToolsetFileReferences(Rule):
         if not _is_file_path_ref(schema_path):
             return []
 
-        app_root = resolve_app_root(toolset_dir, context)
+        app_root = _find_app_root_for_path(toolset_dir, context)
         results: list[LintResult] = []
 
         expected_prefix = f"toolsets/{toolset_name}/"
@@ -1343,10 +1350,35 @@ def _extract_guardrail_prompts(data: dict) -> list[str]:
     return prompts
 
 
+def _iter_guardrail_config_paths(
+    file_path: Path, context: LintContext
+) -> list[Path]:
+    """Return guardrail config paths for an app_config or direct target."""
+    if file_path.name in APP_CONFIG_NAMES:
+        app_root = resolve_app_root(file_path, context)
+        paths: list[Path] = []
+        for res in discover_local_resources(app_root, "guardrails"):
+            if res.report_path.is_dir():
+                for ext in CONFIG_EXTENSIONS:
+                    paths.extend(sorted(res.report_path.glob(f"*{ext}")))
+            elif res.report_path.is_file():
+                paths.append(res.report_path)
+        return paths
+    if file_path.is_dir():
+        return [
+            p
+            for ext in CONFIG_EXTENSIONS
+            for p in sorted(file_path.glob(f"*{ext}"))
+        ]
+    if file_path.suffix.lower() in CONFIG_EXTENSIONS:
+        return [file_path]
+    return []
+
+
 @rule("structure")
 class GuardrailJinjaSyntax(Rule):
     id = "S019"
-    target = "guardrail_config"
+    target = "app_config"
     name = "guardrail-jinja-syntax"
     description = "Detects Jinja tokens inside guardrail policy prompts."
     default_severity = Severity.ERROR
@@ -1354,15 +1386,8 @@ class GuardrailJinjaSyntax(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        config_paths: list[Path] = []
-        if file_path.is_dir():
-            for ext in CONFIG_EXTENSIONS:
-                config_paths.extend(sorted(file_path.glob(f"*{ext}")))
-        elif file_path.suffix.lower() in CONFIG_EXTENSIONS:
-            config_paths.append(file_path)
-
         results: list[LintResult] = []
-        for cfg_path in config_paths:
+        for cfg_path in _iter_guardrail_config_paths(file_path, context):
             data = _load_config_dict(cfg_path)
             if data is None:
                 continue

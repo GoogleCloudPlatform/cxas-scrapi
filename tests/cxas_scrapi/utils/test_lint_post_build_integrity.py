@@ -726,11 +726,46 @@ def test_ignore_tools_glob_suppresses_t020_and_t021(tmp_path: Path) -> None:
 
     # With ignore: ["tools/**"] -> both T020 and T021 suppressed
     (tmp_path / "cxaslint.yaml").write_text(
-        "ignore:\n  - 'tools/**'\n", encoding="utf-8"
+        "ignore:\n  - './tools/**'\n", encoding="utf-8"
     )
     cfg = LintConfig.load(tmp_path)
     rep_ignored = _run_specific(tmp_path, {"T020", "T021"}, config=cfg)
     assert rep_ignored.results == []
+
+    # per_file on app.json must NOT leak onto tools/** emitted by T020
+    cfg_no_leak = LintConfig(per_file={"app.json": {"T020": "warning"}})
+    rep_no_leak = _run_specific(tmp_path, {"T020"}, config=cfg_no_leak)
+    assert len(rep_no_leak.results) == 1
+    assert rep_no_leak.results[0].severity == Severity.ERROR
+
+    # per_file on tools/** overrides global rules for emitted tools/** paths
+    cfg_override = LintConfig(
+        rules={"T020": Severity.ERROR},
+        per_file={"tools/**": {"T020": "warning"}},
+    )
+    rep_override = _run_specific(tmp_path, {"T020"}, config=cfg_override)
+    assert len(rep_override.results) == 1
+    assert rep_override.results[0].severity == Severity.WARNING
+
+
+def test_a018_default_language_case_insensitive_bcp47(tmp_path: Path) -> None:
+    """defaultLanguageCode matching in supportedLanguageCodes is case-insensitive."""
+    app_json = _write_json(
+        tmp_path / "app.json",
+        {
+            "displayName": "app",
+            "languageSettings": {
+                "defaultLanguageCode": "en-us",
+                "supportedLanguageCodes": ["en-US"],
+            },
+        },
+    )
+    assert (
+        VoiceLanguageTtsParity().check(
+            app_json, app_json.read_text(encoding="utf-8"), _ctx(tmp_path)
+        )
+        == []
+    )
 
 
 def _run_cli_lint(*args: str) -> subprocess.CompletedProcess[str]:

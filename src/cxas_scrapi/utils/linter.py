@@ -23,10 +23,12 @@ overrides, and decorator-based auto-registration.
 Configuration lives in ``cxaslint.yaml``.
 """
 
+import ast
 import fnmatch
 import json
 import re
 import typing
+import warnings
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
@@ -413,20 +415,39 @@ def _app_channel_is_voice(app_cfg: dict[str, typing.Any] | None) -> bool | None:
     return None
 
 
+def safe_ast_parse(content: str) -> ast.Module | None:
+    """Parse Python source into an AST, returning None on syntax/null errors."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            return ast.parse(content)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _normalize_glob_path(path: str) -> str:
+    """Normalize slashes and strip leading ``./`` segments for glob matching."""
+    normalized = path.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
 def _app_model_is_voice(
     context: LintContext, app_cfg: dict[str, typing.Any] | None
 ) -> bool:
-    """Return True if the app's configured model is a known voice model."""
-    model = context.model
-    if not model and isinstance(app_cfg, dict):
+    """Return True if the app or any agent configures a known voice model."""
+    candidates: list[str] = []
+    if isinstance(context.model, str) and context.model.strip():
+        candidates.append(context.model)
+    elif isinstance(app_cfg, dict):
         ms = app_cfg.get("modelSettings") or app_cfg.get("model_settings")
-        if isinstance(ms, dict):
-            raw = ms.get("model")
-            if isinstance(raw, str):
-                model = raw
-    return (
-        isinstance(model, str) and model.strip().lower() in _VOICE_MODELS_LOWER
+        if isinstance(ms, dict) and isinstance(ms.get("model"), str):
+            candidates.append(ms["model"])
+    candidates.extend(
+        m for m in context.agent_models.values() if isinstance(m, str)
     )
+    return any(m.strip().lower() in _VOICE_MODELS_LOWER for m in candidates)
 
 
 def is_voice_app(context: LintContext) -> bool:
@@ -1321,19 +1342,29 @@ class LintConfig:
 
         return config
 
+    def get_per_file_severity_override(
+        self, rule_obj: Rule, file_path: str = ""
+    ) -> Severity | None:
+        """Return a matching ``per_file`` severity override, or None."""
+        norm_path = _normalize_glob_path(file_path)
+        for pattern, overrides in self.per_file.items():
+            if fnmatch.fnmatch(norm_path, _normalize_glob_path(pattern)):  # noqa: SIM102
+                if rule_obj.id in overrides:
+                    return Severity.from_str(overrides[rule_obj.id])
+        return None
+
+    def get_global_severity_override(self, rule_obj: Rule) -> Severity | None:
+        """Return a rule-level severity override from ``rules:``, or None."""
+        return self.rules.get(rule_obj.id)
+
     def get_severity_override(
         self, rule_obj: Rule, file_path: str = ""
     ) -> Severity | None:
         """Return an explicit configured severity override, or None."""
-        for pattern, overrides in self.per_file.items():
-            if fnmatch.fnmatch(file_path, pattern):  # noqa: SIM102
-                if rule_obj.id in overrides:
-                    return Severity.from_str(overrides[rule_obj.id])
-
-        if rule_obj.id in self.rules:
-            return self.rules[rule_obj.id]
-
-        return None
+        per_file = self.get_per_file_severity_override(rule_obj, file_path)
+        if per_file is not None:
+            return per_file
+        return self.get_global_severity_override(rule_obj)
 
     def get_severity(self, rule_obj: Rule, file_path: str = "") -> Severity:
         """Get the effective severity for a rule.
@@ -1348,7 +1379,11 @@ class LintConfig:
 
     def is_ignored(self, file_path: str) -> bool:
         """Check if a file matches any ignore pattern."""
-        return any(fnmatch.fnmatch(file_path, p) for p in self.ignore)
+        norm_path = _normalize_glob_path(file_path)
+        return any(
+            fnmatch.fnmatch(norm_path, _normalize_glob_path(p))
+            for p in self.ignore
+        )
 
     def get_options(self, rule_id: str) -> dict:
         """Get rule-specific options."""
@@ -1778,23 +1813,37 @@ def build_context(
     )
 
 
+def _normalize_result_file(
+    result_file: str, rel: str, context: LintContext
+) -> str:
+    """Return a project-relative normalized path for glob/override matching."""
+    if not result_file:
+        return _normalize_glob_path(rel)
+    p = Path(result_file)
+    if p.is_absolute():
+        return _normalize_glob_path(rel_to_project(p, context))
+    return _normalize_glob_path(result_file)
+
+
 def _resolve_emitted_result(
     config: LintConfig,
     rule_obj: Rule,
     result: LintResult,
     rel: str,
-    file_override: Severity | None,
+    context: LintContext,
 ) -> LintResult | None:
     """Apply ignore patterns and per-file severity overrides to a finding."""
-    effective_override = file_override
-    if result.file and result.file != rel:
-        if config.is_ignored(result.file):
-            return None
-        res_override = config.get_severity_override(rule_obj, result.file)
-        if res_override == Severity.OFF:
-            return None
-        if res_override is not None:
-            effective_override = res_override
+    target_file = _normalize_result_file(result.file, rel, context)
+    if config.is_ignored(target_file):
+        return None
+    per_file = config.get_per_file_severity_override(rule_obj, target_file)
+    effective_override = (
+        per_file
+        if per_file is not None
+        else config.get_global_severity_override(rule_obj)
+    )
+    if effective_override == Severity.OFF:
+        return None
     if effective_override is not None:
         result.severity = effective_override
     return result
@@ -1831,7 +1880,7 @@ def _lint_files(
                 continue
             for result in rule_obj.check(file_path, content, context):
                 resolved = _resolve_emitted_result(
-                    config, rule_obj, result, rel, override
+                    config, rule_obj, result, rel, context
                 )
                 if resolved is not None:
                     report.add(resolved)

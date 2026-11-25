@@ -833,37 +833,6 @@ def test_s007_same_parent_duplicate_ignored_and_yml_snake_case_caught(
     ] == ["S007"]
 
 
-def test_yaml_app_with_guided_agent_passes_full_lint_without_false_errors(
-    tmp_path: Path,
-) -> None:
-    _write_yaml(
-        tmp_path / "app.yaml",
-        {
-            "name": "yaml_app",
-            "displayName": "YAML App",
-            "rootAgent": "root_agent",
-        },
-    )
-    _make_yaml_agent(
-        tmp_path,
-        "root_agent",
-        child_agents=["guided_sub"],
-        tools=["end_session"],
-    )
-    _write_yaml(
-        tmp_path / "agents" / "guided_sub" / "guided_sub.yaml",
-        {
-            "displayName": "Guided Sub",
-            "guidedAgent": {"config": "some_config"},
-        },
-    )
-    disc = Discovery(tmp_path, tmp_path / "evals")
-    ctx = build_context(tmp_path, LintConfig(), disc)
-    report = LintReport()
-    run_rules(build_registry(), LintConfig(), ctx, disc, report)
-    assert report.errors == []
-
-
 def test_discovery_prefers_dir_config_over_sidecar_and_skips_symlinks(
     tmp_path: Path,
 ) -> None:

@@ -501,7 +501,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     **A018 — voice-language-tts-parity**
 
-    Validates `languageSettings` across all JSON/YAML apps (`app.{json,yaml,yml}`): `defaultLanguageCode` must appear in `supportedLanguageCodes` when non-empty (`Error`), multiple `supportedLanguageCodes` should not explicitly set `enableMultilingualSupport: false` (`Warning`), and voice apps with `audioProcessingConfig` should define a matching `synthesizeSpeechConfigs` entry for each supported language (`Warning`, case-insensitive BCP-47 match).
+    Validates `languageSettings` across all JSON/YAML apps (`app.{json,yaml,yml}`): `defaultLanguageCode` must appear in `supportedLanguageCodes` when non-empty (`Error`, case-insensitive BCP-47 match), multiple `supportedLanguageCodes` should not explicitly set `enableMultilingualSupport: false` (`Warning`), and voice apps should define a non-empty `audioProcessingConfig.synthesizeSpeechConfigs` entry for each supported language (`Warning`, case-insensitive BCP-47 match, including when `audioProcessingConfig` is omitted).
 
     *Fix:* Align `defaultLanguageCode`, `supportedLanguageCodes`, `enableMultilingualSupport`, and `audioProcessingConfig.synthesizeSpeechConfigs`.
 

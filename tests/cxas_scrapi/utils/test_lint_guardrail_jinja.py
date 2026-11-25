@@ -151,3 +151,27 @@ def test_s019_detects_jinja_in_custom_policy_and_yaml_guardrails(
     res = GuardrailJinjaSyntax().check(gr_dir, "", _context(tmp_path))
     assert [r.rule_id for r in res] == ["S019"]
     assert res[0].file == f"guardrails/sec/sec{ext}"
+
+
+def test_qa_007_s019_flat_guardrail_files_dispatched_via_run_rules(
+    tmp_path: Path,
+) -> None:
+    """QA-007: S019 must inspect flat guardrails/*.{json,yaml,yml} via run_rules."""
+    (tmp_path / "app.yaml").write_text("displayName: Demo\n", encoding="utf-8")
+    gr_root = tmp_path / "guardrails"
+    gr_root.mkdir()
+    (gr_root / "flat_safety.yaml").write_text(
+        "displayName: Flat Safety\nllmPolicy:\n  prompt: 'Hi {{ user }}'\n",
+        encoding="utf-8",
+    )
+    report = LintReport()
+    run_rules(
+        build_registry(),
+        LintConfig(),
+        _context(tmp_path),
+        Discovery(tmp_path, tmp_path / "evals"),
+        report,
+        specific_rules={"S019"},
+    )
+    assert [r.rule_id for r in report.results] == ["S019"]
+    assert report.results[0].file == "guardrails/flat_safety.yaml"

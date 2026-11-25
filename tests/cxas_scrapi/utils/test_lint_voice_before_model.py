@@ -450,3 +450,22 @@ def test_is_voice_app_skips_symlinked_deployments_dir(tmp_path: Path) -> None:
     (app / "app.json").write_text('{"displayName": "web"}', encoding="utf-8")
     os.symlink(outside, app / "deployments")
     assert is_voice_app(_context(app)) is False
+
+
+def test_qa_008_is_voice_app_detects_agent_level_voice_model(
+    tmp_path: Path,
+) -> None:
+    """QA-008: is_voice_app should recognize voice models declared at agent level."""
+    (tmp_path / "app.json").write_text(
+        '{"name": "demo", "displayName": "Demo", "rootAgent": "root"}',
+        encoding="utf-8",
+    )
+    ag_dir = tmp_path / "agents" / "root"
+    ag_dir.mkdir(parents=True)
+    (ag_dir / "root.json").write_text(
+        '{"displayName": "Root", "modelSettings": {"model": "gemini-composite-v2"}}',
+        encoding="utf-8",
+    )
+    disc = Discovery(tmp_path, tmp_path / "evals")
+    ctx = build_context(tmp_path, LintConfig(), disc)
+    assert is_voice_app(ctx) is True

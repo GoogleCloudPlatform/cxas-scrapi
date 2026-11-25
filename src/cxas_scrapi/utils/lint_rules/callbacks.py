@@ -29,6 +29,7 @@ from cxas_scrapi.utils.linter import (
     Rule,
     Severity,
     rule,
+    safe_ast_parse,
 )
 
 CALLBACK_SIGNATURES = {
@@ -624,9 +625,8 @@ class VoiceBeforeModelToolMutation(Rule):
     ) -> list[LintResult]:
         if _resolve_cb_type(file_path) != "before_model_callbacks":
             return []
-        try:
-            tree = ast.parse(content)
-        except (SyntaxError, ValueError):
+        tree = safe_ast_parse(content)
+        if tree is None:
             return []
 
         visitor = _VoiceRequestMutationVisitor()
