@@ -26,6 +26,7 @@ import math
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -35,22 +36,30 @@ import yaml
 from cxas_scrapi.utils.lint_rules.callbacks import VoiceBeforeModelToolMutation
 from cxas_scrapi.utils.lint_rules.runtime_traps import VariableCountLimit
 from cxas_scrapi.utils.lint_rules.structure import (
+    AgentTreeCycle,
     CrosscheckLocalesContentBlocks,
     GuardrailJinjaSyntax,
+    OrphanedAgent,
+    SubAgentSingleParent,
+    UnusedGuardrail,
+    UnusedToolset,
     _LocaleYamlLoader,
 )
 from cxas_scrapi.utils.lint_rules.tools import (
     DataStoreFilterParameterBehavior,
     DataStoreFilterTemplateSyntax,
     DataStoreVoiceModality,
+    ToolDisplayNameUnreferenced,
 )
 from cxas_scrapi.utils.linter import (
     Discovery,
     LintConfig,
     LintContext,
     LintReport,
+    _find_elementary_cycles,
     build_context,
     build_registry,
+    resolve_agent_graph,
     run_rules,
 )
 
@@ -1287,3 +1296,685 @@ def test_qa_pr1_009_diagnostic_polish_and_yaml_tool_discovery(
         r.rule_id for r in report.results if "kb_yaml.yaml" in r.file
     }
     assert kb_yaml_rules == {"T017", "T018", "T019"}
+
+
+# ── PR 1 Extension (Commit 731ca93c): S014-S017, T008, S007 & YAML ──────
+
+
+def _write_ext_agent(
+    app_root: Path,
+    dir_name: str,
+    *,
+    ext: str = ".json",
+    display_name: str | None = None,
+    cfg_name: str | None = None,
+    child_agents: Any = None,
+    child_key: str = "childAgents",
+    tools: Any = None,
+    toolsets: Any = None,
+    guardrails: Any = None,
+    extra: dict[str, Any] | None = None,
+    with_instruction: bool = True,
+) -> Path:
+    agent_dir = app_root / "agents" / dir_name
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {"displayName": display_name or dir_name}
+    if with_instruction:
+        (agent_dir / "instruction.txt").write_text(
+            "<role>Agent. Today is {current_date}.</role>\n",
+            encoding="utf-8",
+        )
+        data["instruction"] = f"agents/{dir_name}/instruction.txt"
+    if cfg_name is not None:
+        data["name"] = cfg_name
+    if child_agents is not None:
+        data[child_key] = child_agents
+    if tools is not None:
+        data["tools"] = tools
+    if toolsets is not None:
+        data["toolsets"] = toolsets
+    if guardrails is not None:
+        data["guardrails"] = guardrails
+    if extra:
+        data.update(extra)
+    cfg_path = agent_dir / f"{dir_name}{ext}"
+    if ext == ".json":
+        cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    else:
+        cfg_path.write_text(
+            yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
+        )
+    return cfg_path
+
+
+def _write_ext_py_tool(
+    app_root: Path,
+    tool_name: str,
+    *,
+    ext: str = ".json",
+    display_name: str | None = None,
+    cfg_name: str | None = None,
+    py_code: str | None = None,
+) -> Path:
+    tool_dir = app_root / "tools" / tool_name
+    py_dir = tool_dir / "python_function"
+    py_dir.mkdir(parents=True, exist_ok=True)
+    py_path = py_dir / "python_code.py"
+    py_path.write_text(
+        py_code
+        or f'def {tool_name}() -> dict:\n    """Doc."""\n    return {{}}\n',
+        encoding="utf-8",
+    )
+    cfg: dict[str, Any] = {
+        "displayName": display_name or tool_name,
+        "pythonFunction": {
+            "pythonCode": f"tools/{tool_name}/python_function/python_code.py"
+        },
+    }
+    if cfg_name is not None:
+        cfg["name"] = cfg_name
+    cfg_path = tool_dir / f"{tool_name}{ext}"
+    if ext == ".json":
+        cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+    else:
+        cfg_path.write_text(
+            yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8"
+        )
+    return py_path
+
+
+def test_qa_pr1_ext_s014_dense_k6_cap_figure8_and_malformed_inputs(
+    tmp_path: Path,
+) -> None:
+    """S014 handles K_6 cycle cap quickly, figure-8 overlapping cycles, snake_case, and malformed childAgents."""
+    # K_6 complete directed graph (409 elementary cycles) must cap at 100 quickly
+    k6 = {f"n{i}": [f"n{j}" for j in range(6) if j != i] for i in range(6)}
+    t0 = time.perf_counter()
+    cycles = _find_elementary_cycles(k6, root_agent_dir="n0")
+    elapsed = time.perf_counter() - t0
+    assert len(cycles) == 100
+    assert len({tuple(c) for c in cycles}) == 100
+    assert elapsed < 1.0
+
+    # Overlapping figure-8 cycles: root -> a -> b -> root AND a -> c -> a
+    fig8 = tmp_path / "fig8"
+    fig8_app = fig8 / "app.json"
+    fig8.mkdir()
+    fig8_app.write_text(
+        json.dumps({"displayName": "fig8", "rootAgent": "ROOT AGENT"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(
+        fig8,
+        "root_agent",
+        display_name="Root Agent",
+        child_agents=["node_a", "NODE A"],
+        child_key="child_agents",
+    )
+    _write_ext_agent(fig8, "node_a", child_agents=["node_b", "node_c"])
+    _write_ext_agent(fig8, "node_b", child_agents=["root_agent"])
+    _write_ext_agent(fig8, "node_c", child_agents=["node_a"])
+
+    graph = resolve_agent_graph(fig8)
+    assert graph.root_agent_dir == "root_agent"
+    assert graph.cycles == [
+        ["node_a", "node_c", "node_a"],
+        ["root_agent", "node_a", "node_b", "root_agent"],
+    ]
+    res = AgentTreeCycle().check(fig8_app, "", _ctx(fig8))
+    assert len(res) == 2
+    assert all(r.rule_id == "S014" for r in res)
+
+    # Malformed childAgents values must never crash or false-fire
+    mal = tmp_path / "malformed"
+    mal.mkdir()
+    mal_app = mal / "app.json"
+    mal_app.write_text(
+        json.dumps({"displayName": "mal", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(
+        mal,
+        "root",
+        child_agents=[None, 123, "", "   ", {"bad": True}, "leaf", "leaf"],
+    )
+    _write_ext_agent(mal, "leaf", child_agents="not-a-list")
+    assert AgentTreeCycle().check(mal_app, "", _ctx(mal)) == []
+    assert OrphanedAgent().check(mal_app, "", _ctx(mal)) == []
+
+
+def test_qa_pr1_ext_s015_depth60_no_cfg_dir_and_nested_layout(
+    tmp_path: Path,
+) -> None:
+    """S015 handles 60-deep chains without recursion errors, config-less agent dirs, and nested app_root layouts."""
+    chain = tmp_path / "chain"
+    chain.mkdir()
+    chain_app = chain / "app.json"
+    chain_app.write_text(
+        json.dumps({"displayName": "chain", "rootAgent": "a00"}),
+        encoding="utf-8",
+    )
+    for i in range(60):
+        _write_ext_agent(
+            chain,
+            f"a{i:02d}",
+            child_agents=[f"a{i + 1:02d}"] if i < 59 else [],
+        )
+    _write_ext_agent(chain, "orphan_leaf")
+    orphans = OrphanedAgent().check(chain_app, "", _ctx(chain))
+    assert len(orphans) == 1
+    assert orphans[0].file == "agents/orphan_leaf/orphan_leaf.json"
+
+    # Config-less agent directories (only instruction.txt)
+    nocfg = tmp_path / "nocfg"
+    nocfg.mkdir()
+    nocfg_app = nocfg / "app.json"
+    nocfg_app.write_text(
+        json.dumps({"displayName": "nocfg", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(nocfg, "root", child_agents=["reached_nocfg"])
+    (nocfg / "agents" / "reached_nocfg").mkdir(parents=True)
+    (nocfg / "agents" / "reached_nocfg" / "instruction.txt").write_text(
+        "<role>R</role>\n", encoding="utf-8"
+    )
+    (nocfg / "agents" / "orphan_nocfg").mkdir(parents=True)
+    (nocfg / "agents" / "orphan_nocfg" / "instruction.txt").write_text(
+        "<role>O</role>\n", encoding="utf-8"
+    )
+    nocfg_res = OrphanedAgent().check(nocfg_app, "", _ctx(nocfg))
+    assert len(nocfg_res) == 1
+    assert nocfg_res[0].file == "agents/orphan_nocfg"
+
+    # Nested cxas_app/<AppName>/app.json layout
+    proj = tmp_path / "nested_proj"
+    nested_app = proj / "cxas_app" / "NestedApp"
+    nested_app.mkdir(parents=True)
+    (nested_app / "app.json").write_text(
+        json.dumps({"displayName": "Nested", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(nested_app, "root")
+    _write_ext_agent(nested_app, "orphan")
+    (nested_app / "toolsets" / "dead_ts").mkdir(parents=True)
+    (nested_app / "toolsets" / "dead_ts" / "dead_ts.json").write_text(
+        json.dumps({"displayName": "dead_ts"}), encoding="utf-8"
+    )
+    (nested_app / "guardrails" / "dead_gr").mkdir(parents=True)
+    (nested_app / "guardrails" / "dead_gr" / "dead_gr.json").write_text(
+        json.dumps({"displayName": "dead_gr"}), encoding="utf-8"
+    )
+    disc = Discovery(proj / "cxas_app", proj / "evals")
+    ctx = build_context(proj, LintConfig(), disc)
+    rep = LintReport()
+    run_rules(
+        build_registry(),
+        LintConfig(),
+        ctx,
+        disc,
+        rep,
+        specific_rules={"S014", "S015", "S016", "S017"},
+    )
+    assert {(r.rule_id, r.file) for r in rep.results} == {
+        ("S015", "cxas_app/NestedApp/agents/orphan/orphan.json"),
+        ("S016", "cxas_app/NestedApp/toolsets/dead_ts/dead_ts.json"),
+        ("S017", "cxas_app/NestedApp/guardrails/dead_gr/dead_gr.json"),
+    }
+
+
+def test_qa_pr1_ext_s016_s017_broken_root_app_and_orphan_guardrail_formats(
+    tmp_path: Path,
+) -> None:
+    """S016/S017 handle broken rootAgent, app+orphan guardrail, dict/relative/flat .yml refs, and malformed entries."""
+    # Broken rootAgent: unattached still warns, attached does NOT falsely claim unreachable
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    broken_app = broken / "app.json"
+    broken_app.write_text(
+        json.dumps({"displayName": "b", "rootAgent": "does_not_exist"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(
+        broken,
+        "a1",
+        toolsets=[{"toolset": "used_ts"}, None, {}, {"toolset": 99}],
+        guardrails=["used_gr", None, 42, {"guardrail": None}],
+    )
+    for name in ("used_ts", "unused_ts"):
+        d = broken / "toolsets" / name
+        d.mkdir(parents=True)
+        (d / f"{name}.json").write_text(
+            json.dumps({"displayName": name}), encoding="utf-8"
+        )
+    for name in ("used_gr", "unused_gr"):
+        d = broken / "guardrails" / name
+        d.mkdir(parents=True)
+        (d / f"{name}.json").write_text(
+            json.dumps({"displayName": name}), encoding="utf-8"
+        )
+    assert [
+        r.file for r in UnusedToolset().check(broken_app, "", _ctx(broken))
+    ] == ["toolsets/unused_ts/unused_ts.json"]
+    assert [
+        r.file for r in UnusedGuardrail().check(broken_app, "", _ctx(broken))
+    ] == ["guardrails/unused_gr/unused_gr.json"]
+
+    # Guardrail attached to BOTH app.json AND orphan_agent + dict/rel/flat .yml refs -> zero S017 warnings
+    fmt = tmp_path / "fmt"
+    fmt.mkdir()
+    fmt_app = fmt / "app.json"
+    fmt_app.write_text(
+        json.dumps(
+            {
+                "displayName": "fmt",
+                "rootAgent": "root",
+                "guardrails": [
+                    "shared_gr",
+                    {"guardrail": "Dict Guard"},
+                    "guardrails/rel_guard",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_ext_agent(fmt, "root", guardrails=["flat_yml_gr"])
+    _write_ext_agent(fmt, "orphan", guardrails=["shared_gr"])
+    for dirname, disp, ext in [
+        ("shared_gr", "shared_gr", ".json"),
+        ("dict_guard", "Dict Guard", ".yaml"),
+    ]:
+        gd = fmt / "guardrails" / dirname
+        gd.mkdir(parents=True)
+        payload = {"displayName": disp}
+        (gd / f"{dirname}{ext}").write_text(
+            json.dumps(payload) if ext == ".json" else yaml.safe_dump(payload),
+            encoding="utf-8",
+        )
+    (fmt / "guardrails" / "rel_guard.json").write_text(
+        json.dumps({"displayName": "Rel Guard"}), encoding="utf-8"
+    )
+    (fmt / "guardrails" / "flat_yml_gr.yml").write_text(
+        yaml.safe_dump({"displayName": "Flat YML"}), encoding="utf-8"
+    )
+    assert UnusedGuardrail().check(fmt_app, "", _ctx(fmt)) == []
+
+
+def test_qa_pr1_ext_t008_s007_reachability_and_sample_support_agent_cli(
+    tmp_path: Path,
+) -> None:
+    """T008 respects reachable vs orphan callbacks/guardrails/non-UTF-8; S007 ignores same-parent dupes and catches .yml/snake_case; Sample_Support_Agent CLI is 0E/0W."""
+    # T008 callbacks (getattr + async_tools + non-UTF-8) + guardrails (reachable child vs orphan)
+    app = tmp_path / "t008_reach"
+    app.mkdir()
+    (app / "app.json").write_text(
+        json.dumps({"displayName": "t", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(app, "root", child_agents=["child"])
+    _write_ext_agent(app, "child", guardrails=["child_gr"])
+    _write_ext_agent(app, "orphan", guardrails=["orphan_gr"])
+
+    root_cb = (
+        app
+        / "agents"
+        / "root"
+        / "before_model_callbacks"
+        / "cb1"
+        / "python_code.py"
+    )
+    root_cb.parent.mkdir(parents=True)
+    root_cb.write_text(
+        "def cb(c, r):\n"
+        "    getattr(tools, 'reach_getattr')()\n"
+        "    async_tools.reach_async()\n",
+        encoding="utf-8",
+    )
+    bad_utf8_cb = (
+        app
+        / "agents"
+        / "root"
+        / "before_model_callbacks"
+        / "cb2"
+        / "python_code.py"
+    )
+    bad_utf8_cb.parent.mkdir(parents=True)
+    bad_utf8_cb.write_bytes(b"\xff\xfe def f(): tools.non_utf8_rescued()\n")
+
+    orphan_cb = (
+        app
+        / "agents"
+        / "orphan"
+        / "before_model_callbacks"
+        / "cb1"
+        / "python_code.py"
+    )
+    orphan_cb.parent.mkdir(parents=True)
+    orphan_cb.write_text(
+        "def cb(c, r):\n"
+        "    getattr(tools, 'orphan_getattr')()\n"
+        "    async_tools.orphan_async()\n",
+        encoding="utf-8",
+    )
+
+    for gr_name, t_name in [
+        ("child_gr", "child_gr_tool"),
+        ("orphan_gr", "orphan_gr_tool"),
+    ]:
+        gd = app / "guardrails" / gr_name
+        gd.mkdir(parents=True)
+        (gd / f"{gr_name}.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "displayName": gr_name,
+                    "action": {
+                        "toolCall": {
+                            "tool": f"projects/p/locations/us/apps/a/tools/{t_name}"
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    for tname in (
+        "reach_getattr",
+        "reach_async",
+        "non_utf8_rescued",
+        "child_gr_tool",
+        "orphan_getattr",
+        "orphan_async",
+        "orphan_gr_tool",
+    ):
+        _write_ext_py_tool(app, tname)
+
+    disc = Discovery(app, app / "evals")
+    ctx = build_context(app, LintConfig(), disc)
+    rep = LintReport()
+    run_rules(
+        build_registry(), LintConfig(), ctx, disc, rep, specific_rules={"T008"}
+    )
+    flagged = {r.file for r in rep.results}
+    assert flagged == {
+        "tools/orphan_getattr/orphan_getattr.json",
+        "tools/orphan_async/orphan_async.json",
+        "tools/orphan_gr_tool/orphan_gr_tool.json",
+    }
+
+    # S007: same parent listing child twice (dirName + displayName) must NOT fire;
+    # snake_case child_agents + CES path + .yml multi-parent MUST fire
+    dup = tmp_path / "s007_dup"
+    dup.mkdir()
+    (dup / "app.json").write_text(
+        json.dumps({"displayName": "dup", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(dup, "root", child_agents=["billing", "Billing Desk"])
+    _write_ext_agent(dup, "billing", display_name="Billing Desk")
+    disc_dup = Discovery(dup, dup / "evals")
+    ctx_dup = build_context(dup, LintConfig(), disc_dup)
+    rep_dup = LintReport()
+    run_rules(
+        build_registry(),
+        LintConfig(),
+        ctx_dup,
+        disc_dup,
+        rep_dup,
+        specific_rules={"S007"},
+    )
+    assert rep_dup.results == []
+
+    mp = tmp_path / "s007_yml"
+    mp.mkdir()
+    (mp / "app.yml").write_text(
+        yaml.safe_dump({"displayName": "mp", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(
+        mp,
+        "root",
+        ext=".yml",
+        child_agents=["pa", "pb"],
+        child_key="child_agents",
+    )
+    _write_ext_agent(
+        mp,
+        "pa",
+        ext=".yml",
+        child_agents=["projects/p/locations/us/apps/a/agents/shared-id"],
+        child_key="child_agents",
+    )
+    _write_ext_agent(mp, "pb", ext=".yml", child_agents=["Shared Display"])
+    shared_yml = _write_ext_agent(
+        mp,
+        "shared_sub",
+        ext=".yml",
+        display_name="Shared Display",
+        cfg_name="projects/p/locations/us/apps/a/agents/shared-id",
+    )
+    disc_mp = Discovery(mp, mp / "evals")
+    ctx_mp = build_context(mp, LintConfig(), disc_mp)
+    s007_res = SubAgentSingleParent().check(
+        shared_yml, shared_yml.read_text(encoding="utf-8"), ctx_mp
+    )
+    assert len(s007_res) == 1
+    assert s007_res[0].rule_id == "S007"
+
+    # Real CLI on Sample_Support_Agent must exit 0 with 0 errors and 0 warnings
+    sample_dir = (
+        _WORKTREE_ROOT
+        / ".agents"
+        / "skills"
+        / "cxas-agent-foundry"
+        / "assets"
+        / "project-template"
+        / "cxas_app"
+    )
+    proc = _run_cli_lint("--app-dir", str(sample_dir))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "0 error(s), 0 warning(s)" in proc.stdout
+
+
+def test_qa_pr1_ext_cli_list_rules_and_cycle_vs_orphan_exit_codes(
+    tmp_path: Path,
+) -> None:
+    """Real CLI --list-rules exposes S014-S017; S014 cycle exits 1, S015 orphan-only exits 0."""
+    registry = build_registry()
+    assert len(registry.all_rules()) >= 114
+    for rule_id in ("S014", "S015", "S016", "S017", "T008"):
+        assert registry.get(rule_id) is not None
+
+    list_proc = _run_cli_lint("--list-rules")
+    assert list_proc.returncode == 0
+    for rule_id in ("S014", "S015", "S016", "S017"):
+        assert rule_id in list_proc.stdout
+
+    # S014 cycle -> exit 1
+    cycle_app = tmp_path / "cycle_app"
+    cycle_app.mkdir()
+    (cycle_app / "app.json").write_text(
+        json.dumps({"name": "a", "displayName": "a", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(
+        cycle_app, "root", child_agents=["sub"], tools=["end_session"]
+    )
+    _write_ext_agent(cycle_app, "sub", child_agents=["root"])
+    c_proc = _run_cli_lint(
+        "--app-dir", str(cycle_app), "--rule", "S014,S015,S016,S017", "--json"
+    )
+    assert c_proc.returncode == 1
+    c_payload = json.loads(c_proc.stdout)
+    assert [item["rule_id"] for item in c_payload] == ["S014"]
+    assert c_payload[0]["severity"] == "error"
+
+    # S015 orphan only -> exit 0
+    orphan_app = tmp_path / "orphan_app"
+    orphan_app.mkdir()
+    (orphan_app / "app.json").write_text(
+        json.dumps({"name": "a", "displayName": "a", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(orphan_app, "root", tools=["end_session"])
+    _write_ext_agent(orphan_app, "orphan")
+    o_proc = _run_cli_lint(
+        "--app-dir", str(orphan_app), "--rule", "S014,S015,S016,S017", "--json"
+    )
+    assert o_proc.returncode == 0
+    o_payload = json.loads(o_proc.stdout)
+    assert [item["rule_id"] for item in o_payload] == ["S015"]
+    assert o_payload[0]["severity"] == "warning"
+
+
+# ── Open Defect Reproductions (Commit 731ca93c: QA-PR1-010..012) ────────
+
+
+def test_qa_pr1_010_yaml_app_full_lint_must_not_emit_false_a001_a004(
+    tmp_path: Path,
+) -> None:
+    """QA-PR1-010 [BLOCKER]: Valid YAML CES app must not fail full cxas lint with false A001/A004 errors."""
+    yaml_app = tmp_path / "yaml_app"
+    yaml_app.mkdir()
+    (yaml_app / "app.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "name": "yaml_app",
+                "displayName": "YAML App",
+                "rootAgent": "root_agent",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_ext_agent(
+        yaml_app,
+        "root_agent",
+        ext=".yaml",
+        child_agents=["guided_sub"],
+        tools=["end_session"],
+    )
+    _write_ext_agent(
+        yaml_app,
+        "guided_sub",
+        ext=".yaml",
+        with_instruction=False,
+        extra={"guidedAgent": {"config": "some_config"}},
+    )
+
+    disc = Discovery(yaml_app, yaml_app / "evals")
+    ctx = build_context(yaml_app, LintConfig(), disc)
+    rep = LintReport()
+    run_rules(build_registry(), LintConfig(), ctx, disc, rep)
+
+    false_errors = [r for r in rep.errors if r.rule_id in {"A001", "A004"}]
+    assert false_errors == [], (
+        f"Valid YAML app emitted false A001/A004 errors: {false_errors}"
+    )
+
+    proc = _run_cli_lint("--app-dir", str(yaml_app))
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_qa_pr1_011_discover_tools_prefers_dir_config_and_skips_symlinks(
+    tmp_path: Path,
+) -> None:
+    """QA-PR1-011 [MEDIUM]: discover_tools() must prefer <dir>.{json,yaml,yml} over sidecar JSON and skip symlinks/hidden dirs (same for discover_callbacks)."""
+    app = tmp_path / "app"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.json").write_text(
+        json.dumps({"displayName": "secret_tool"}), encoding="utf-8"
+    )
+    cb_out = outside / "before_model_callbacks" / "cb1"
+    cb_out.mkdir(parents=True)
+    (cb_out / "python_code.py").write_text("x = 1\n", encoding="utf-8")
+
+    app.mkdir()
+    (app / "app.json").write_text(
+        json.dumps({"displayName": "app", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(app, "root", tools=[])
+
+    # Non-Python JSON tool with alphabetically earlier sidecar schema JSON
+    zeta_dir = app / "tools" / "zeta_tool"
+    zeta_dir.mkdir(parents=True)
+    (zeta_dir / "zeta_tool.json").write_text(
+        json.dumps({"displayName": "Zeta Tool", "openApiTool": {}}),
+        encoding="utf-8",
+    )
+    (zeta_dir / "aaa_schema.json").write_text(
+        json.dumps({"type": "object"}), encoding="utf-8"
+    )
+
+    # Non-Python YAML tool with sidecar JSON schema
+    yaml_dir = app / "tools" / "yaml_tool"
+    yaml_dir.mkdir(parents=True)
+    (yaml_dir / "yaml_tool.yaml").write_text(
+        yaml.safe_dump({"displayName": "YAML Tool", "openApiTool": {}}),
+        encoding="utf-8",
+    )
+    (yaml_dir / "schema.json").write_text(
+        json.dumps({"type": "object"}), encoding="utf-8"
+    )
+
+    # Hidden dir and symlinks under tools/ and agents/
+    hidden_tool = app / "tools" / ".hidden_tool"
+    hidden_tool.mkdir(parents=True)
+    (hidden_tool / ".hidden_tool.json").write_text(
+        json.dumps({"displayName": "hidden"}), encoding="utf-8"
+    )
+    os.symlink(outside, app / "tools" / "sym_tool")
+    os.symlink(outside, app / "agents" / "sym_agent")
+
+    disc = Discovery(app, app / "evals")
+    discovered_tools = disc.discover_tools()
+    assert discovered_tools.get("zeta_tool") == zeta_dir / "zeta_tool.json"
+    assert discovered_tools.get("yaml_tool") == yaml_dir / "yaml_tool.yaml"
+    assert "sym_tool" not in discovered_tools
+    assert ".hidden_tool" not in discovered_tools
+    assert all(agent != "sym_agent" for agent, *_ in disc.discover_callbacks())
+
+    ctx = build_context(app, LintConfig(), disc)
+    rep = LintReport()
+    run_rules(
+        build_registry(), LintConfig(), ctx, disc, rep, specific_rules={"T008"}
+    )
+    assert {r.file for r in rep.results} == {
+        "tools/zeta_tool/zeta_tool.json",
+        "tools/yaml_tool/yaml_tool.yaml",
+    }
+
+
+def test_qa_pr1_012_t008_orphan_tool_via_ces_name_must_not_rescue_dead_helper(
+    tmp_path: Path,
+) -> None:
+    """QA-PR1-012 [LOW]: An orphan-only tool attached via its CES resource name must not rescue another unreferenced helper tool from T008."""
+    (tmp_path / "app.json").write_text(
+        json.dumps({"displayName": "app", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    _write_ext_agent(tmp_path, "root", tools=[])
+    _write_ext_agent(
+        tmp_path,
+        "orphan",
+        tools=["projects/p/locations/us/apps/a/tools/custom-tool-id-99"],
+    )
+    _write_ext_py_tool(
+        tmp_path,
+        "orphan_caller",
+        display_name="Orphan Caller",
+        cfg_name="projects/p/locations/us/apps/a/tools/custom-tool-id-99",
+        py_code=(
+            'def orphan_caller() -> dict:\n    """Doc."""\n'
+            "    return tools.dead_helper()\n"
+        ),
+    )
+    dead_py = _write_ext_py_tool(tmp_path, "dead_helper")
+
+    res = ToolDisplayNameUnreferenced().check(
+        dead_py, dead_py.read_text(encoding="utf-8"), _ctx(tmp_path)
+    )
+    assert len(res) == 1, (
+        "dead_helper was falsely rescued by orphan_caller attached via CES name"
+    )
+    assert res[0].rule_id == "T008"
