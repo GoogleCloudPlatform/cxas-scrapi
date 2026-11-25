@@ -1759,3 +1759,158 @@ def test_tokenized_entry_agent_configless_agent_exported_name_and_post_render_pr
         ).read_text("utf-8")
     )
     assert yaml_tok_cfg["tools"] == ["active_tool"]
+
+
+# Reproduces QA-001: legacy {@startBrand_*} and unknown conditional tags pass through.
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{@startBrand_profile_1}\nLeaked block\n{@endBrand_profile_1}\n",
+        "Prefix {@startBrand_profile_1}Leaked{@endBrand_profile_1}\n",
+        "{@startRegion_EU}\nLeaked unknown kind\n{@endRegion_EU}\n",
+    ],
+)
+def test_unknown_and_legacy_brand_conditional_tags_fail_fast(
+    tmp_path: Path, content: str
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "global_instruction.txt").write_text(content, encoding="utf-8")
+    with pytest.raises(BuildError, match=r"(?i)unknown conditional|brand"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_unknown_cond",
+        )
+
+
+# Reproduces QA-002: symlinked .cxas-build-output marker bypasses unrelated dir guard.
+def test_symlinked_build_marker_cannot_bypass_unrelated_out_dir_guard(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    unrelated = tmp_path / "unrelated_with_symlink_marker"
+    unrelated.mkdir()
+    thesis = unrelated / "thesis.docx"
+    thesis.write_text("important document", encoding="utf-8")
+    (unrelated / ".cxas-build-output").symlink_to(thesis)
+
+    with pytest.raises(BuildError, match=r"(?i)marker|symlink|overwrite"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            unrelated,
+        )
+    assert thesis.read_text("utf-8") == "important document"
+
+
+# Reproduces QA-003: agent <id>.yaml with block conditionals fails in pruning.
+def test_agent_yaml_with_block_conditionals_builds_cleanly(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    cond_dir = core_dir / "agents" / "cond_agent"
+    cond_dir.mkdir()
+    (cond_dir / "cond_agent.yaml").write_text(
+        "{@startChannel_VOICE_TELEPHONY}\n"
+        "displayName: Voice Cond Agent\n"
+        "{@endChannel_VOICE_TELEPHONY}\n"
+        "{@startChannel_DIGITAL_APP}\n"
+        "displayName: Digital Cond Agent\n"
+        "{@endChannel_DIGITAL_APP}\n",
+        encoding="utf-8",
+    )
+    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["channels"]["VOICE_TELEPHONY"]["entry_agent"] = "Voice Cond Agent"
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+
+    out_dir = tmp_path / "out_agent_block_cond"
+    build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "VOICE_TELEPHONY",
+        "prod",
+        out_dir,
+    )
+    app_cfg = json.loads((out_dir / "app.json").read_text("utf-8"))
+    assert app_cfg["rootAgent"] == "Voice Cond Agent"
+    agent_cfg = yaml.safe_load(
+        (out_dir / "agents" / "cond_agent" / "cond_agent.yaml").read_text(
+            "utf-8"
+        )
+    )
+    assert agent_cfg == {"displayName": "Voice Cond Agent"}
+
+
+def test_tokenized_display_name_prunes_disabled_agent_and_tool(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    tok_agent_dir = core_dir / "agents" / "tok_agent"
+    tok_agent_dir.mkdir()
+    (tok_agent_dir / "tok_agent.yaml").write_text(
+        "{@startChannel_DIGITAL_APP}\n"
+        'displayName: "@@profile.display_name@@ DisabledAgent"\n'
+        "{@endChannel_DIGITAL_APP}\n"
+        "{@startChannel_VOICE_TELEPHONY}\n"
+        "displayName: VoiceAgent\n"
+        "{@endChannel_VOICE_TELEPHONY}\n",
+        encoding="utf-8",
+    )
+    tok_tool_dir = core_dir / "tools" / "tok_tool"
+    tok_tool_dir.mkdir()
+    (tok_tool_dir / "tok_tool.yaml").write_text(
+        "{@startChannel_DIGITAL_APP}\n"
+        'displayName: "@@profile.display_name@@ DisabledTool"\n'
+        "{@endChannel_DIGITAL_APP}\n"
+        "{@startChannel_VOICE_TELEPHONY}\n"
+        "displayName: VoiceTool\n"
+        "{@endChannel_VOICE_TELEPHONY}\n",
+        encoding="utf-8",
+    )
+    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["channels"]["DIGITAL_APP"]["disabled_agents"] = [
+        "Profile One DisabledAgent"
+    ]
+    pol["channels"]["DIGITAL_APP"]["disabled_tools"] = [
+        "Profile One DisabledTool"
+    ]
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+
+    out_digital = tmp_path / "out_digital_tok"
+    build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "DIGITAL_APP",
+        "prod",
+        out_digital,
+    )
+    assert not (out_digital / "agents" / "tok_agent").exists()
+    assert not (out_digital / "tools" / "tok_tool").exists()
+
+    out_voice = tmp_path / "out_voice_tok"
+    build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "VOICE_TELEPHONY",
+        "prod",
+        out_voice,
+    )
+    assert yaml.safe_load(
+        (out_voice / "agents" / "tok_agent" / "tok_agent.yaml").read_text(
+            "utf-8"
+        )
+    ) == {"displayName": "VoiceAgent"}
+    assert yaml.safe_load(
+        (out_voice / "tools" / "tok_tool" / "tok_tool.yaml").read_text("utf-8")
+    ) == {"displayName": "VoiceTool"}

@@ -64,13 +64,13 @@ _DANGLING_TOKEN_RE = re.compile(
     r"@@(?:profile|env|routing|build)\.[A-Za-z0-9_.:-]+"
 )
 _COND_START_RE = re.compile(
-    r"^\{@start(Channel|Profile|AgentEnabled|ToolEnabled)_([^}]+)\}$"
+    r"^\{@start(?!Modality_)([A-Za-z][A-Za-z0-9]*)_([^}]+)\}$"
 )
 _COND_END_RE = re.compile(
-    r"^\{@end(Channel|Profile|AgentEnabled|ToolEnabled)_([^}]+)\}$"
+    r"^\{@end(?!Modality_)([A-Za-z][A-Za-z0-9]*)_([^}]+)\}$"
 )
 _COND_TOKEN_RE = re.compile(
-    r"\{@(start|end)(Channel|Profile|AgentEnabled|ToolEnabled)_([^}]+)\}"
+    r"\{@(start|end)(?!Modality_)([A-Za-z][A-Za-z0-9]*)_([^}]+)\}"
 )
 _MODALITY_TAG_RE = re.compile(r"({@startModality_[^}]+}|{@endModality_[^}]+})")
 _PY_STR_PREFIX_RE = re.compile(r"^([rRuUbBfF]*)('''|\"\"\"|'|\")")
@@ -675,27 +675,52 @@ def _read_json_strict(path: Path) -> JsonValue:
         raise BuildError(f"{path}: invalid JSON: {exc}") from exc
 
 
-def _read_yaml_strict(path: Path) -> JsonValue:
+def _read_yaml_with_renderer(path: Path, renderer: _BuildRenderer) -> JsonValue:
     try:
-        return yaml.load(path.read_text("utf-8"), Loader=Yaml12SafeLoader)
-    except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
+        text = path.read_text("utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
         raise BuildError(f"{path}: invalid YAML: {exc}") from exc
+    has_cond = "{@start" in text or "{@end" in text
+    return _parse_yaml_with_conditionals(
+        path, text, renderer, has_tokens=has_cond
+    )
+
+
+def _render_optional_field(
+    data: Mapping[str, JsonValue],
+    key: str,
+    cfg_path: Path,
+    renderer: _BuildRenderer,
+) -> str:
+    raw = data.get(key)
+    if not isinstance(raw, str) or not raw:
+        return ""
+    return _wrap_path_error(
+        cfg_path, functools.partial(renderer.render_string, raw)
+    )
 
 
 def _add_config_identifiers(
-    data: Mapping[str, JsonValue], ids: set[str]
+    data: Mapping[str, JsonValue],
+    cfg_path: Path,
+    renderer: _BuildRenderer,
+    ids: set[str],
 ) -> None:
-    display_name = data.get("displayName")
-    if isinstance(display_name, str) and display_name:
+    if display_name := _render_optional_field(
+        data, "displayName", cfg_path, renderer
+    ):
         ids.add(display_name)
-    resource_name = data.get("name")
-    if isinstance(resource_name, str) and resource_name:
+    if resource_name := _render_optional_field(
+        data, "name", cfg_path, renderer
+    ):
         ids.add(resource_name)
         if "/" in resource_name and (tail := resource_name.rsplit("/", 1)[-1]):
             ids.add(tail)
 
 
-def _read_resource_identifiers(resource_dir: Path) -> tuple[bool, set[str]]:
+def _read_resource_identifiers(
+    resource_dir: Path, renderer: _BuildRenderer
+) -> tuple[bool, set[str]]:
     """Read identifiers from ``<id>.{json,yaml,yml}`` if present."""
     cfg_path = next(
         (
@@ -712,11 +737,11 @@ def _read_resource_identifiers(resource_dir: Path) -> tuple[bool, set[str]]:
     data = (
         _read_json_strict(cfg_path)
         if cfg_path.suffix == ".json"
-        else _read_yaml_strict(cfg_path)
+        else _read_yaml_with_renderer(cfg_path, renderer)
     )
     ids: set[str] = {resource_dir.name}
     if isinstance(data, dict):
-        _add_config_identifiers(data, ids)
+        _add_config_identifiers(data, cfg_path, renderer, ids)
     return True, ids
 
 
@@ -750,7 +775,10 @@ def _validate_output_target(
         require_marker
         and resolved.exists()
         and any(resolved.iterdir())
-        and not (resolved / _BUILD_MARKER_FILE).is_file()
+        and (
+            (marker := resolved / _BUILD_MARKER_FILE).is_symlink()
+            or not marker.is_file()
+        )
     ):
         raise BuildError(
             f"Output directory '{resolved}' is non-empty and was not created "
@@ -858,14 +886,17 @@ def _is_agent_config_file(rel_path: Path) -> bool:
 
 
 def _prune_resource_dir(
-    resource_dir: Path, disabled: set[str], collection: str
+    resource_dir: Path,
+    disabled: set[str],
+    collection: str,
+    renderer: _BuildRenderer,
 ) -> frozenset[str]:
     pruned: set[str] = set(disabled)
     if not resource_dir.exists():
         return frozenset(pruned)
     disabled_set = frozenset(disabled)
     for entry in sorted(p for p in resource_dir.iterdir() if p.is_dir()):
-        _, ids = _read_resource_identifiers(entry)
+        _, ids = _read_resource_identifiers(entry, renderer)
         entry_ids = frozenset(ids | {entry.name})
         matched = any(
             _matches_resource_ref(ident, disabled_set, collection)
@@ -888,15 +919,9 @@ def _collect_surviving_agent_names(
         return frozenset()
     names: set[str] = set()
     for entry in sorted(p for p in agents_dir.iterdir() if p.is_dir()):
-        has_cfg, ids = _read_resource_identifiers(entry)
-        if not has_cfg:
-            continue
-        for ident in ids:
-            rendered = _wrap_path_error(
-                entry, functools.partial(renderer.render_string, ident)
-            )
-            if rendered:
-                names.add(rendered)
+        has_cfg, ids = _read_resource_identifiers(entry, renderer)
+        if has_cfg:
+            names.update(ids)
     return frozenset(names)
 
 
@@ -1314,11 +1339,26 @@ def _build_in_staging(
     _stage_core_dir(
         core_dir, staging_dir, has_env_overrides=bool(env_manifest.overrides)
     )
+    prelim_renderer = _BuildRenderer.from_context(
+        profile,
+        policy,
+        env_manifest,
+        channel,
+        environment,
+        frozenset(channel_caps.disabled_agents),
+        frozenset(channel_caps.disabled_tools),
+    )
     all_disabled_agents = _prune_resource_dir(
-        staging_dir / "agents", set(channel_caps.disabled_agents), "agents"
+        staging_dir / "agents",
+        set(channel_caps.disabled_agents),
+        "agents",
+        prelim_renderer,
     )
     all_disabled_tools = _prune_resource_dir(
-        staging_dir / "tools", set(channel_caps.disabled_tools), "tools"
+        staging_dir / "tools",
+        set(channel_caps.disabled_tools),
+        "tools",
+        prelim_renderer,
     )
     renderer = _BuildRenderer.from_context(
         profile,
