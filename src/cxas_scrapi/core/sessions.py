@@ -571,6 +571,13 @@ class BidiSessionHandler:
             return self.config.get(key, default)
         return getattr(self.config, key, default)
 
+    def _has_input_audio_config(self) -> bool:
+        if isinstance(self.config, dict):
+            return self.config.get("input_audio_config") is not None
+        if isinstance(self.config, types.SessionConfig):
+            return bool(self.config._pb.HasField("input_audio_config"))
+        return bool(getattr(self.config, "input_audio_config", None))
+
     def _get_next_noise_chunk(self, duration_ms: int) -> bytes:
         """Extracts the next chunk of continuous background noise PCM bytes."""
         chunk_bytes_len = int(SAMPLE_RATE * SAMPLE_WIDTH * (duration_ms / 1000))
@@ -1154,7 +1161,11 @@ class BidiSessionHandler:
                 while not self.agent_turn_manager.is_agent_done_talking():
                     if self._is_session_aborted():
                         break
-                    time.sleep(1)
+                    # Keep caller audio flowing so CES records audio replies.
+                    if not self.interactive and self._has_input_audio_config():
+                        self._send_silence(1)
+                    else:
+                        time.sleep(1)
 
                 if self._is_session_aborted():
                     return
