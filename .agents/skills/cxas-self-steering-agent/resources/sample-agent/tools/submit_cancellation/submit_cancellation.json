@@ -3,7 +3,7 @@
   "pythonFunction": {
     "name": "submit_cancellation",
     "pythonCode": "tools/submit_cancellation/python_function/python_code.py",
-    "description": "Cancels an order that hasn't shipped yet.\n\nArgs:\n  order_number (str): The order number to cancel, as a string.\n  reason (str): The customer's reason for canceling, in a few words.\n\nReturns:\n  dict[str, Any]: Whether the order was canceled, and the refund timeline."
+    "description": "Cancels the currently loaded order after ZIP verification and confirmation.\n\nArgs:\n  reason (str): Why the customer is canceling, one of \"changed_mind\",\n    \"ordered_by_mistake\", \"found_better_price\", or \"other\".\n  confirmed (bool): True once the customer explicitly confirms canceling the\n    order.\n\nReturns:\n  dict[str, Any]: Cancellation status, order number, and refund timeline, or\n    an error code when prerequisites are not met."
   },
   "executionType": "SYNCHRONOUS",
   "displayName": "submit_cancellation"

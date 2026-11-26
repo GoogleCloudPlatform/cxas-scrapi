@@ -459,6 +459,289 @@ def test_app_pull_with_invalid_app_dir_name_exits(
     mock_apps_client.export_app.assert_not_called()
 
 
+def test_app_pull_overwrite_removes_deleted_last_toolset_and_stale_root_files(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    """Deleting the last toolset/tool or a root file removes it locally."""
+    target_dir = str(tmp_path / "my-agent")
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/eu/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+
+    # Initial export contains weather_api toolset, helper tool, guardrail,
+    # evaluation, environment.json, and global_instruction.txt.
+    buf1 = io.BytesIO()
+    with zipfile.ZipFile(buf1, "w") as zf:
+        zf.writestr("Scrapi_Test/app.json", '{"displayName": "Scrapi Test"}')
+        zf.writestr("Scrapi_Test/global_instruction.txt", "Be helpful.")
+        zf.writestr(
+            "Scrapi_Test/environment.json",
+            '{"toolsets": {"weather_api": {"openApiToolset": {"url": "https://example.com"}}}}',
+        )
+        zf.writestr(
+            "Scrapi_Test/agents/Root_agent/Root_agent.json",
+            '{"toolsets": [{"toolset": "weather_api"}]}',
+        )
+        zf.writestr(
+            "Scrapi_Test/toolsets/weather_api/weather_api.json",
+            '{"displayName": "weather_api"}',
+        )
+        zf.writestr(
+            "Scrapi_Test/toolsets/weather_api/open_api_toolset/open_api_schema.yaml",
+            "openapi: 3.0.0\n",
+        )
+        zf.writestr(
+            "Scrapi_Test/tools/helper/helper.json",
+            '{"displayName": "helper"}',
+        )
+        zf.writestr(
+            "Scrapi_Test/guardrails/blocklist/blocklist.json",
+            '{"displayName": "blocklist"}',
+        )
+        zf.writestr(
+            "Scrapi_Test/evaluations/smoke_eval/smoke_eval.json",
+            '{"displayName": "smoke_eval"}',
+        )
+
+    lro1 = mock.MagicMock()
+    lro1.result.return_value = mock.MagicMock(app_content=buf1.getvalue())
+    mock_apps_client.export_app.return_value = lro1
+
+    cli_app.app_pull(
+        argparse.Namespace(
+            app="Scrapi Test",
+            target_dir=target_dir,
+            project_id="test-project",
+            location="eu",
+            overwrite=False,
+        )
+    )
+
+    app_dir = tmp_path / "my-agent" / "Scrapi_Test"
+    # Place non-CES user files inside app_dir to ensure --overwrite preserves them
+    (app_dir / "README.md").write_text("# Local notes")
+    (app_dir / "environment.prod.json").write_text("{}")
+    (app_dir / "evals" / "goldens").mkdir(parents=True)
+    (app_dir / "evals" / "goldens" / "smoke.yaml").write_text("tests: []")
+    (app_dir / ".github" / "workflows").mkdir(parents=True)
+    (app_dir / ".github" / "workflows" / "ci.yml").write_text("name: CI")
+
+    # Second export after removing weather_api, helper, blocklist, smoke_eval,
+    # environment.json, and global_instruction.txt in Cloud (omitted completely
+    # from archive).
+    buf2 = io.BytesIO()
+    with zipfile.ZipFile(buf2, "w") as zf:
+        zf.writestr("Scrapi_Test/app.json", '{"displayName": "Scrapi Test"}')
+        zf.writestr(
+            "Scrapi_Test/agents/Root_agent/Root_agent.json",
+            '{"tools": ["end_session"]}',
+        )
+
+    lro2 = mock.MagicMock()
+    lro2.result.return_value = mock.MagicMock(app_content=buf2.getvalue())
+    mock_apps_client.export_app.return_value = lro2
+
+    cli_app.app_pull(
+        argparse.Namespace(
+            app="Scrapi Test",
+            target_dir=target_dir,
+            project_id="test-project",
+            location="eu",
+            overwrite=True,
+        )
+    )
+
+    assert (app_dir / "app.json").exists()
+    assert (app_dir / "agents" / "Root_agent" / "Root_agent.json").exists()
+    assert not (app_dir / "toolsets").exists()
+    assert not (app_dir / "tools").exists()
+    assert not (app_dir / "guardrails").exists()
+    assert not (app_dir / "evaluations").exists()
+    assert not (app_dir / "environment.json").exists()
+    assert not (app_dir / "global_instruction.txt").exists()
+
+    # User-owned files and directories remain untouched
+    assert (app_dir / "README.md").exists()
+    assert (app_dir / "environment.prod.json").exists()
+    assert (app_dir / "evals" / "goldens" / "smoke.yaml").exists()
+    assert (app_dir / ".github" / "workflows" / "ci.yml").exists()
+
+
+def test_app_pull_overwrite_rebuilds_clean_env_json_when_toolset_deleted(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    app_dir = tmp_path / "My_App"
+    (app_dir / "toolsets" / "weather_api").mkdir(parents=True)
+    (app_dir / "toolsets" / "weather_api" / "weather_api.json").write_text("{}")
+    (app_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "displayName": "My App",
+                "variableDeclarations": [
+                    {
+                        "name": "enable_auth",
+                        "schema": {"type": "BOOLEAN", "default": "$env_var"},
+                    }
+                ],
+            }
+        )
+    )
+    (app_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "app": {
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_auth",
+                            "schema": {"type": "BOOLEAN", "default": True},
+                        }
+                    ]
+                },
+                "toolsets": {
+                    "weather_api": {"openApiToolset": {"url": "https://old"}}
+                },
+            }
+        )
+    )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "My_App/app.json",
+            json.dumps(
+                {
+                    "displayName": "My App",
+                    "variableDeclarations": [
+                        {
+                            "name": "enable_auth",
+                            "schema": {"type": "BOOLEAN", "default": False},
+                        }
+                    ],
+                }
+            ),
+        )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    lro = mock.MagicMock()
+    lro.result.return_value = mock.MagicMock(app_content=buf.getvalue())
+    mock_apps_client.export_app.return_value = lro
+
+    cli_app.app_pull(
+        argparse.Namespace(
+            app="My App",
+            target_dir=str(tmp_path),
+            project_id="test-project",
+            location="us",
+            overwrite=True,
+        )
+    )
+
+    assert not (app_dir / "toolsets").exists()
+    pulled_env = json.loads((app_dir / "environment.json").read_text())
+    assert "toolsets" not in pulled_env
+    assert pulled_env["app"]["variableDeclarations"] == [
+        {"name": "enable_auth", "schema": {"type": "BOOLEAN", "default": False}}
+    ]
+
+
+def test_app_pull_overwrite_handles_windows_backslash_relpaths(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    app_dir = tmp_path / "Win_App"
+    (app_dir / "tools" / "keep_tool").mkdir(parents=True)
+    (app_dir / "tools" / "keep_tool" / "keep_tool.json").write_text("{}")
+    (app_dir / "tools" / "stale_tool").mkdir(parents=True)
+    (app_dir / "tools" / "stale_tool" / "stale_tool.json").write_text("{}")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Win_App/app.json", '{"displayName": "Win App"}')
+        zf.writestr("Win_App/tools/keep_tool/keep_tool.json", "{}")
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    lro = mock.MagicMock()
+    lro.result.return_value = mock.MagicMock(app_content=buf.getvalue())
+    mock_apps_client.export_app.return_value = lro
+
+    real_relpath = os.path.relpath
+
+    def _win_relpath(path: str, start: str = os.curdir) -> str:
+        return real_relpath(path, start).replace("/", "\\")
+
+    with mock.patch(
+        "cxas_scrapi.cli.app.os.path.relpath", side_effect=_win_relpath
+    ):
+        cli_app.app_pull(
+            argparse.Namespace(
+                app="Win App",
+                target_dir=str(tmp_path),
+                project_id="test-project",
+                location="us",
+                overwrite=True,
+            )
+        )
+
+    assert (app_dir / "tools" / "keep_tool" / "keep_tool.json").exists()
+    assert not (app_dir / "tools" / "stale_tool").exists()
+
+
+def test_app_pull_overwrite_flat_archive_does_not_prune_target_dir(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    target_dir = tmp_path / "flat_app"
+    (target_dir / "toolsets" / "old_ts").mkdir(parents=True)
+    (target_dir / "toolsets" / "old_ts" / "old_ts.json").write_text("{}")
+    (target_dir / "app.json").write_text("{}")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("app.yaml", "displayName: Flat App\n")
+        zf.writestr("agents/root/root.json", "{}")
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    lro = mock.MagicMock()
+    lro.result.return_value = mock.MagicMock(app_content=buf.getvalue())
+    mock_apps_client.export_app.return_value = lro
+
+    cli_app.app_pull(
+        argparse.Namespace(
+            app="Flat App",
+            target_dir=str(target_dir),
+            project_id="test-project",
+            location="us",
+            overwrite=True,
+        )
+    )
+
+    assert (target_dir / "app.yaml").exists()
+    assert (target_dir / "agents" / "root" / "root.json").exists()
+    # Flat archives extract directly into --target-dir (which may be "."),
+    # so --overwrite must not prune pre-existing content there.
+    assert (target_dir / "app.json").exists()
+    assert (target_dir / "toolsets" / "old_ts" / "old_ts.json").exists()
+
+
 def test_app_push(mock_apps_client: typing.Any, tmp_path: typing.Any) -> None:
     args = argparse.Namespace(
         app_dir=str(tmp_path),
@@ -2012,3 +2295,250 @@ def test_app_push_lint_ignores_root_app_and_multi_app_container_configs(
     out = capsys.readouterr().out
     assert "I008" in out
     assert "Lint FAILED" in out
+
+
+def test_app_push_resolves_tool_and_toolset_env_vars_without_mutating_source(
+    mock_apps_client: typing.Any,
+    tmp_path: typing.Any,
+    capsys: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    app_dir = tmp_path / "agent_src"
+    ts_dir = app_dir / "toolsets" / "find_customer"
+    ts_dir.mkdir(parents=True)
+    mcp_dir = app_dir / "toolsets" / "orders_mcp"
+    mcp_dir.mkdir(parents=True)
+    oa_dir = app_dir / "tools" / "orders_api"
+    (oa_dir / "open_api_tool").mkdir(parents=True)
+    (app_dir / "app.json").write_text(
+        json.dumps({"name": "test-app", "displayName": "Support Agent"})
+    )
+    source_ts_json = ts_dir / "find_customer.json"
+    source_ts_json.write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": "$env_var",
+                    "connectorActions": [{"connectionActionId": "GetAccount"}],
+                },
+            }
+        )
+    )
+    source_mcp_json = mcp_dir / "orders_mcp.json"
+    source_mcp_json.write_text(
+        json.dumps(
+            {
+                "displayName": "Orders MCP",
+                "mcpToolset": {
+                    "serverAddress": "$env_var",
+                    "apiAuthentication": {
+                        "oauthConfig": {"clientId": "$env_var"}
+                    },
+                },
+            }
+        )
+    )
+    source_oa_schema = oa_dir / "open_api_tool" / "open_api_schema.yaml"
+    source_oa_schema.write_text(
+        "openapi: 3.0.0\nservers:\n  - url: $env_var\npaths: {}\n"
+    )
+    (oa_dir / "orders_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Orders API",
+                "openApiTool": {
+                    "openApiSchema": (
+                        "tools/orders_api/open_api_tool/open_api_schema.yaml"
+                    ),
+                },
+            }
+        )
+    )
+
+    prod_conn = (
+        "projects/prod-proj/locations/us-central1/connections/cymbal-prod"
+    )
+    prod_mcp = "https://mcp-prod.example.com/mcp/"
+    prod_oa = "https://api-prod.example.com"
+    prod_env_file = tmp_path / "env.prod.json"
+    prod_env_file.write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {"connection": prod_conn}
+                    },
+                    "Orders MCP": {
+                        "mcpToolset": {
+                            "serverAddress": prod_mcp,
+                            "apiAuthentication": {
+                                "oauthConfig": {"clientId": "prod-client-id"}
+                            },
+                        }
+                    },
+                },
+                "tools": {
+                    "orders_api": {"openApiTool": {"url": prod_oa}},
+                },
+            }
+        )
+    )
+
+    mock_apps_client.import_as_new_app.return_value = _mock_import_lro(
+        "projects/test-project/locations/us/apps/prod-id", []
+    )
+
+    args = argparse.Namespace(
+        app_dir=str(app_dir),
+        to=None,
+        env_file=str(prod_env_file),
+        display_name="Support Agent Prod",
+        project_id="test-project",
+        location="us",
+    )
+    cli_app.app_push(args)
+
+    zip_bytes = mock_apps_client.import_as_new_app.call_args[1]["app_content"]
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        pushed_ts = json.loads(
+            zf.read("agent/toolsets/find_customer/find_customer.json").decode(
+                "utf-8"
+            )
+        )
+        pushed_mcp = json.loads(
+            zf.read("agent/toolsets/orders_mcp/orders_mcp.json").decode("utf-8")
+        )
+        pushed_oa_schema = zf.read(
+            "agent/tools/orders_api/open_api_tool/open_api_schema.yaml"
+        ).decode("utf-8")
+
+    assert pushed_ts["connectorToolset"]["connection"] == prod_conn
+    assert pushed_mcp["mcpToolset"]["serverAddress"] == prod_mcp
+    assert (
+        pushed_mcp["mcpToolset"]["apiAuthentication"]["oauthConfig"]["clientId"]
+        == "prod-client-id"
+    )
+    assert prod_oa in pushed_oa_schema
+
+    # Local source files remain untouched
+    assert (
+        json.loads(source_ts_json.read_text())["connectorToolset"]["connection"]
+        == "$env_var"
+    )
+    assert (
+        json.loads(source_mcp_json.read_text())["mcpToolset"]["serverAddress"]
+        == "$env_var"
+    )
+    assert "$env_var" in source_oa_schema.read_text()
+
+    captured = capsys.readouterr()
+    assert "Resolved 4 '$env_var' tool/toolset field(s)" in captured.out
+
+
+def test_app_pull_preserves_tool_and_toolset_env_vars_and_syncs_env_json(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    local_app_dir = tmp_path / "My_App"
+    local_ts_dir = local_app_dir / "toolsets" / "find_customer"
+    local_ts_dir.mkdir(parents=True)
+    local_mcp_dir = local_app_dir / "toolsets" / "orders_mcp"
+    local_mcp_dir.mkdir(parents=True)
+    (local_app_dir / "app.json").write_text(
+        json.dumps({"displayName": "My App"})
+    )
+    (local_ts_dir / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": "$env_var",
+                    "connectorActions": [{"connectionActionId": "GetAccount"}],
+                },
+            }
+        )
+    )
+    (local_mcp_dir / "orders_mcp.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Orders MCP",
+                "mcpToolset": {"serverAddress": "$env_var"},
+            }
+        )
+    )
+
+    exported_conn = (
+        "projects/uat-project/locations/us-central1/connections/cymbal-uat"
+    )
+    exported_mcp = "https://mcp-uat.example.com/mcp/"
+    export_buf = io.BytesIO()
+    with zipfile.ZipFile(export_buf, "w") as zf:
+        zf.writestr(
+            "My_App/app.json",
+            json.dumps({"displayName": "My App"}),
+        )
+        zf.writestr(
+            "My_App/toolsets/find_customer/find_customer.json",
+            json.dumps(
+                {
+                    "displayName": "Find Customer",
+                    "connectorToolset": {
+                        "connection": exported_conn,
+                        "connectorActions": [
+                            {"connectionActionId": "GetAccount"}
+                        ],
+                    },
+                }
+            ),
+        )
+        zf.writestr(
+            "My_App/toolsets/orders_mcp/orders_mcp.json",
+            json.dumps(
+                {
+                    "displayName": "Orders MCP",
+                    "mcpToolset": {"serverAddress": exported_mcp},
+                }
+            ),
+        )
+        zf.writestr("My_App/environment.json", json.dumps({}))
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/test-project/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    mock_lro = mock.MagicMock()
+    mock_lro.result.return_value = mock.MagicMock(
+        app_content=export_buf.getvalue()
+    )
+    mock_apps_client.export_app.return_value = mock_lro
+
+    args = argparse.Namespace(
+        app="My App",
+        target_dir=str(tmp_path),
+        project_id="test-project",
+        location="us",
+        overwrite=True,
+    )
+    cli_app.app_pull(args)
+
+    pulled_ts = json.loads((local_ts_dir / "find_customer.json").read_text())
+    assert pulled_ts["connectorToolset"]["connection"] == "$env_var"
+    pulled_mcp = json.loads((local_mcp_dir / "orders_mcp.json").read_text())
+    assert pulled_mcp["mcpToolset"]["serverAddress"] == "$env_var"
+
+    pulled_env = json.loads((local_app_dir / "environment.json").read_text())
+    assert (
+        pulled_env["toolsets"]["Find Customer"]["connectorToolset"][
+            "connection"
+        ]
+        == exported_conn
+    )
+    assert (
+        pulled_env["toolsets"]["Orders MCP"]["mcpToolset"]["serverAddress"]
+        == exported_mcp
+    )

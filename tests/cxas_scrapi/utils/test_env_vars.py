@@ -24,10 +24,13 @@ import yaml
 from cxas_scrapi.utils.env_vars import (
     ENV_VAR_PLACEHOLDER,
     collect_env_var_declaration_names,
+    collect_tool_and_toolset_env_var_placeholders,
     extract_env_variable_defaults,
     parse_env_variable_declarations,
     preserve_env_var_placeholders_on_pull,
+    preserve_tool_and_toolset_env_vars_on_pull,
     resolve_app_env_variables_in_dir,
+    resolve_tool_and_toolset_env_vars_in_dir,
     validate_value_for_schema,
 )
 
@@ -331,3 +334,537 @@ def test_preserve_env_var_placeholders_on_pull(tmp_path: Path) -> None:
             "schema": {"type": "BOOLEAN", "default": False},
         }
     ]
+
+
+def test_resolve_tool_and_toolset_env_vars_all_types(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "app"
+
+    # 1. ConnectorToolset (JSON, keyed by dir stem)
+    ts_conn = app_dir / "toolsets" / "find_customer"
+    ts_conn.mkdir(parents=True)
+    (ts_conn / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": ENV_VAR_PLACEHOLDER,
+                    "connectorActions": [
+                        {
+                            "entityOperation": {
+                                "entityId": "Customers",
+                                "operation": "LIST",
+                            }
+                        }
+                    ],
+                },
+            }
+        )
+    )
+
+    # 2. McpToolset (YAML snake_case, keyed by displayName)
+    ts_mcp = app_dir / "toolsets" / "orders_mcp"
+    ts_mcp.mkdir(parents=True)
+    (ts_mcp / "orders_mcp.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "display_name": "Orders MCP",
+                "mcp_toolset": {
+                    "server_address": ENV_VAR_PLACEHOLDER,
+                    "api_authentication": {
+                        "oauth_config": {
+                            "oauth_grant_type": "CLIENT_CREDENTIAL",
+                            "client_id": ENV_VAR_PLACEHOLDER,
+                            "client_secret_version": ENV_VAR_PLACEHOLDER,
+                            "token_endpoint": ENV_VAR_PLACEHOLDER,
+                        }
+                    },
+                },
+            }
+        )
+    )
+
+    # 3. OpenApiTool (external schema $env_var + oauth clientId + bool skipped)
+    t_oa = app_dir / "tools" / "orders_api"
+    (t_oa / "open_api_tool").mkdir(parents=True)
+    (t_oa / "open_api_tool" / "open_api_schema.yaml").write_text(
+        "openapi: 3.0.0\nservers:\n  - url: $env_var\npaths: {}\n"
+    )
+    (t_oa / "orders_api.json").write_text(
+        json.dumps(
+            {
+                "openApiTool": {
+                    "name": "Orders API",
+                    "openApiSchema": (
+                        "tools/orders_api/open_api_tool/open_api_schema.yaml"
+                    ),
+                    "ignoreUnknownFields": ENV_VAR_PLACEHOLDER,
+                    "apiAuthentication": {
+                        "oauthConfig": {
+                            "oauthGrantType": "CLIENT_CREDENTIAL",
+                            "clientId": ENV_VAR_PLACEHOLDER,
+                            "clientSecretVersion": ENV_VAR_PLACEHOLDER,
+                            "tokenEndpoint": ENV_VAR_PLACEHOLDER,
+                        }
+                    },
+                }
+            }
+        )
+    )
+
+    # 4. DataStoreTool (engine + repeated boostSpecs.dataStores)
+    t_ds = app_dir / "tools" / "kb_search"
+    t_ds.mkdir(parents=True)
+    (t_ds / "kb_search.json").write_text(
+        json.dumps(
+            {
+                "displayName": "KB Search",
+                "dataStoreTool": {
+                    "name": "kb_search",
+                    "engineSource": {"engine": ENV_VAR_PLACEHOLDER},
+                    "boostSpecs": [{"dataStores": [ENV_VAR_PLACEHOLDER]}],
+                },
+            }
+        )
+    )
+
+    # 5. RemoteAgentTool (nested supportedInterfaces[].url)
+    t_ra = app_dir / "tools" / "billing_remote"
+    t_ra.mkdir(parents=True)
+    (t_ra / "billing_remote.json").write_text(
+        json.dumps(
+            {
+                "remoteAgentTool": {
+                    "name": "billing_remote",
+                    "description": "Billing A2A agent",
+                    "agentCard": {
+                        "name": "Billing",
+                        "description": "Billing",
+                        "version": "1.0",
+                        "supportedInterfaces": [
+                            {
+                                "url": ENV_VAR_PLACEHOLDER,
+                                "protocolBinding": "JSONRPC",
+                                "protocolVersion": "1.0",
+                            }
+                        ],
+                        "skills": [],
+                    },
+                }
+            }
+        )
+    )
+
+    # 6. ApplicationIntegrationTool + GoogleSearchTool + FileSearchTool
+    t_ai = app_dir / "tools" / "run_workflow"
+    t_ai.mkdir(parents=True)
+    (t_ai / "run_workflow.json").write_text(
+        json.dumps(
+            {
+                "applicationIntegrationTool": {
+                    "name": "run_workflow",
+                    "integrationVersion": ENV_VAR_PLACEHOLDER,
+                    "triggerId": ENV_VAR_PLACEHOLDER,
+                }
+            }
+        )
+    )
+
+    t_gs = app_dir / "tools" / "web_search"
+    t_gs.mkdir(parents=True)
+    (t_gs / "web_search.json").write_text(
+        json.dumps(
+            {
+                "googleSearchTool": {
+                    "name": "web_search",
+                    "contextUrls": [ENV_VAR_PLACEHOLDER],
+                    "preferredDomains": [ENV_VAR_PLACEHOLDER],
+                }
+            }
+        )
+    )
+
+    t_fs = app_dir / "tools" / "docs_rag"
+    t_fs.mkdir(parents=True)
+    (t_fs / "docs_rag.json").write_text(
+        json.dumps(
+            {
+                "fileSearchTool": {
+                    "name": "docs_rag",
+                    "fileCorpus": ENV_VAR_PLACEHOLDER,
+                }
+            }
+        )
+    )
+
+    conn_val = "projects/proj-uat/locations/us-central1/connections/cymbal-uat"
+    mcp_url = "https://mcp-uat.example.com/mcp/"
+    secret_ver = "projects/proj-uat/secrets/oauth-client/versions/1"
+    token_url = "https://auth-uat.example.com/oauth/token"
+    oa_url = "https://api-uat.example.com"
+    engine_val = (
+        "projects/proj-uat/locations/global/collections/default_collection/"
+        "engines/kb-uat"
+    )
+    ds_vals = [
+        "projects/proj-uat/locations/global/collections/default_collection/"
+        "dataStores/ds-1",
+        "projects/proj-uat/locations/global/collections/default_collection/"
+        "dataStores/ds-2",
+    ]
+    a2a_url = "https://billing-uat.example.com/a2a/v1"
+    integ_ver = (
+        "projects/proj-uat/locations/us-central1/integrations/orders/"
+        "versions/v2"
+    )
+    rag_corpus = "projects/proj-uat/locations/us-central1/ragCorpora/corpus-1"
+
+    (app_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {"connection": conn_val}
+                    },
+                    "Orders MCP": {
+                        "mcpToolset": {
+                            "serverAddress": mcp_url,
+                            "apiAuthentication": {
+                                "oauthConfig": {
+                                    "clientId": "mcp-uat-client",
+                                    "clientSecretVersion": secret_ver,
+                                    "tokenEndpoint": token_url,
+                                }
+                            },
+                        }
+                    },
+                },
+                "tools": {
+                    "orders_api": {
+                        "openApiTool": {
+                            "url": oa_url,
+                            "apiAuthentication": {
+                                "oauthConfig": {
+                                    "clientId": "oa-uat-client",
+                                    "clientSecretVersion": secret_ver,
+                                    "tokenEndpoint": token_url,
+                                }
+                            },
+                        }
+                    },
+                    "KB Search": {
+                        "dataStoreTool": {
+                            "engineSource": {"engine": engine_val},
+                            "boostSpecs": [{"dataStores": ds_vals}],
+                        }
+                    },
+                    "billing_remote": {
+                        "remoteAgentTool": {
+                            "agentCard": {
+                                "supportedInterfaces": [{"url": a2a_url}]
+                            }
+                        }
+                    },
+                    "run_workflow": {
+                        "applicationIntegrationTool": {
+                            "integrationVersion": integ_ver,
+                            "triggerId": "api_trigger/uat_trigger",
+                        }
+                    },
+                    "web_search": {
+                        "googleSearchTool": {
+                            "contextUrls": ["https://docs-uat.example.com/faq"],
+                            "preferredDomains": ["docs-uat.example.com"],
+                        }
+                    },
+                    "docs_rag": {"fileSearchTool": {"fileCorpus": rag_corpus}},
+                },
+            }
+        )
+    )
+
+    placeholders = collect_tool_and_toolset_env_var_placeholders(app_dir)
+    # Proto bool field ignoreUnknownFields must be skipped
+    assert not any(
+        p.field_path == ("openApiTool", "ignoreUnknownFields")
+        for p in placeholders
+    )
+
+    resolved = resolve_tool_and_toolset_env_vars_in_dir(app_dir)
+    assert len(resolved) == 17
+
+    assert (
+        json.loads((ts_conn / "find_customer.json").read_text())[
+            "connectorToolset"
+        ]["connection"]
+        == conn_val
+    )
+    mcp_after = yaml.safe_load((ts_mcp / "orders_mcp.yaml").read_text())
+    assert mcp_after["mcp_toolset"]["server_address"] == mcp_url
+    assert (
+        mcp_after["mcp_toolset"]["api_authentication"]["oauth_config"][
+            "client_id"
+        ]
+        == "mcp-uat-client"
+    )
+    oa_schema_after = (
+        t_oa / "open_api_tool" / "open_api_schema.yaml"
+    ).read_text()
+    assert oa_url in oa_schema_after
+    assert ENV_VAR_PLACEHOLDER not in oa_schema_after
+    oa_after = json.loads((t_oa / "orders_api.json").read_text())
+    assert (
+        oa_after["openApiTool"]["apiAuthentication"]["oauthConfig"]["clientId"]
+        == "oa-uat-client"
+    )
+    # Boolean placeholder left for resolve_env_booleans_in_dir
+    assert oa_after["openApiTool"]["ignoreUnknownFields"] == ENV_VAR_PLACEHOLDER
+
+    ds_after = json.loads((t_ds / "kb_search.json").read_text())
+    assert ds_after["dataStoreTool"]["engineSource"]["engine"] == engine_val
+    assert ds_after["dataStoreTool"]["boostSpecs"][0]["dataStores"] == ds_vals
+
+    ra_after = json.loads((t_ra / "billing_remote.json").read_text())
+    assert (
+        ra_after["remoteAgentTool"]["agentCard"]["supportedInterfaces"][0][
+            "url"
+        ]
+        == a2a_url
+    )
+
+    ai_after = json.loads((t_ai / "run_workflow.json").read_text())
+    assert (
+        ai_after["applicationIntegrationTool"]["integrationVersion"]
+        == integ_ver
+    )
+    assert (
+        ai_after["applicationIntegrationTool"]["triggerId"]
+        == "api_trigger/uat_trigger"
+    )
+
+    gs_after = json.loads((t_gs / "web_search.json").read_text())
+    assert gs_after["googleSearchTool"]["contextUrls"] == [
+        "https://docs-uat.example.com/faq"
+    ]
+    assert gs_after["googleSearchTool"]["preferredDomains"] == [
+        "docs-uat.example.com"
+    ]
+
+    fs_after = json.loads((t_fs / "docs_rag.json").read_text())
+    assert fs_after["fileSearchTool"]["fileCorpus"] == rag_corpus
+
+
+def test_resolve_tool_and_toolset_env_vars_rejects_missing_or_invalid(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "app"
+    ts_dir = app_dir / "toolsets" / "find_customer"
+    ts_dir.mkdir(parents=True)
+    (ts_dir / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": ENV_VAR_PLACEHOLDER,
+                    "connectorActions": [{"connectionActionId": "Lookup"}],
+                },
+            }
+        )
+    )
+    mcp_dir = app_dir / "toolsets" / "orders_mcp"
+    mcp_dir.mkdir(parents=True)
+    (mcp_dir / "orders_mcp.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Orders MCP",
+                "mcpToolset": {"serverAddress": ENV_VAR_PLACEHOLDER},
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match=r"environment\.json was not found"):
+        resolve_tool_and_toolset_env_vars_in_dir(app_dir)
+
+    (app_dir / "environment.json").write_text(json.dumps({"toolsets": {}}))
+    with pytest.raises(ValueError, match=r"missing from environment\.json"):
+        resolve_tool_and_toolset_env_vars_in_dir(app_dir)
+
+    (app_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {"connection": "not-a-full-path"}
+                    },
+                    "orders_mcp": {
+                        "mcpToolset": {"serverAddress": "not-a-url"}
+                    },
+                }
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="has invalid value"):
+        resolve_tool_and_toolset_env_vars_in_dir(app_dir)
+
+
+def test_preserve_tool_and_toolset_env_vars_on_pull(tmp_path: Path) -> None:
+    app_dir = tmp_path / "app"
+    ts_conn = app_dir / "toolsets" / "find_customer"
+    ts_conn.mkdir(parents=True)
+    ts_mcp = app_dir / "toolsets" / "orders_mcp"
+    ts_mcp.mkdir(parents=True)
+    t_ra = app_dir / "tools" / "billing_remote"
+    t_ra.mkdir(parents=True)
+
+    # Pre-pull local state with $env_var placeholders
+    (ts_conn / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": ENV_VAR_PLACEHOLDER,
+                    "connectorActions": [{"connectionActionId": "Lookup"}],
+                },
+            }
+        )
+    )
+    (ts_mcp / "orders_mcp.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Orders MCP",
+                "mcpToolset": {
+                    "serverAddress": ENV_VAR_PLACEHOLDER,
+                    "apiAuthentication": {
+                        "oauthConfig": {"clientId": ENV_VAR_PLACEHOLDER}
+                    },
+                },
+            }
+        )
+    )
+    (t_ra / "billing_remote.json").write_text(
+        json.dumps(
+            {
+                "displayName": "billing_remote",
+                "remoteAgentTool": {
+                    "name": "billing_remote",
+                    "agentCard": {
+                        "supportedInterfaces": [{"url": ENV_VAR_PLACEHOLDER}]
+                    },
+                },
+            }
+        )
+    )
+    prev_placeholders = collect_tool_and_toolset_env_var_placeholders(app_dir)
+    prev_env_data = {
+        "toolsets": {
+            "find_customer": {
+                "connectorToolset": {
+                    "connection": (
+                        "projects/old/locations/us/connections/old-conn"
+                    )
+                }
+            }
+        }
+    }
+
+    # Simulate CES export overwriting manifests with concrete values
+    exported_conn = (
+        "projects/proj-dev/locations/us-central1/connections/cymbal-dev"
+    )
+    exported_mcp = "https://mcp-dev.example.com/mcp/"
+    exported_client_id = "mcp-dev-client"
+    exported_a2a = "https://billing-dev.example.com/a2a/v1"
+
+    (ts_conn / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": exported_conn,
+                    "connectorActions": [{"connectionActionId": "Lookup"}],
+                },
+            }
+        )
+    )
+    (ts_mcp / "orders_mcp.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Orders MCP",
+                "mcpToolset": {
+                    "serverAddress": exported_mcp,
+                    "apiAuthentication": {
+                        "oauthConfig": {"clientId": exported_client_id}
+                    },
+                },
+            }
+        )
+    )
+    (t_ra / "billing_remote.json").write_text(
+        json.dumps(
+            {
+                "displayName": "billing_remote",
+                "remoteAgentTool": {
+                    "name": "billing_remote",
+                    "agentCard": {
+                        "supportedInterfaces": [{"url": exported_a2a}]
+                    },
+                },
+            }
+        )
+    )
+    (app_dir / "environment.json").write_text(
+        json.dumps({"tools": {"auth_api": {"url": "https://dev.example.com"}}})
+    )
+
+    preserved = preserve_tool_and_toolset_env_vars_on_pull(
+        app_dir,
+        prev_placeholders,
+        previous_env_data=prev_env_data,
+    )
+    assert len(preserved) == 4
+
+    assert (
+        json.loads((ts_conn / "find_customer.json").read_text())[
+            "connectorToolset"
+        ]["connection"]
+        == ENV_VAR_PLACEHOLDER
+    )
+    mcp_pulled = json.loads((ts_mcp / "orders_mcp.json").read_text())
+    assert mcp_pulled["mcpToolset"]["serverAddress"] == ENV_VAR_PLACEHOLDER
+    assert (
+        mcp_pulled["mcpToolset"]["apiAuthentication"]["oauthConfig"]["clientId"]
+        == ENV_VAR_PLACEHOLDER
+    )
+    ra_pulled = json.loads((t_ra / "billing_remote.json").read_text())
+    assert (
+        ra_pulled["remoteAgentTool"]["agentCard"]["supportedInterfaces"][0][
+            "url"
+        ]
+        == ENV_VAR_PLACEHOLDER
+    )
+
+    pulled_env = json.loads((app_dir / "environment.json").read_text())
+    assert pulled_env["tools"]["auth_api"]["url"] == "https://dev.example.com"
+    assert (
+        pulled_env["toolsets"]["find_customer"]["connectorToolset"][
+            "connection"
+        ]
+        == exported_conn
+    )
+    assert (
+        pulled_env["toolsets"]["Orders MCP"]["mcpToolset"]["serverAddress"]
+        == exported_mcp
+    )
+    assert (
+        pulled_env["toolsets"]["Orders MCP"]["mcpToolset"]["apiAuthentication"][
+            "oauthConfig"
+        ]["clientId"]
+        == exported_client_id
+    )
+    assert (
+        pulled_env["tools"]["billing_remote"]["remoteAgentTool"]["agentCard"][
+            "supportedInterfaces"
+        ][0]["url"]
+        == exported_a2a
+    )

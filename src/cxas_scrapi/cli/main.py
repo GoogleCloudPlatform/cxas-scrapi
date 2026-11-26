@@ -28,6 +28,13 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from cxas_scrapi.cli.arc_cli import register as register_arc_subparser
+from cxas_scrapi.cli.hot_patch_cli import (
+    attach_hot_patch_args,
+)
+from cxas_scrapi.cli.hot_patch_cli import (
+    register as register_hot_patch_subparsers,
+)
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
 from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
@@ -745,6 +752,17 @@ def run_eval(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _bq_dataset(value: str) -> str:
+    """argparse type for a BigQuery dataset given as project.dataset."""
+    from cxas_scrapi.utils.eval_bigquery import parse_dataset
+
+    try:
+        parse_dataset(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+    return value
+
+
 def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     """Handles the 'evals report' command."""
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
@@ -856,6 +874,9 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         extra_report_kwargs["exclude_files"] = exclude_files_list
     if sim_user_voices_list:
         extra_report_kwargs["sim_user_voices"] = sim_user_voices_list
+    sim_user_tts_model = getattr(args, "sim_user_tts_model", None)
+    if sim_user_tts_model is not None:
+        extra_report_kwargs["sim_user_tts_model"] = sim_user_tts_model.strip()
     if getattr(args, "junit_xml", None):
         extra_report_kwargs["junit_xml"] = args.junit_xml
     if (
@@ -871,6 +892,26 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
         extra_report_kwargs["enriched_report"] = True
     if getattr(args, "recordings_bucket", None):
         extra_report_kwargs["recordings_bucket"] = args.recordings_bucket
+    bq_create_dataset = getattr(args, "bq_create_dataset", False)
+    bq_location = getattr(args, "bq_location", None)
+    if getattr(args, "bq_dataset", None):
+        if bq_create_dataset and not bq_location:
+            # Checked before the evals run, not after.
+            print(
+                "Error: --bq-create-dataset requires --bq-location: the "
+                "dataset location can't be changed after creation."
+            )
+            sys.exit(1)
+        extra_report_kwargs["bq_dataset"] = args.bq_dataset
+        if bq_create_dataset:
+            extra_report_kwargs["bq_create_dataset"] = True
+        if bq_location:
+            extra_report_kwargs["bq_location"] = bq_location
+    elif bq_create_dataset or bq_location:
+        print(
+            "Warning: --bq-create-dataset and --bq-location are ignored "
+            "without --bq-dataset."
+        )
     if any(
         k in extra_report_kwargs
         for k in (
@@ -2309,6 +2350,17 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     parser_report.add_argument(
+        "--sim-user-tts-model",
+        default=None,
+        help=(
+            "Optional: TTS model for simulated callers (e.g. "
+            'gemini-3.8-flash-lite-tts). Pass an empty string ("") for plain '
+            "Cloud TTS voices such as en-US-Standard-A, set with "
+            "--sim-user-voices or a test case's voice_config. Defaults to "
+            "the built-in model."
+        ),
+    )
+    parser_report.add_argument(
         "--junit-xml",
         default=None,
         help="Optional path to write a JUnit XML report with per-scenario <testcase> results.",
@@ -2339,6 +2391,30 @@ def get_parser() -> argparse.ArgumentParser:
         "--recordings-bucket",
         default=None,
         help="Optional GCS bucket/URI override for CES call audio recordings used by --enriched-report.",
+    )
+    parser_report.add_argument(
+        "--bq-dataset",
+        type=_bq_dataset,
+        default=None,
+        help=(
+            "Optional BigQuery dataset (project.dataset) to export results "
+            "to (eval_runs / eval_results tables, created if missing). "
+            "An export failure never changes the gate result."
+        ),
+    )
+    parser_report.add_argument(
+        "--bq-create-dataset",
+        action="store_true",
+        default=False,
+        help="Create --bq-dataset if it doesn't exist (needs --bq-location).",
+    )
+    parser_report.add_argument(
+        "--bq-location",
+        default=None,
+        help=(
+            "BigQuery location (e.g. EU) used with --bq-create-dataset, or "
+            "checked against the existing dataset."
+        ),
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
 
@@ -2801,6 +2877,7 @@ def get_parser() -> argparse.ArgumentParser:
             "provided) before uploading, and abort on lint errors."
         ),
     )
+    attach_hot_patch_args(parser_push)
     parser_push.set_defaults(func=app_push)
 
     # Parser for 'lint'
@@ -2818,7 +2895,7 @@ def get_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Optional: Path to an environment JSON file to validate '$env_var' "
-            "variableDeclarations against."
+            "placeholders against."
         ),
     )
     parser_lint.add_argument(
@@ -3404,6 +3481,12 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'trace' — observability/debugging for past conversations.
     register_trace_subparser(subparsers)
+
+    # Subparsers for 'arc' — the CX Agent Studio AI assistant.
+    register_arc_subparser(subparsers)
+
+    # Subparser for 'watch' — live differential hot-patching on file save.
+    register_hot_patch_subparsers(subparsers)
 
     return parser
 

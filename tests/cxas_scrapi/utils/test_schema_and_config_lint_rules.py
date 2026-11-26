@@ -25,6 +25,7 @@ from cxas_scrapi.utils.lint_rules.config import (
     AppRootAgentValidation,
     AppVariableDefaultsAndEnvVars,
     RootAgentMissingEndSession,
+    ToolAndToolsetEnvVars,
 )
 from cxas_scrapi.utils.linter import LintContext, build_registry
 
@@ -447,3 +448,121 @@ def test_a017_flags_undeclared_or_non_placeholder_override_in_env_file(
     assert any(
         "Variable 'unknown_flag'" in m and "not declared" in m for m in messages
     )
+
+
+def test_a018_validates_tool_and_toolset_env_vars(tmp_path: Path) -> None:
+    a018 = ToolAndToolsetEnvVars()
+    app_dir = tmp_path / "app"
+    ts_dir = app_dir / "toolsets" / "find_customer"
+    ts_dir.mkdir(parents=True)
+    mcp_dir = app_dir / "toolsets" / "orders_mcp"
+    mcp_dir.mkdir(parents=True)
+    oa_dir = app_dir / "tools" / "orders_api"
+    (oa_dir / "open_api_tool").mkdir(parents=True)
+
+    app_json = app_dir / "app.json"
+    app_json.write_text(json.dumps({"displayName": "MyApp"}))
+    (ts_dir / "find_customer.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Find Customer",
+                "connectorToolset": {
+                    "connection": "$env_var",
+                    "connectorActions": [{"connectionActionId": "GetAccount"}],
+                },
+            }
+        )
+    )
+    (mcp_dir / "orders_mcp.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Orders MCP",
+                "mcpToolset": {"serverAddress": "$env_var"},
+            }
+        )
+    )
+    (oa_dir / "open_api_tool" / "open_api_schema.yaml").write_text(
+        "openapi: 3.0.0\nservers:\n  - url: $env_var\npaths: {}\n"
+    )
+    (oa_dir / "orders_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Orders API",
+                "openApiTool": {
+                    "openApiSchema": (
+                        "tools/orders_api/open_api_tool/open_api_schema.yaml"
+                    )
+                },
+            }
+        )
+    )
+
+    # Without environment.json or --env-file, deferred push-time overrides pass
+    ctx = LintContext(
+        project_root=tmp_path, app_dir=app_dir, evals_dir=tmp_path
+    )
+    assert a018.check(app_json, app_json.read_text(), ctx) == []
+
+    # Missing entries in environment.json trigger A018
+    (app_dir / "environment.json").write_text(
+        json.dumps({"toolsets": {}, "tools": {}})
+    )
+    results = a018.check(app_json, app_json.read_text(), ctx)
+    assert len(results) == 3
+    assert all("missing from environment.json" in r.message for r in results)
+
+    # Invalid formats trigger A018
+    (app_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {"connection": "short-name"}
+                    },
+                    "orders_mcp": {"mcpToolset": {"serverAddress": "bad-url"}},
+                },
+                "tools": {
+                    "orders_api": {"openApiTool": {"url": "not-a-url"}},
+                },
+            }
+        )
+    )
+    results_bad = a018.check(app_json, app_json.read_text(), ctx)
+    assert len(results_bad) == 3
+    assert all("has invalid value" in r.message for r in results_bad)
+
+    # Valid --env-file passes cleanly
+    valid_env = tmp_path / "env.uat.json"
+    valid_env.write_text(
+        json.dumps(
+            {
+                "toolsets": {
+                    "find_customer": {
+                        "connectorToolset": {
+                            "connection": (
+                                "projects/uat-proj/locations/us-central1/"
+                                "connections/cymbal-uat"
+                            )
+                        }
+                    },
+                    "Orders MCP": {
+                        "mcpToolset": {
+                            "serverAddress": "https://mcp-uat.example.com/mcp/"
+                        }
+                    },
+                },
+                "tools": {
+                    "orders_api": {
+                        "openApiTool": {"url": "https://api-uat.example.com"}
+                    }
+                },
+            }
+        )
+    )
+    ctx_ext = LintContext(
+        project_root=tmp_path,
+        app_dir=app_dir,
+        evals_dir=tmp_path,
+        env_file=valid_env,
+    )
+    assert a018.check(app_json, app_json.read_text(), ctx_ext) == []

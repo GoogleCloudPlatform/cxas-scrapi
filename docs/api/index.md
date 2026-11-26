@@ -43,6 +43,7 @@ Every core class ultimately inherits from `Common`, which takes care of authenti
 | [`ConversationHistory`](core/conversation-history.md) | Browse and retrieve recorded conversation logs. |
 | [`Traces`](core/traces.md) | Trace observability, audio transcription with Gemini, WER metrics, and BigQuery reprocessing. |
 | [`Insights`](core/insights.md) | CCAI Insights API operations including scorecard management. |
+| [`Arc`](core/arc.md) | Streamed turns, confirmation cards, LRO resumption, and session management for the CX Agent Studio AI assistant. |
 
 ### Evals
 

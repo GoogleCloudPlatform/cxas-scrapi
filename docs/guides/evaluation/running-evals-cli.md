@@ -217,6 +217,7 @@ The `cxas evals report` command runs evaluations across multiple types (simulati
 | `--golden-run-method` | `STABLE` | Replay method for golden evaluations (`STABLE` or `NAIVE`) |
 | `--exclude-files` | `None` | Comma-separated list of filename substrings to exclude across all evaluation types |
 | `--sim-user-voices` | `None` | Comma-separated pool of Google Cloud TTS voices for simulated callers (deterministically selected per scenario and matched by locale, e.g., `en-US`, `es-US`) |
+| `--sim-user-tts-model` | `None` | TTS model for simulated callers. `""` uses plain Cloud TTS, for voices such as `en-US-Standard-A` set with `--sim-user-voices` or a test case's `voice_config`; unset keeps the built-in Gemini TTS model. A test case's own `voice_config.model_name` wins |
 | `--junit-xml` | `None` | Path to write a JUnit XML report with per-scenario `<testcase>` results and `<properties>` |
 | `--testsuite-prefix` | `cxas_evals` | Prefix for JUnit XML `testsuite` and `classname` attributes |
 | `--report-title` | `None` | Custom title for the rolling GCS `index.html` evaluation dashboard |
@@ -225,6 +226,9 @@ The `cxas evals report` command runs evaluations across multiple types (simulati
 | `--recordings-bucket` | `None` | Explicit GCS bucket/URI override for CES call audio recordings used by `--enriched-report` |
 | `--gcs-bundle-uri` | `None` | GCS prefix (`gs://bucket/path`) to upload `report.html`, raw JSON/YAML/XML artifacts, `EVAL_STAMP-<suite>.txt`, `latest-<suite>.html`, rolling `runs_manifest.json`, and `index.html` |
 | `--suite-name` | `None` | Suite identifier used for `EVAL_STAMP-<suite>.txt`, `latest-<suite>.html`, JUnit XML, and step summaries |
+| `--bq-dataset` | `None` | BigQuery dataset (`project.dataset`) to export every result to, to follow results over time. See [Eval Results in BigQuery](bigquery-export.md) |
+| `--bq-create-dataset` | `False` | Create `--bq-dataset` if it doesn't exist (requires `--bq-location`) |
+| `--bq-location` | `None` | BigQuery location used with `--bq-create-dataset`, or checked against the existing dataset |
 | `--github-step-summary` | `False` | Append a Markdown pass/fail table and report links to `$GITHUB_STEP_SUMMARY` |
 
 ---

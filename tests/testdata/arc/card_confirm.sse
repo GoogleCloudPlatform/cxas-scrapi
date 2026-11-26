@@ -1,0 +1,25 @@
+data: {"eventTime":"2026-10-28T01:44:02.526Z","turnMetadata":{},"sequenceNumber":"1","turnInProgress":true}
+
+data: {"eventId":"1b95e0e0-432b-4f12-b435-4e1e87970eb4","eventTime":"2026-10-28T01:44:03.311Z","toolCall":{"id":"call_2130435","tool":"call_kestrel_tool","args":{"tool_name":"update_app","arguments":{"app":{"name":"projects/example-project/locations/us-east1/apps/example-app","variableDeclarations":"..."},"update_mask":"variable_declarations"}},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151843_ee4d5301-9a42-461d-8ace-44050afaa03f_fdc572f4-6bc0-43c6-8895-d0cb4222e39b","agentName":"ces_coding_agent"},"sequenceNumber":"2","turnInProgress":true}
+
+data: {"eventId":"1b95e0e0-432b-4f12-b435-4e1e87970eb4","eventTime":"2026-10-28T01:44:05.648Z","toolResponse":{"id":"call_2130435","tool":"call_kestrel_tool","response":{"status":"success","name":"projects/example-project/locations/us-east1/apps/example-app","displayName":"Example Card App"},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151843_ee4d5301-9a42-461d-8ace-44050afaa03f_fdc572f4-6bc0-43c6-8895-d0cb4222e39b","agentName":"ces_coding_agent"},"sequenceNumber":"3","turnInProgress":true}
+
+data: {"eventId":"f81aef54-1c37-480a-865b-66129222a692","eventTime":"2026-10-28T01:44:08.471Z","thoughtChunk":"**Verifying App Update**\n\nI'm confirming the app update's success. A swift call to `get_app` will verify the variable de","sequenceNumber":"4","turnInProgress":true}
+
+data: {"eventId":"616ef8c4-85dc-4e96-8054-5d45aa357d6c","eventTime":"2026-10-28T01:44:08.755Z","toolCall":{"id":"call_2189937","tool":"get_app","args":{"name":"projects/example-project/locations/us-east1/apps/example-app"},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151848_24027d90-d9e3-4f94-ba8d-b4c08c5269d9_671c5b4a-6a5a-4273-a456-884cabb685bf","agentName":"ces_coding_agent"},"sequenceNumber":"5","turnInProgress":true}
+
+data: {"eventId":"616ef8c4-85dc-4e96-8054-5d45aa357d6c","eventTime":"2026-10-28T01:44:09.066Z","toolResponse":{"id":"call_2189937","tool":"get_app","response":{"name":"projects/example-project/locations/us-east1/apps/example-app","displayName":"Example Card App"},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151848_24027d90-d9e3-4f94-ba8d-b4c08c5269d9_671c5b4a-6a5a-4273-a456-884cabb685bf","agentName":"ces_coding_agent"},"sequenceNumber":"6","turnInProgress":true}
+
+data: {"eventId":"08823670-6b39-4a4e-9f6d-03a75e78e48e","eventTime":"2026-10-28T01:44:11.940Z","textChunk":"The variable declaration **`spike_marker`** has been added to","sequenceNumber":"7","turnInProgress":true}
+
+data: {"eventId":"fb02ea8c-d9a5-43f1-accd-d5c993b07deb","eventTime":"2026-10-28T01:44:12.162Z","textChunk":" the application.\n\n### **Configuration Summary**\n- **Variable Name:** `spike_marker`\n- **Type:** `STRING`\n-","sequenceNumber":"8","turnInProgress":true}
+
+data: {"eventId":"4398ab9a-01c5-42bd-998e-7dffe3e597d4","eventTime":"2026-10-28T01:44:12.300Z","textChunk":" **Description:** `spike test`\n- **Application:** `Example Card App` (`projects","sequenceNumber":"9","turnInProgress":true}
+
+data: {"eventId":"6d9ae90f-96e6-400b-afaf-bc759eece908","eventTime":"2026-10-28T01:44:12.395Z","textChunk":"/example-project/locations/us-east1/apps/user-tmpl-lock","sequenceNumber":"10","turnInProgress":true}
+
+data: {"eventId":"95581f80-d4c7-42f7-a1a4-151137795a7c","eventTime":"2026-10-28T01:44:12.468Z","textChunk":"-card-v1-r3`)","sequenceNumber":"11","turnInProgress":true}
+
+data: {"eventTime":"2026-10-28T01:44:13.955Z","sessionCheckpoint":{"userIntent":"App Variable Declaration Configuration"},"sequenceNumber":"12","turnInProgress":true}
+
+data: {"sequenceNumber":"13","turnCompleted":{"turnId":"0","reason":"COMPLETED","finalSequenceNumber":"13"}}

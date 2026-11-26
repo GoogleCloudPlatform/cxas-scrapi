@@ -806,3 +806,49 @@ def test_resolve_env_booleans_skips_variable_declarations(
     updated_app = json.loads((tmp_path / "app.json").read_text())
     assert updated_app["pinned"] is True
     assert updated_app["variableDeclarations"][0]["schema"]["nullable"] is False
+
+
+def test_evaluation_audio_bucket_concrete_wrapped_and_env_resolved(
+    tmp_path: typing.Any,
+) -> None:
+    # 1. Direct evaluationAudioRecordingConfig.gcsBucket
+    direct_path = tmp_path / "direct"
+    os.makedirs(direct_path, exist_ok=True)
+    direct_dir = _make_app_dir(
+        direct_path,
+        app={
+            "loggingSettings": {
+                "evaluationAudioRecordingConfig": {
+                    "gcsBucket": "gs://eval-direct"
+                }
+            }
+        },
+    )
+    cfg_direct = AppConfig.load(app_dir=direct_dir)
+    assert cfg_direct.audio_bucket() is None
+    assert cfg_direct.evaluation_audio_bucket() == "gs://eval-direct"
+
+    # 2. Wrapped under "app" with $env_var substitution
+    wrapped_path = tmp_path / "wrapped"
+    os.makedirs(wrapped_path, exist_ok=True)
+    wrapped_dir = _make_app_dir(
+        wrapped_path,
+        app={
+            "app": {
+                "loggingSettings": {
+                    "evaluationAudioRecordingConfig": {
+                        "gcsBucket": ENV_VAR_PLACEHOLDER
+                    }
+                }
+            }
+        },
+        env={
+            "loggingSettings": {
+                "evaluationAudioRecordingConfig": {
+                    "gcsBucket": "gs://eval-from-env"
+                }
+            }
+        },
+    )
+    cfg_wrapped = AppConfig.load(app_dir=wrapped_dir)
+    assert cfg_wrapped.evaluation_audio_bucket() == "gs://eval-from-env"

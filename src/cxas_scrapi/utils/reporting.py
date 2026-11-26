@@ -47,6 +47,7 @@ from cxas_scrapi.evals import runner as evals_runner
 from cxas_scrapi.prompts import naturalness_prompts
 from cxas_scrapi.utils import (
     base_components,
+    eval_bigquery,
     eval_utils,
     gcs_utils,
     report_components,
@@ -4461,13 +4462,13 @@ def generate_combined_html_report(
 
     # Enrich simulation results with CES server-side stereo recordings & VAD
     if sim_results and (enriched_report or recordings_bucket):
-        rec_bucket = resolve_recordings_bucket(
+        rec_buckets = resolve_recordings_buckets(
             app_id=app_name, explicit_bucket=recordings_bucket
         )
-        if rec_bucket:
+        if rec_buckets:
             enrich_sim_results_with_recordings(
                 sim_results,
-                recordings_bucket=rec_bucket,
+                recordings_bucket=rec_buckets,
                 gcs=gcs,
                 encoder=audio_encoder or encode_opus,
             )
@@ -5683,6 +5684,7 @@ def resolve_provenance_info() -> dict[str, str]:
     """Resolve git/CI/Guitar provenance from environment variables."""
     git_sha = (
         os.environ.get("GITHUB_SHA")
+        or os.environ.get("CI_COMMIT_SHA")
         or os.environ.get("KOKORO_GIT_COMMIT")
         or os.environ.get("GUITAR_CHANGELIST")
         or os.environ.get("CITC_CL")
@@ -5690,20 +5692,27 @@ def resolve_provenance_info() -> dict[str, str]:
     )
     git_ref = (
         os.environ.get("GITHUB_REF_NAME")
+        or os.environ.get("CI_COMMIT_REF_NAME")
         or os.environ.get("KOKORO_GOB_BRANCH")
         or os.environ.get("CITC_CLIENT")
         or "local"
     )
     run_id = (
         os.environ.get("GITHUB_RUN_ID")
+        or os.environ.get("CI_PIPELINE_ID")
         or os.environ.get("GUITAR_WORKFLOW_ID")
         or os.environ.get("KOKORO_BUILD_ID")
         or "local"
     )
+    # GitLab gives each retried job a new CI_JOB_ID; GitHub numbers retries.
+    job_id = os.environ.get("CI_JOB_ID") or ""
+    attempt = os.environ.get("GITHUB_RUN_ATTEMPT") or ""
     return {
         "git_sha": str(git_sha),
         "git_ref": str(git_ref),
         "run_id": str(run_id),
+        "job_id": str(job_id),
+        "attempt": str(attempt),
     }
 
 
@@ -5741,6 +5750,8 @@ def write_eval_stamp(
         f"run_id:        {prov['run_id']}",
         f"timestamp_utc: {now_utc}",
     ]
+    if gate_summary.get("run_key"):
+        lines.append(f"run_key:       {gate_summary['run_key']}")
     if published_urls:
         if published_urls.get("report_url"):
             lines.append(f"report_url:    {published_urls['report_url']}")
@@ -6701,10 +6712,68 @@ def render_report(
     ).render()
 
 
+def _normalize_recordings_bucket(bucket: str) -> str:
+    """Strips `gs://` and surrounding slashes from a GCS bucket string."""
+    return str(bucket).strip().removeprefix("gs://").strip("/")
+
+
+def _coerce_recordings_buckets(
+    recordings_bucket: str | Sequence[str],
+) -> list[str]:
+    """Normalizes a bucket string or sequence into deduplicated bucket names."""
+    raw = (
+        [recordings_bucket]
+        if isinstance(recordings_bucket, str)
+        else list(recordings_bucket)
+    )
+    buckets: list[str] = []
+    for bucket in raw:
+        if not isinstance(bucket, str) or not bucket.strip():
+            continue
+        normalized = _normalize_recordings_bucket(bucket)
+        if normalized and normalized not in buckets:
+            buckets.append(normalized)
+    return buckets
+
+
+def _fetch_session_recording_from_buckets(
+    gcs: GcsClient,
+    buckets: Sequence[str],
+    session_id: str,
+    run_date: datetime.date,
+) -> SessionRecording | None:
+    """Searches `buckets` in order for a session's stereo recording.
+
+    Falls through to subsequent buckets when an earlier bucket either contains
+    no matching recording or raises a GCS error (for example, 403 or 404).
+    Re-raises the last error if no bucket yields a recording.
+    """
+    last_exc: Exception | None = None
+    for bucket in buckets:
+        try:
+            recording = fetch_session_recording(
+                gcs, bucket, session_id, run_date
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug(
+                "Failed to fetch recordings for session %s from %s: %r",
+                session_id,
+                bucket,
+                exc,
+            )
+            last_exc = exc
+            continue
+        if recording is not None:
+            return recording
+    if last_exc is not None:
+        raise last_exc
+    return None
+
+
 def enrich_sim_results_with_recordings(
     results: Sequence[dict[str, Any] | Mapping[str, Any]],
     *,
-    recordings_bucket: str,
+    recordings_bucket: str | Sequence[str],
     gcs: GcsClient | None = None,
     run_date: datetime.date | None = None,
     encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
@@ -6712,6 +6781,7 @@ def enrich_sim_results_with_recordings(
     """Fetches CES stereo recordings & attaches `_ces_audio` to `results`."""
     if gcs is None:
         gcs = gcs_utils.GCSUtils()
+    buckets = _coerce_recordings_buckets(recordings_bucket)
     run_date = run_date or datetime.datetime.now(datetime.timezone.utc).date()
     used: set[str] = set()
     views = [
@@ -6731,11 +6801,11 @@ def enrich_sim_results_with_recordings(
         ):
             return view.result["_run_audio_obj"]
         sid = view.result.get("session_id")
-        if not sid or "error" in view.result:
+        if not sid or "error" in view.result or not buckets:
             return None
         try:
-            recording = fetch_session_recording(
-                gcs, recordings_bucket, str(sid), run_date
+            recording = _fetch_session_recording_from_buckets(
+                gcs, buckets, str(sid), run_date
             )
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning(
@@ -6784,7 +6854,7 @@ def build_enriched_report(
     results: Sequence[Mapping[str, Any]],
     *,
     gcs: GcsClient,
-    recordings_bucket: str,
+    recordings_bucket: str | Sequence[str],
     app_id: str,
     sim_user_model: str,
     eval_model: str,
@@ -6796,12 +6866,28 @@ def build_enriched_report(
     encoder: Callable[[PcmAudio], EncodedAudio] = encode_opus,
 ) -> str:
     """Fetches recordings for `results` and renders the enriched HTML report."""
+    buckets = _coerce_recordings_buckets(recordings_bucket)
     views = enrich_sim_results_with_recordings(
         results,
-        recordings_bucket=recordings_bucket,
+        recordings_bucket=buckets,
         gcs=gcs,
         run_date=run_date,
         encoder=encoder,
+    )
+    display_bucket = buckets[0] if buckets else ""
+    matched_buckets = {
+        v.audio.gcs_dir.removeprefix("gs://").split("/", 1)[0]
+        for v in views
+        if v.audio and v.audio.gcs_dir.startswith("gs://")
+    }
+    if len(matched_buckets) == 1:
+        matched = next(iter(matched_buckets))
+        display_bucket = next(
+            (b for b in buckets if b == matched or b.startswith(f"{matched}/")),
+            matched,
+        )
+    recordings_uri = (
+        f"gs://{display_bucket}/{_RECORDING_PREFIX}" if display_bucket else ""
     )
     return render_report(
         views,
@@ -6810,7 +6896,7 @@ def build_enriched_report(
         sim_user_model=sim_user_model,
         eval_model=eval_model,
         modality=modality,
-        recordings_uri=f"gs://{recordings_bucket}/{_RECORDING_PREFIX}",
+        recordings_uri=recordings_uri,
         source_report_uri=source_report_uri,
         tags_by_name=tags_by_name,
     )
@@ -6822,25 +6908,73 @@ def enriched_report_uri(report_uri: str) -> str:
     return f"{base}_enriched.html"
 
 
+def resolve_recordings_buckets(
+    app_id: str | None = None,
+    explicit_bucket: str | None = None,
+    *,
+    app_name: str | None = None,
+    prefer_eval: bool = False,
+) -> list[str]:
+    """Resolves ordered candidate GCS buckets holding CES audio recordings.
+
+    When `explicit_bucket` is set, returns only that normalized bucket.
+    Otherwise, returns deduplicated candidate buckets from `Traces`
+    (`audioRecordingConfig` and `evaluationAudioRecordingConfig`) ordered by
+    `prefer_eval`, so report enrichment locates recordings from both local
+    `BidiRunSession` simulations and platform evaluations on dual-bucket apps.
+    """
+    if explicit_bucket and explicit_bucket.strip():
+        normalized = _normalize_recordings_bucket(explicit_bucket)
+        return [normalized] if normalized else []
+    target_app = app_id or app_name or ""
+    if not target_app:
+        return []
+    try:
+        from cxas_scrapi.core.traces import Traces  # noqa: PLC0415
+
+        traces_client = Traces(app_name=target_app)
+        raw_candidates: list[str] = []
+        iter_buckets = getattr(
+            traces_client, "_iter_candidate_audio_buckets", None
+        )
+        if callable(iter_buckets):
+            raw_candidates = [
+                b
+                for b in iter_buckets(prefer_eval=prefer_eval)
+                if isinstance(b, str) and b.strip()
+            ]
+        if not raw_candidates:
+            discovered = traces_client._get_audio_bucket(
+                prefer_eval=prefer_eval
+            )
+            if isinstance(discovered, str) and discovered.strip():
+                raw_candidates = [discovered]
+        return _coerce_recordings_buckets(raw_candidates)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Auto-discovery of recordings buckets failed: %r", exc)
+    return []
+
+
 def resolve_recordings_bucket(
     app_id: str | None = None,
     explicit_bucket: str | None = None,
     *,
     app_name: str | None = None,
+    prefer_eval: bool = False,
 ) -> str | None:
-    """Resolves the GCS bucket holding CES session audio recordings."""
+    """Resolves the primary GCS bucket holding CES session audio recordings."""
     if explicit_bucket and explicit_bucket.strip():
-        return explicit_bucket.strip().removeprefix("gs://").strip("/")
+        return _normalize_recordings_bucket(explicit_bucket) or None
     target_app = app_id or app_name or ""
     if not target_app:
         return None
     try:
         from cxas_scrapi.core.traces import Traces  # noqa: PLC0415
 
-        traces_client = Traces(agent_id=target_app)
-        discovered = traces_client._get_audio_bucket(target_app)
-        if discovered:
-            return str(discovered).strip().removeprefix("gs://").strip("/")
+        traces_client = Traces(app_name=target_app)
+        discovered = traces_client._get_audio_bucket(prefer_eval=prefer_eval)
+        if isinstance(discovered, str) and discovered.strip():
+            return _normalize_recordings_bucket(discovered) or None
     except Exception as exc:  # noqa: BLE001
         logger.debug("Auto-discovery of recordings bucket failed: %r", exc)
     return None
@@ -6854,7 +6988,7 @@ def enrich_html_report(
     report_html_path: str | None = None,
     sim_results: Sequence[Mapping[str, Any]] | None = None,
     sim_results_path: str | None = None,
-    recordings_bucket: str | None = None,
+    recordings_bucket: str | Sequence[str] | None = None,
     app_id: str = "",
     sim_user_model: str = "",
     eval_model: str = "",
@@ -6885,8 +7019,15 @@ def enrich_html_report(
     )
     if not target_out:
         return None
-    resolved_bucket = resolve_recordings_bucket(app_id, recordings_bucket)
-    if not resolved_bucket:
+    if isinstance(recordings_bucket, Sequence) and not isinstance(
+        recordings_bucket, str
+    ):
+        resolved_buckets = _coerce_recordings_buckets(recordings_bucket)
+        if not resolved_buckets:
+            resolved_buckets = resolve_recordings_buckets(app_id)
+    else:
+        resolved_buckets = resolve_recordings_buckets(app_id, recordings_bucket)
+    if not resolved_buckets:
         logger.warning(
             "Cannot build enriched report: no recordings_bucket discovered."
         )
@@ -6896,7 +7037,7 @@ def enrich_html_report(
     html_content = build_enriched_report(
         effective_results,
         gcs=gcs,
-        recordings_bucket=resolved_bucket,
+        recordings_bucket=resolved_buckets,
         app_id=app_id,
         sim_user_model=sim_user_model or "default",
         eval_model=eval_model or "default",
@@ -7416,12 +7557,16 @@ def generate_combined_report_from_dir(
     platform_sims: bool = False,
     exclude_files: list[str] | None = None,
     sim_user_voices: list[str] | None = None,
+    sim_user_tts_model: str | None = None,
     junit_xml: str | None = None,
     testsuite_prefix: str = "cxas_evals",
     report_title: str | None = None,
     dry_run: bool = False,
     enriched_report: bool = False,
     recordings_bucket: str | None = None,
+    bq_dataset: str | None = None,
+    bq_create_dataset: bool = False,
+    bq_location: str | None = None,
 ) -> str | tuple[str, dict[str, Any]]:
     """Load results from directory and generate a combined report.
 
@@ -7456,10 +7601,18 @@ def generate_combined_report_from_dir(
         the test case.
       platform_sims: If True, executes platform-compatible simulation test
         cases as CXAS 2.0 Milestone evaluations on the CES platform.
+      bq_dataset: Optional BigQuery dataset (``project.dataset``) to export
+        the results to (``eval_runs`` / ``eval_results`` tables). An export
+        failure is reported but never changes the gate result.
+      bq_create_dataset: Create ``bq_dataset`` if it doesn't exist
+        (requires ``bq_location``). The dataset is never created otherwise.
+      bq_location: Location used to create the dataset, or checked against
+        the existing dataset.
 
     Returns:
       The resolved output path or URL where the report was saved.
     """
+    started_at = datetime.datetime.now(datetime.timezone.utc)
     if dry_run:
         dry_summary = discover_eval_suite(
             app_dir=app_dir,
@@ -7495,6 +7648,12 @@ def generate_combined_report_from_dir(
     golden_results = []
 
     resolved_timestamp = timestamp
+    # For the BigQuery export: how long the evals took (measured when this
+    # call runs them, else read from the simulation results file), and which
+    # existing result files were loaded, to date a run from its files.
+    eval_duration_s: float | None = None
+    results_files: list[str] = []
+    sim_file_timestamp: str | None = None
 
     if run:
         extra_run_kwargs: dict[str, Any] = {}
@@ -7510,6 +7669,8 @@ def generate_combined_report_from_dir(
             extra_run_kwargs["exclude_files"] = exclude_files
         if sim_user_voices:
             extra_run_kwargs["sim_user_voices"] = sim_user_voices
+        if sim_user_tts_model is not None:
+            extra_run_kwargs["sim_user_tts_model"] = sim_user_tts_model
         run_results = run_all_evals(
             app_name=app_name,
             app_dir=app_dir,
@@ -7574,6 +7735,9 @@ def generate_combined_report_from_dir(
                     }
                 )
         golden_results = run_results["golden"] if "goldens" in include else []
+        eval_duration_s = (
+            datetime.datetime.now(datetime.timezone.utc) - started_at
+        ).total_seconds()
     else:
         sim_files = []
         if "sims" in include:
@@ -7622,6 +7786,8 @@ def generate_combined_report_from_dir(
             match = re.search(pattern, latest_sim_file)
             if match:
                 resolved_timestamp = match.group(1)
+                sim_file_timestamp = match.group(1)
+            results_files.append(latest_sim_file)
 
             with open(latest_sim_file) as f:
                 data = json.load(f)
@@ -7629,6 +7795,9 @@ def generate_combined_report_from_dir(
                 # Old format: [...]
                 if isinstance(data, dict):
                     sim_results = data.get("results", [])
+                    eval_duration_s = _positive_seconds(
+                        data.get("wall_clock_s")
+                    )
                 else:
                     sim_results = data
             print(
@@ -7638,6 +7807,7 @@ def generate_combined_report_from_dir(
         if tool_files:
             tool_files.sort(key=os.path.getmtime)
             tf = tool_files[-1]
+            results_files.append(tf)
             df = pd.read_csv(tf) if tf.endswith(".csv") else pd.read_json(tf)
             for _, row in df.iterrows():
                 tool_results.append(
@@ -7656,6 +7826,7 @@ def generate_combined_report_from_dir(
         if callback_files:
             callback_files.sort(key=os.path.getmtime)
             cf = callback_files[-1]
+            results_files.append(cf)
             df = pd.read_csv(cf) if cf.endswith(".csv") else pd.read_json(cf)
             for _, row in df.iterrows():
                 callback_results.append(
@@ -7687,6 +7858,7 @@ def generate_combined_report_from_dir(
             if ces_files:
                 ces_files.sort(key=os.path.getmtime)
                 latest_ces_file = ces_files[-1]
+                results_files.append(latest_ces_file)
                 with open(latest_ces_file) as f:
                     ces_data = json.load(f)
                     if isinstance(ces_data, list):
@@ -7694,6 +7866,9 @@ def generate_combined_report_from_dir(
                     elif isinstance(ces_data, dict):
                         golden_results = ces_data.get("results", [])
 
+    # The report shows one result per golden; the BigQuery export keeps
+    # every attempt, like for simulations.
+    golden_attempts = golden_results
     if min_run_passes is not None and golden_results and not golden_run:
         golden_results = reconcile_golden_runs(
             golden_results, min_run_passes=min_run_passes
@@ -7751,10 +7926,12 @@ def generate_combined_report_from_dir(
         and not actual_path.startswith(("gs://", "http://", "https://"))
         and os.path.isfile(actual_path)
     ):
-        rec_bucket = resolve_recordings_bucket(
-            app_name=app_name, explicit_bucket=recordings_bucket
+        rec_buckets = resolve_recordings_buckets(
+            app_name=app_name,
+            explicit_bucket=recordings_bucket,
+            prefer_eval=platform_sims,
         )
-        if rec_bucket:
+        if rec_buckets:
             stem, ext = os.path.splitext(actual_path)
             candidate_enriched = f"{stem}_enriched{ext or '.html'}"
             sim_json_candidates = sorted(
@@ -7769,7 +7946,7 @@ def generate_combined_report_from_dir(
                     report_html_path=actual_path,
                     sim_results=sim_results,
                     sim_results_path=latest_sim_json,
-                    recordings_bucket=rec_bucket,
+                    recordings_bucket=rec_buckets,
                     output_html_path=candidate_enriched,
                     app_id=app_name or "",
                     sim_user_model=sim_user_model or "",
@@ -7788,6 +7965,7 @@ def generate_combined_report_from_dir(
             github_step_summary,
             return_gate_status,
             junit_xml is not None,
+            bool(bq_dataset),
         ]
     )
     if should_gate_or_publish:
@@ -7799,6 +7977,8 @@ def generate_combined_report_from_dir(
             min_run_passes=min_run_passes or 1,
             min_pass_rate=min_pass_rate,
         )
+        if bq_dataset:
+            gate_summary["run_key"] = eval_bigquery.new_run_key()
         if enriched_report_path:
             gate_summary["enriched_report_path"] = enriched_report_path
         if suite_name:
@@ -7849,10 +8029,217 @@ def generate_combined_report_from_dir(
                 suite_name=suite_name,
                 published_urls=published_urls,
             )
+        if bq_dataset:
+            # A problem with the export must never break the report or change
+            # the gate result: it is reported and the command carries on.
+            try:
+                run_started_at, run_finished_at = _run_times(
+                    run,
+                    started_at,
+                    eval_duration_s,
+                    sim_file_timestamp,
+                    results_files,
+                )
+                gate_summary["bigquery_export"] = _export_results_to_bigquery(
+                    bq_dataset=bq_dataset,
+                    started_at=run_started_at,
+                    finished_at=run_finished_at,
+                    eval_duration_s=eval_duration_s,
+                    gate_summary=gate_summary,
+                    sim_results=sim_results,
+                    golden_results=golden_attempts,
+                    tool_results=tool_results,
+                    callback_results=callback_results,
+                    app_name=app_name,
+                    app_dir=app_dir,
+                    suite_name=suite_name,
+                    modality=modality,
+                    runs=runs,
+                    simulation_dir=simulation_dir,
+                    report_url=published_urls.get("report_url"),
+                    create_dataset=bq_create_dataset,
+                    location=bq_location,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"::warning::BigQuery export to {bq_dataset} failed: {exc}"
+                )
+                logger.debug("BigQuery export failed", exc_info=True)
+                gate_summary["bigquery_export"] = None
         if return_gate_status:
             return actual_path, gate_summary
 
     return actual_path
+
+
+_DEFAULT_SIMULATION_DIR = "evals/simulations/"
+
+
+def _load_sim_tags_by_name(
+    simulation_dir: str | None,
+    app_dir: str | None = None,
+) -> dict[str, list[str]]:
+    """Maps simulation case names to the ``tags`` of their definition.
+
+    Reads the same files as the runner: a single ``.yaml`` / ``.yml`` /
+    ``.json`` file, or the files at the top level of the folder (under
+    ``<app_dir>/evals/simulations`` when ``app_dir`` is set and
+    ``simulation_dir`` is omitted or the CLI default, otherwise
+    ``evals/simulations/``). Files that can't be read are skipped.
+    """
+    candidates: list[str] = []
+    if app_dir and simulation_dir in (
+        None,
+        "",
+        "evals/simulations",
+        _DEFAULT_SIMULATION_DIR,
+    ):
+        candidates.append(os.path.join(app_dir, "evals", "simulations"))
+    candidates.append(simulation_dir or _DEFAULT_SIMULATION_DIR)
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if path is None:
+        return {}
+    if os.path.isdir(path):
+        files = evals_runner._discover_yaml_and_extra_files(path)
+    elif os.path.isfile(path):
+        files = [path]
+    else:
+        return {}
+    tags_by_name: dict[str, list[str]] = {}
+    for file_path in sorted(files):
+        try:
+            cases = _load_sim_test_cases(file_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Skipping %s when reading tags: %s", file_path, exc)
+            continue
+        for case in cases or []:
+            if not isinstance(case, dict):
+                continue
+            name, tags = case.get("name"), case.get("tags")
+            if name and isinstance(tags, list):
+                tags_by_name[str(name)] = [str(t) for t in tags]
+    return tags_by_name
+
+
+def _positive_seconds(value: Any) -> float | None:
+    """A duration in seconds, or None when it isn't a positive number."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return seconds if math.isfinite(seconds) and seconds > 0 else None
+
+
+def _parse_file_timestamp(timestamp: str | None) -> datetime.datetime | None:
+    """Parses a result file-name timestamp (``YYYYMMDD_HHMMSS``).
+
+    ``cxas evals report --timestamped`` writes it in the machine's local time,
+    so it's read in the local time of the machine that exports.
+    """
+    if not timestamp:
+        return None
+    try:
+        parsed = datetime.datetime.strptime(timestamp, "%Y%m%d_%H%M%S")
+        return parsed.astimezone(datetime.timezone.utc)
+    except (ValueError, OverflowError, OSError):  # not a date the OS knows
+        return None
+
+
+def _latest_mtime(files: list[str]) -> datetime.datetime | None:
+    """When the last of the result files was written."""
+    mtimes = [os.path.getmtime(f) for f in files if os.path.exists(f)]
+    if not mtimes:
+        return None
+    return datetime.datetime.fromtimestamp(max(mtimes), datetime.timezone.utc)
+
+
+def _run_times(
+    run: bool,
+    started_at: datetime.datetime,
+    eval_duration_s: float | None,
+    sim_file_timestamp: str | None,
+    results_files: list[str],
+) -> tuple[datetime.datetime, datetime.datetime]:
+    """Returns when the evals started and finished.
+
+    When this call ran the evals, both are measured. When the report is
+    built from existing result files:
+
+    - with a timestamp in the file names: that's when the command that ran
+      the evals started (``--timestamped`` names the files when it starts),
+      and the run finished ``eval_duration_s`` later when that is known;
+    - otherwise the run finished when the files were last written, and
+      started ``eval_duration_s`` earlier when that is known.
+    """
+    duration = datetime.timedelta(seconds=eval_duration_s or 0)
+    if run:
+        return started_at, started_at + duration
+    named_at = _parse_file_timestamp(sim_file_timestamp)
+    if named_at is not None:
+        return named_at, named_at + duration
+    finished_at = _latest_mtime(results_files) or started_at
+    return finished_at - duration, finished_at
+
+
+def _export_results_to_bigquery(
+    bq_dataset: str,
+    started_at: datetime.datetime,
+    finished_at: datetime.datetime,
+    eval_duration_s: float | None,
+    gate_summary: dict[str, Any],
+    sim_results: list[dict[str, Any]],
+    golden_results: list[dict[str, Any]],
+    tool_results: list[dict[str, Any]],
+    callback_results: list[dict[str, Any]],
+    app_name: str | None,
+    app_dir: str | None,
+    suite_name: str | None,
+    modality: str,
+    runs: int,
+    simulation_dir: str | None,
+    report_url: str | None,
+    create_dataset: bool,
+    location: str | None,
+) -> dict[str, Any]:
+    """Exports the results of one report to BigQuery as one run.
+
+    Raises on failure; the caller decides what a failed export means.
+    """
+    prov = resolve_provenance_info()
+    ctx = eval_bigquery.RunContext(
+        run_key=gate_summary["run_key"],
+        started_at=started_at,
+        finished_at=finished_at,
+        eval_duration_s=eval_duration_s,
+        app_name=app_name,
+        suite_name=suite_name,
+        modality=modality,
+        runs=runs,
+        git_sha=prov["git_sha"],
+        git_ref=prov["git_ref"],
+        ci_run_id=prov["run_id"],
+        ci_job_id=prov["job_id"] or None,
+        ci_attempt=int(prov["attempt"]) if prov["attempt"].isdigit() else None,
+        cxas_scrapi_version=eval_bigquery.cxas_scrapi_version(),
+        report_url=report_url,
+    )
+    summary = eval_bigquery.export_eval_results(
+        bq_dataset,
+        ctx,
+        gate_summary,
+        sim_results=sim_results,
+        golden_results=golden_results,
+        tool_results=tool_results,
+        callback_results=callback_results,
+        tags_by_name=_load_sim_tags_by_name(simulation_dir, app_dir=app_dir),
+        create_dataset=create_dataset,
+        location=location,
+    )
+    print(
+        f"Exported {summary['results']} eval result(s) to "
+        f"{summary['dataset']} (run_key {summary['run_key']})."
+    )
+    return summary
 
 
 def run_all_evals(
@@ -7894,6 +8281,7 @@ def run_all_evals(
     platform_sims: bool = False,
     exclude_files: list[str] | None = None,
     sim_user_voices: list[str] | None = None,
+    sim_user_tts_model: str | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -7951,6 +8339,8 @@ def run_all_evals(
         extra_kwargs["exclude_files"] = exclude_files
     if sim_user_voices:
         extra_kwargs["sim_user_voices"] = sim_user_voices
+    if sim_user_tts_model is not None:
+        extra_kwargs["sim_user_tts_model"] = sim_user_tts_model
     return evals_runner.run_all_evals(
         app_name=app_name,
         modality=modality,

@@ -88,6 +88,8 @@ ALLOWED_BRANDS: tuple[str, ...] = (
     "Anthropic",
     "Claude",
     "GitHub",
+    "Apache",  # the licence header of every file
+    "GitLab",
     # --- Standard Python ecosystem libraries ---
     "Jinja",
     "Jinja2",

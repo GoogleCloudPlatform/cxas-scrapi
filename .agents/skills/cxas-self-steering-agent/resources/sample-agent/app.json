@@ -31,7 +31,7 @@
     "metricAnalysisSettings": {}
   },
   "modelSettings": {
-    "model": "gemini-composite-v1",
+    "model": "gemini-composite-v2",
     "temperature": 1.0
   },
   "variableDeclarations": [
@@ -67,6 +67,22 @@
       }
     },
     {
+      "name": "pending_handoff_reason",
+      "description": "Reason code set by a tool when the conversation must be handed off to a live representative.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "handoff_summary",
+      "description": "Summary of the conversation for the representative, set by execute_live_agent_handover.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
       "name": "order_id",
       "description": "Order number of the order that was last looked up.",
       "schema": {
@@ -76,18 +92,130 @@
     },
     {
       "name": "order_status",
-      "description": "Status of the order that was last looked up (Processing, Shipped, Delivered, Canceled, Return Started).",
+      "description": "Status of the order that was last looked up (Processing, Shipped, Delivered, Canceled, Return Started, Return Pickup Scheduled).",
       "schema": {
         "type": "STRING",
         "default": ""
       }
     },
     {
-      "name": "sms_disclosure_played",
-      "description": "Whether the text message terms were shared with the customer.",
+      "name": "order_item",
+      "description": "Item name for the order that was last looked up.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "order_delivery",
+      "description": "Estimated or actual delivery of the order that was last looked up.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "on_file_zip",
+      "description": "Shipping ZIP code stored on the looked-up order, checked by verify_order_zip and never shown in the prompt before verification.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "zip_verified",
+      "description": "Whether the customer verified the shipping ZIP code for the current order.",
       "schema": {
         "type": "BOOLEAN",
         "default": false
+      }
+    },
+    {
+      "name": "zip_attempts",
+      "description": "Number of non-matching ZIP code attempts in the conversation, across all orders.",
+      "schema": {
+        "type": "INTEGER",
+        "default": 0
+      }
+    },
+    {
+      "name": "sms_disclosure_played",
+      "description": "Order number for which the text message terms were shared with the customer.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "sms_summary_sent",
+      "description": "Order number for which the order summary text was sent.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "return_reason",
+      "description": "Validated return reason for a return pickup (damaged, wrong_item, changed_mind, other).",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "return_availability_checked",
+      "description": "Whether pickup days and windows have been checked for the current order.",
+      "schema": {
+        "type": "BOOLEAN",
+        "default": false
+      }
+    },
+    {
+      "name": "return_pickup_day",
+      "description": "Selected pickup day for a return pickup.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "return_pickup_window",
+      "description": "Selected time window for a return pickup (morning or afternoon).",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "return_contact_phone",
+      "description": "Validated 10-digit callback phone number for a return pickup.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
+      }
+    },
+    {
+      "name": "return_summary_confirmed",
+      "description": "Whether the customer confirmed the pre-booking return pickup summary.",
+      "schema": {
+        "type": "BOOLEAN",
+        "default": false
+      }
+    },
+    {
+      "name": "return_pickup_completed",
+      "description": "Whether the return pickup booking has been submitted for the current order.",
+      "schema": {
+        "type": "BOOLEAN",
+        "default": false
+      }
+    },
+    {
+      "name": "return_confirmation_id",
+      "description": "Confirmation ID returned when a return pickup is booked.",
+      "schema": {
+        "type": "STRING",
+        "default": ""
       }
     }
   ],

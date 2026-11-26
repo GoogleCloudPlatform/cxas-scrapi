@@ -1423,3 +1423,105 @@ def test_bidi_session_handler_on_error_aborts_remaining_inputs() -> None:
 
     assert sent_indices == [0]
     handler.ws_app.close.assert_not_called()
+
+
+def _event_turn_handler(
+    interactive: bool, config: typing.Any
+) -> BidiSessionHandler:
+    handler = BidiSessionHandler(
+        location="us",
+        token="fake",
+        config=config,
+        inputs=[{"event": {"event": "order"}}],
+    )
+    handler.interactive = interactive
+    handler.ws_app = MagicMock()
+    handler.agent_turn_manager.prepare_for_turn = MagicMock()
+    handler.agent_turn_manager.is_agent_done_talking = MagicMock(
+        side_effect=[False, False, False, True]
+    )
+    handler._save_and_increment_agent_audio = MagicMock()
+    handler._send_silence = MagicMock()  # type: ignore[method-assign]
+    return handler
+
+
+@pytest.mark.parametrize(
+    "turn_input",
+    [{"event": {"event": "order"}}, {"dtmf": "1"}],
+    ids=["event", "dtmf"],
+)
+@pytest.mark.parametrize(
+    "config",
+    [
+        {
+            "session": "projects/p/locations/us/apps/a/sessions/s1",
+            "input_audio_config": types.InputAudioConfig(
+                audio_encoding=types.AudioEncoding.LINEAR16,
+                sample_rate_hertz=16000,
+            ),
+        },
+        types.SessionConfig(
+            session="projects/p/locations/us/apps/a/sessions/s1",
+            input_audio_config=types.InputAudioConfig(
+                audio_encoding=types.AudioEncoding.LINEAR16,
+                sample_rate_hertz=16000,
+            ),
+        ),
+    ],
+    ids=["dict_config", "proto_config"],
+)
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_session_handler_streams_silence_while_agent_answers_non_audio_turn(
+    mock_sleep: typing.Any,
+    config: typing.Any,
+    turn_input: dict[str, typing.Any],
+) -> None:
+    handler = _event_turn_handler(interactive=False, config=config)
+
+    handler._send_single_input(turn_input, idx=0)
+
+    assert handler._send_silence.call_args_list == [((1,),)] * 3
+    handler._save_and_increment_agent_audio.assert_called_once()
+
+
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_session_handler_interactive_leaves_silence_to_its_loop(
+    mock_sleep: typing.Any,
+) -> None:
+    handler = _event_turn_handler(
+        interactive=True,
+        config={
+            "session": "projects/p/locations/us/apps/a/sessions/s1",
+            "input_audio_config": types.InputAudioConfig(
+                audio_encoding=types.AudioEncoding.LINEAR16,
+                sample_rate_hertz=16000,
+            ),
+        },
+    )
+
+    handler._send_single_input({"event": {"event": "order"}}, idx=0)
+
+    handler._send_silence.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"session": "projects/p/locations/us/apps/a/sessions/s1"},
+        types.SessionConfig(
+            session="projects/p/locations/us/apps/a/sessions/s1"
+        ),
+    ],
+    ids=["dict_no_audio", "proto_no_audio"],
+)
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_bidi_session_handler_text_only_bidi_sleeps_without_silence(
+    mock_sleep: typing.Any, config: typing.Any
+) -> None:
+    handler = _event_turn_handler(interactive=False, config=config)
+
+    handler._send_single_input({"text": "Hello"}, idx=0)
+
+    handler._send_silence.assert_not_called()
+    assert mock_sleep.call_args_list[:3] == [((1,),)] * 3
+    handler._save_and_increment_agent_audio.assert_called_once()

@@ -1,0 +1,25 @@
+data: {"eventTime":"2026-10-28T01:45:09.808Z","turnMetadata":{},"sequenceNumber":"1","turnInProgress":true}
+
+data: {"eventId":"369020cd-fdf3-457b-9362-a504ccc6e980","eventTime":"2026-10-28T01:45:13.103Z","thoughtChunk":"**Reviewing Evaluation Options**\n\nI'm currently reviewing the available evaluation options to determine the most suitabl","sequenceNumber":"2","turnInProgress":true}
+
+data: {"eventId":"606a2453-8248-4c61-a916-521b1c1832fe","eventTime":"2026-10-28T01:45:14.798Z","toolCall":{"id":"call_2471675","tool":"get_tool_schema","args":{"tool_names":["list_evaluation_metadata","run_evaluation","get_operation"]},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151914_bb29892b-9329-4090-b289-7736ca18a9be_746743f9-7f21-4cbd-92a6-33e19ed502d7","agentName":"ces_coding_agent"},"sequenceNumber":"3","turnInProgress":true}
+
+data: {"eventId":"606a2453-8248-4c61-a916-521b1c1832fe","eventTime":"2026-10-28T01:45:15.145Z","toolResponse":{"id":"call_2471675","tool":"get_tool_schema","response":{"status":"success","schemas":{"list_evaluation_metadata":{"summary":"..."},"run_evaluation":{"summary":"..."}}},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151914_bb29892b-9329-4090-b289-7736ca18a9be_746743f9-7f21-4cbd-92a6-33e19ed502d7","agentName":"ces_coding_agent"},"sequenceNumber":"4","turnInProgress":true}
+
+data: {"eventId":"0d8a91b2-725b-4387-946e-efc8fe231902","eventTime":"2026-10-28T01:45:17.283Z","thoughtChunk":"**Discovering Available Evaluations**\n\nI'm currently focused on identifying all the available evaluations for the specif","sequenceNumber":"5","turnInProgress":true}
+
+data: {"eventId":"6b61388c-e329-425d-9343-966f079409d8","eventTime":"2026-10-28T01:45:19.035Z","thoughtChunk":"**Listing and Launching Evaluations**\n\nI've confirmed that I can both list and then immediately run evaluations without ","sequenceNumber":"6","turnInProgress":true}
+
+data: {"eventId":"e23488f6-1ee2-4cfd-afa6-d1fc256b0d83","eventTime":"2026-10-28T01:45:21.591Z","toolCall":{"id":"call_2186514","tool":"call_kestrel_tool","args":{"arguments":{"app":"projects/example-project/locations/us-east1/apps/example-app","pageSize":20},"tool_name":"list_evaluation_metadata"},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151921_2f446c0a-ffb7-475d-b0ec-e79d308e3f1d_d6c11383-d45e-45f8-992b-431d3f80bd50","agentName":"ces_coding_agent"},"sequenceNumber":"7","turnInProgress":true}
+
+data: {"eventId":"e23488f6-1ee2-4cfd-afa6-d1fc256b0d83","eventTime":"2026-10-28T01:45:22.287Z","toolResponse":{"id":"call_2186514","tool":"call_kestrel_tool","response":{"evaluations":[{"name":"projects/example-project/locations/us-east1/apps/example-app/evaluations/df57f44c-92fe-4cee-9fee-6c7fadca8fd6"},{"name":"projects/example-project/locations/us-east1/apps/example-app/evaluations/ccc7adc3-8a18-451b-bedf-5ca7cb989cce"}]},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151921_2f446c0a-ffb7-475d-b0ec-e79d308e3f1d_d6c11383-d45e-45f8-992b-431d3f80bd50","agentName":"ces_coding_agent"},"sequenceNumber":"8","turnInProgress":true}
+
+data: {"eventId":"0f46f5b4-4612-4601-9682-e51ece197802","eventTime":"2026-10-28T01:45:22.287Z","toolCall":{"id":"call_2186517","tool":"call_kestrel_tool","args":{"arguments":{"app":"projects/example-project/locations/us-east1/apps/example-app","config":{"evaluation_channel":"TEXT"},"displayName":"Eval Run - 261027-1845"},"tool_name":"run_evaluation"},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151921_d7eb1588-da80-4028-8d79-30df78e565b5_1c661560-01aa-4b5e-b4e9-63ed2b5955e3","agentName":"ces_coding_agent"},"sequenceNumber":"9","turnInProgress":true}
+
+data: {"eventId":"0f46f5b4-4612-4601-9682-e51ece197802","eventTime":"2026-10-28T01:45:24.338Z","toolResponse":{"id":"call_2186517","tool":"call_kestrel_tool","response":{"status":"PENDING","run_id":"projects/example-project/locations/us-east1/operations/operation-1793151924013-65edcb775885a-94c65ca8-e18b72af","operation":"projects/example-project/locations/us-east1/operations/operation-1793151924013-65edcb775885a-94c65ca8-e18b72af","message":"Evaluation run initiated. The operation is running in the background. The client will resume this session upon completion.","operation_type":"run_evaluation"},"parentToolCallId":"ces_coding_agent_ces_coding_agent:tools_1793151921_d7eb1588-da80-4028-8d79-30df78e565b5_1c661560-01aa-4b5e-b4e9-63ed2b5955e3","agentName":"ces_coding_agent"},"sequenceNumber":"10","turnInProgress":true}
+
+data: {"eventId":"0f46f5b4-4612-4601-9682-e51ece197802","eventTime":"2026-10-28T01:45:24.333Z","textChunk":"Evaluation run initiated in the background. Monitoring operation operation-1793151924013-65edcb775885a-94c65ca8-e18b72af...","sequenceNumber":"11","turnInProgress":true}
+
+data: {"eventId":"0f46f5b4-4612-4601-9682-e51ece197802","eventTime":"2026-10-28T01:45:24.333Z","sequenceNumber":"12","turnInProgress":true}
+
+data: {"sequenceNumber":"13","turnCompleted":{"turnId":"0","reason":"COMPLETED","finalSequenceNumber":"13"}}

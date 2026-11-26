@@ -186,6 +186,7 @@ nav:
       - Callback Tests: guides/evaluation/callback-tests.md
       - Turn Evals: guides/evaluation/turn-evals.md
       - Running Evaluations: guides/evaluation/running-evals-cli.md
+      - Eval Results in BigQuery: guides/evaluation/bigquery-export.md
       - Mock Tool Responses: guides/evaluation/mock-tool-responses.md
     - Linting:
       - guides/linting/index.md
@@ -234,6 +235,7 @@ nav:
     - cxas init: cli/init.md
     - cxas insights: cli/insights.md
     - cxas trace: cli/trace.md
+    - cxas arc: cli/arc.md
   - API Reference:
     - api/index.md
     - Core:
@@ -252,6 +254,7 @@ nav:
       - api/core/conversation-history.md
       - api/core/traces.md
       - api/core/insights.md
+      - api/core/arc.md
     - Evals:
       - api/evals/tool-evals.md
       - api/evals/simulation-evals.md

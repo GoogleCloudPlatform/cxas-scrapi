@@ -61,7 +61,7 @@ evals:
 | `expectations` | list | Post-conversation quality assertions evaluated by Gemini |
 | `tool_expectations` | list | Deterministic assertions on tool calls, inputs, outputs, ordering, and termination (see [Tool Expectations](tool-expectations.md)) |
 | `exclude_common_expectations` | bool | When `true`, skips merging file-level `common_expectations` into this test case |
-| `voice_config` | dict | Optional per-case TTS voice override (`{"voice_name": "...", "language_code": "..."}`); otherwise selected deterministically from `--sim-user-voices` |
+| `voice_config` | dict | Optional per-case TTS voice override (`{"voice_name": "...", "language_code": "...", "model_name": "..."}`; `model_name: ""` is plain Cloud TTS); otherwise selected deterministically from `--sim-user-voices`, with `--sim-user-tts-model` as the model |
 
 ### Step fields
 

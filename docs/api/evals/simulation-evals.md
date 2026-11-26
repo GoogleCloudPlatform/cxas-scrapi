@@ -83,6 +83,7 @@ sim = SimulationEvals(
 - **Acoustic Consistency**: Measures ITU-R BS.1770 LUFS loudness, articulation rate, and F0 pitch stability.
 - **Voice Drift Detection**: Identifies cross-turn timbre and pitch seams, audio truncation, and loudness steps.
 - **Multi-Voice Caller Pool (`sim_user_voices`)**: Pass `sim_user_voices=["en-US-Journey-D", "es-US-Journey-F", ...]` to `SimulationEvals` or `run_simulations()` to deterministically assign locale-matched (`en-US` / `es-US`) TTS voices across scenarios via CRC32 hashing.
+- **Caller TTS Model (`sim_user_tts_model`)**: Pass `sim_user_tts_model` to `SimulationEvals` or `run_simulations()` (CLI: `--sim-user-tts-model`) to choose the TTS model for simulated callers. `""` uses plain Cloud TTS, which needs a Cloud TTS voice such as `en-US-Standard-A` from `sim_user_voices` or the test case's `voice_config`; `None` keeps the built-in default. A test case's own `voice_config.model_name` wins.
 - **Zero-Caller-Turn Inconclusive Retry**: Sessions where `expected_caller_turns(tc) > 0` but `actual_caller_turns(row) == 0` are automatically classified as inconclusive (`"caller turns never reached agent (0 turns)"`) and retried during `infra_retries` waves.
 
 ## Platform Milestone Evaluations (CXAS 2.0)

@@ -135,6 +135,7 @@ def run_all_evals(
     golden_run_method: str = "STABLE",
     platform_sims: bool = False,
     sim_user_voices: list[str] | None = None,
+    sim_user_tts_model: str | None = None,
 ) -> typing.Any:
     """Runs all evaluations and returns aggregated results.
 
@@ -394,6 +395,8 @@ def run_all_evals(
                     sim_eval_kwargs["audio_analysis"] = audio_analysis
                 if sim_user_voices:
                     sim_eval_kwargs["sim_user_voices"] = sim_user_voices
+                if sim_user_tts_model is not None:
+                    sim_eval_kwargs["sim_user_tts_model"] = sim_user_tts_model
                 sim_evals = SimulationEvals(**sim_eval_kwargs)
                 test_cases = []
                 for sf in sim_files:
