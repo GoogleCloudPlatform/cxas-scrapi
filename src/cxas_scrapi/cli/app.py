@@ -400,6 +400,11 @@ def _app_pull(
 
 def app_push(args: argparse.Namespace) -> str | None:
     """Handles the 'push' command."""
+    if getattr(args, "patch", False):
+        from cxas_scrapi.cli.hot_patch_cli import run_hot_patch_cli
+
+        return run_hot_patch_cli(args)
+
     # We will reuse the deploy_agent logic from main.py, slightly adjusted.
     app_dir = args.app_dir if args.app_dir else "."
     print(f"Pushing app from {app_dir}...")

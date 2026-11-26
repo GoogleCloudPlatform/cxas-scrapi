@@ -29,6 +29,12 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from cxas_scrapi.cli.arc_cli import register as register_arc_subparser
+from cxas_scrapi.cli.hot_patch_cli import (
+    attach_hot_patch_args,
+)
+from cxas_scrapi.cli.hot_patch_cli import (
+    register as register_hot_patch_subparsers,
+)
 from cxas_scrapi.cli.insights_cli import populate_insights_parser
 from cxas_scrapi.cli.resources_cli import (
     register as register_resources_subparsers,
@@ -2863,6 +2869,7 @@ def get_parser() -> argparse.ArgumentParser:
             "will be deleted"
         ),
     )
+    attach_hot_patch_args(parser_push)
     parser_push.set_defaults(func=app_push)
 
     # Parser for 'lint'
@@ -3469,6 +3476,9 @@ def get_parser() -> argparse.ArgumentParser:
 
     # Subparsers for 'arc' — the CX Agent Studio AI assistant.
     register_arc_subparser(subparsers)
+
+    # Subparser for 'watch' — live differential hot-patching on file save.
+    register_hot_patch_subparsers(subparsers)
 
     return parser
 
