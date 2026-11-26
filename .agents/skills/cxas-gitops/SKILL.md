@@ -47,7 +47,7 @@ cxas profile validate --all
 ```bash
 git checkout -b feat/my-change
 cxas workspace up --profile dev --team <team>
-export CXAS_PROFILE=ws.local
+export CXAS_PROFILE=ws-feat-my-change.local
 
 # Edit instructions/tools/callbacks locally, then iterate:
 cxas lint --app-dir src/agent

@@ -33,7 +33,7 @@ This creates:
 │   ├── dev.yml                             # Unprotected dev target
 │   ├── qa.yml                              # protected: true
 │   ├── prod.yml                            # protected: true
-│   └── ws.local.yml                        # Gitignored personal workspace profile
+│   └── ws-<branch-slug>.local.yml          # Gitignored branch-scoped workspace profile
 ├── envs/
 │   ├── env-dev.example.json                # Committed schema template
 │   ├── env-qa.example.json
@@ -70,7 +70,7 @@ Instead of editing tracked `app.json` or `gecx-config.json` to point at a person
 ```bash
 git checkout -b feat/billing-handoff
 cxas workspace up --profile dev --team billing
-export CXAS_PROFILE=ws.local
+export CXAS_PROFILE=ws-feat-billing-handoff.local
 
 # Preview merged config diffs without calling CES
 cxas push --dry-run
