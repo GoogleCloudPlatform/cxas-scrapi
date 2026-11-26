@@ -393,6 +393,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100) |
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
     | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
+    | A018 | `tool-and-toolset-env-vars` | Error | Validates `"$env_var"` placeholders across `tools/` and `toolsets/` manifests against `environment.json` |
 
     ---
 
@@ -425,6 +426,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* A static `schema.default` does not match its declared `schema.type` (e.g. `"true"` on a `BOOLEAN`), `variableDeclarations` is placed at the top level of `environment.json` instead of under `app.variableDeclarations`, a `"$env_var"` variable is missing or has a mismatched type in `environment.json`, or `environment.json` overrides a variable that is undeclared or lacks `"default": "$env_var"` in `app.json`.
 
     *Fix:* Ensure `schema.default` values match the declared schema type, set `"default": "$env_var"` in `app.json` for environment-specific variables, and nest per-environment values under `app.variableDeclarations` in `environment.json`.
+
+    ---
+
+    **A018 — tool-and-toolset-env-vars**
+
+    Cross-validates `"$env_var"` placeholders across all `tools/` and `toolsets/` manifests (including `connectorToolset.connection`, `mcpToolset.serverAddress` / `mcpTool.serverAddress`, `openApiTool` / `openApiToolset` schema URLs, `apiAuthentication.*`, `connectorTool.connection`, `dataStoreTool`, `fileSearchTool`, `remoteAgentTool`, `applicationIntegrationTool`, `enterpriseAgentTool`, and `googleSearchTool`) against `environment.json` (or `--env-file` when provided).
+
+    *Triggers:* A tool or toolset declares `"$env_var"` (or references an OpenAPI schema containing `$env_var`), `environment.json` / `--env-file` is present, and the matching entry under `tools.<key>` / `toolsets.<key>` is missing, still `"$env_var"`, empty, or fails the expected GCP resource-name or HTTP/HTTPS URL format.
+
+    *Fix:* Define the concrete environment-specific value under `tools.<displayName_or_dir>` or `toolsets.<displayName_or_dir>` in `environment.json` (or `--env-file`).
 
 === "S — Structure"
 
