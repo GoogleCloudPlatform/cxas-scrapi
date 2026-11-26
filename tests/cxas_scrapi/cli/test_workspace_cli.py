@@ -39,12 +39,21 @@ def test_workspace_parser_subcommands() -> None:
     parser = get_parser()
 
     up_args = parser.parse_args(
-        ["workspace", "up", "--profile", "dev", "--ttl-days", "7"]
+        [
+            "workspace",
+            "up",
+            "--profile",
+            "dev",
+            "--ttl-days",
+            "7",
+            "--no-env-file",
+        ]
     )
     assert up_args.command == "workspace"
     assert up_args.workspace_command == "up"
     assert up_args.profile == "dev"
     assert up_args.ttl_days == 7.0
+    assert up_args.no_env_file is True
 
     list_args = parser.parse_args(
         ["workspace", "list", "--mine", "--include-ci", "--json"]
@@ -204,7 +213,7 @@ def test_workspace_up_cmd_prints_summary(
         branch="feat/1",
         team="core",
         expiry="2026-12-08T00:00:00Z",
-        profile_path=tmp_path / ".cxas" / "profiles" / "ws.local.yml",
+        profile_path=tmp_path / ".cxas" / "profiles" / "ws-feat-1.local.yml",
     )
     with mock.patch(
         "cxas_scrapi.collab.workspace.workspace_up", return_value=fake_res
@@ -220,10 +229,12 @@ def test_workspace_up_cmd_prints_summary(
                 team="core",
                 ttl_days=14.0,
                 env_file=None,
+                no_env_file=False,
                 no_write_profile=False,
             )
         )
     out = capsys.readouterr().out
     assert "Workspace created:" in out
     assert "ws/alice/feat-1" in out
-    assert "ws.local.yml" in out
+    assert "ws-feat-1.local.yml" in out
+    assert "export CXAS_PROFILE=ws-feat-1.local" in out

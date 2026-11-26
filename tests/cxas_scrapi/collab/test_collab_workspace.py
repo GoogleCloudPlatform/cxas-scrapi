@@ -253,7 +253,7 @@ def test_workspace_up_idempotent_creates_updates_and_writes_ws_local_yml(
         )
         assert res1.created is True
         assert res1.display_name == "ws/alice/feat-my-feature"
-        assert res1.profile_path == pdir / "ws.local.yml"
+        assert res1.profile_path == pdir / "ws-feat-my-feature.local.yml"
         assert res1.profile_path.is_file()
 
         written = yaml.safe_load(res1.profile_path.read_text(encoding="utf-8"))
@@ -368,3 +368,164 @@ def test_workspace_up_without_profile_pins_display_name_and_respects_cxas_profil
     )
     assert written_env["target"]["project_id"] == "env-proj"
     assert written_env["target"]["location"] == "europe-west2"
+
+
+def test_apps_delete_app_waits_for_lro() -> None:
+    """Apps.delete_app waits on the DeleteApp LRO .result() before returning."""
+    from cxas_scrapi.core.apps import Apps  # noqa: PLC0415
+
+    apps_inst = Apps.__new__(Apps)
+    fake_lro = mock.MagicMock()
+    fake_client = mock.MagicMock()
+    fake_client.delete_app.return_value = fake_lro
+    apps_inst.client = fake_client
+
+    apps_inst.delete_app("projects/p/locations/us/apps/ws-1")
+    fake_client.delete_app.assert_called_once()
+    fake_lro.result.assert_called_once()
+
+
+def test_delete_workspace_unlocks_locked_app_before_delete() -> None:
+    """delete_workspace unlocks natively locked workspace apps before DeleteApp."""
+    app_name = "projects/p/locations/us/apps/ws-locked"
+    state: dict[str, Any] = {
+        "locked": True,
+        "etag": "e1",
+        "metadata": {
+            "cxas.workspace": json.dumps(
+                {"owner": "alice@example.com", "branch": "feat/x"}
+            ),
+            "cxas.lock": json.dumps(
+                {"by": "alice@example.com", "until": "2099-01-01T00:00:00Z"}
+            ),
+        },
+    }
+    call_order: list[str] = []
+
+    def _get_app(app_name: str) -> types.App:
+        return types.App(
+            name=app_name,
+            display_name="ws/alice/feat-x",
+            locked=state["locked"],
+            metadata=dict(state["metadata"]),
+            etag=state["etag"],
+        )
+
+    def _update_app(request: types.UpdateAppRequest) -> types.App:
+        call_order.append("unlock")
+        if "metadata" in request.update_mask.paths:
+            state["metadata"] = dict(request.app.metadata)
+        if "locked" in request.update_mask.paths:
+            state["locked"] = bool(request.app.locked)
+        state["etag"] += "x"
+        return _get_app(request.app.name)
+
+    def _delete_app(app_name: str, force: bool = False) -> None:
+        del app_name, force
+        call_order.append("delete")
+        assert state["locked"] is False
+        assert "cxas.lock" not in state["metadata"]
+
+    fake_apps = mock.MagicMock()
+    fake_apps.get_app.side_effect = _get_app
+    fake_apps.client.update_app.side_effect = _update_app
+    fake_apps.delete_app.side_effect = _delete_app
+
+    # Passing WorkspaceInfo (like cleanup does) fetches full app and unlocks
+    info = ws.workspace_info_from_app(_get_app(app_name))
+    ws.delete_workspace(fake_apps, info, user="alice@example.com")
+    assert call_order == ["unlock", "delete"]
+
+
+def test_workspace_up_env_file_isolation_and_parallel_branches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Verify branch-scoped profiles, shared env_file warning, --no-env-file, and env-ws.local.json."""
+    (tmp_path / ".git").mkdir()
+    app_dir = tmp_path / "src" / "agent"
+    app_dir.mkdir(parents=True)
+    (app_dir / "app.json").write_text(
+        json.dumps({"displayName": "Shared Dev"}), encoding="utf-8"
+    )
+    envs_dir = tmp_path / "envs"
+    envs_dir.mkdir()
+    dev_env = envs_dir / "env-dev.json"
+    dev_env.write_text("{}", encoding="utf-8")
+
+    pdir = tmp_path / ".cxas" / "profiles"
+    pdir.mkdir(parents=True)
+    (pdir / "dev.yml").write_text(
+        yaml.safe_dump(
+            {
+                "target": {"project_id": "p1", "location": "us"},
+                "app_dir": "src/agent",
+                "env_file": "envs/env-dev.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    state: dict[str, Any] = {"metadata": {}, "etag": "e1"}
+    fake_apps = mock.MagicMock()
+    fake_apps.get_app_by_display_name.return_value = None
+    fake_apps.get_app.side_effect = lambda name: types.App(
+        name=name,
+        metadata=dict(state["metadata"]),
+        locked=False,
+        etag=state["etag"],
+    )
+    fake_apps.client.update_app.side_effect = lambda request: types.App(
+        name=request.app.name,
+        metadata=dict(request.app.metadata),
+        locked=False,
+        etag="e2",
+    )
+
+    seen_env_files: list[str | None] = []
+
+    def _fake_push(**kwargs: Any) -> str:
+        seen_env_files.append(kwargs.get("env_file"))
+        return "projects/p1/locations/us/apps/ws-1"
+
+    with mock.patch("cxas_scrapi.cli.app._app_push", side_effect=_fake_push):
+        # 1. Inheriting shared dev env_file warns on stderr & writes branch-scoped profile
+        res_a = ws.workspace_up(
+            profile="dev",
+            branch="feat/branch-a",
+            apps=fake_apps,
+            user="alice@example.com",
+        )
+        err_a = capsys.readouterr().err
+        assert "inheriting shared env_file" in err_a
+        assert res_a.profile_path == pdir / "ws-feat-branch-a.local.yml"
+        assert seen_env_files[-1] == str(dev_env.resolve())
+
+        # 2. --no-env-file skips profile env_file with no warning & separate branch profile
+        res_b = ws.workspace_up(
+            profile="dev",
+            branch="feat/branch-b",
+            use_profile_env_file=False,
+            apps=fake_apps,
+            user="alice@example.com",
+        )
+        err_b = capsys.readouterr().err
+        assert err_b == ""
+        assert res_b.profile_path == pdir / "ws-feat-branch-b.local.yml"
+        assert res_a.profile_path.is_file()
+        assert res_b.profile_path.is_file()
+        assert seen_env_files[-1] is None
+
+        # 3. envs/env-ws.local.json is auto-selected over shared dev env_file with no warning
+        ws_env = envs_dir / "env-ws.local.json"
+        ws_env.write_text("{}", encoding="utf-8")
+        ws.workspace_up(
+            profile="dev",
+            branch="feat/branch-c",
+            apps=fake_apps,
+            user="alice@example.com",
+        )
+        assert capsys.readouterr().err == ""
+        assert seen_env_files[-1] == str(ws_env)

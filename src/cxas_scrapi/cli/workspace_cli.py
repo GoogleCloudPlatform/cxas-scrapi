@@ -124,6 +124,7 @@ def workspace_up_cmd(args: argparse.Namespace) -> None:
             team=getattr(args, "team", None),
             ttl_days=getattr(args, "ttl_days", ws.DEFAULT_TTL_DAYS),
             env_file=getattr(args, "env_file", None),
+            use_profile_env_file=not getattr(args, "no_env_file", False),
             write_profile=not getattr(args, "no_write_profile", False),
         )
     except Exception as e:
@@ -142,6 +143,7 @@ def workspace_up_cmd(args: argparse.Namespace) -> None:
     print(f"  expires: {result.expiry}")
     if result.profile_path:
         print(f"  profile: {result.profile_path}")
+        print(f"  export:  export CXAS_PROFILE={result.profile_path.stem}")
 
 
 def workspace_list_cmd(args: argparse.Namespace) -> None:
@@ -347,7 +349,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     p_up = ws_sub.add_parser(
         "up",
-        help="Create or update an ephemeral workspace app and write ws.local.yml.",
+        help=(
+            "Create or update an ephemeral workspace app and write a "
+            "branch-scoped ws-<branch>.local.yml profile."
+        ),
     )
     p_up.add_argument(
         "--app-dir",
@@ -374,13 +379,19 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     p_up.add_argument(
         "--env-file",
         default=None,
-        help="Optional environment JSON file (defaults to profile env_file).",
+        help="Optional environment JSON file (defaults to envs/env-ws.local.json or profile env_file).",
+    )
+    p_up.add_argument(
+        "--no-env-file",
+        action="store_true",
+        default=False,
+        help="Do not inherit env_file from --profile (avoids shared dev backends).",
     )
     p_up.add_argument(
         "--no-write-profile",
         action="store_true",
         default=False,
-        help="Do not write .cxas/profiles/ws.local.yml.",
+        help="Do not write .cxas/profiles/ws-<branch>.local.yml.",
     )
     _add_project_location_profile_args(p_up)
     p_up.set_defaults(func=workspace_up_cmd)

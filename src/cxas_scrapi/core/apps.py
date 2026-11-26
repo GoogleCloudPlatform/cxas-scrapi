@@ -162,9 +162,11 @@ class Apps(Common):
         return self.client.update_app(request=request)
 
     def delete_app(self, app_name: str, force: bool = False) -> None:
-        """Deletes a specific app."""
+        """Deletes a specific app and waits for the DeleteApp LRO."""
         request = types.DeleteAppRequest(name=app_name)
-        self.client.delete_app(request=request)
+        op = self.client.delete_app(request=request)
+        if op is not None and callable(getattr(op, "result", None)):
+            op.result()
 
     def export_app(
         self,

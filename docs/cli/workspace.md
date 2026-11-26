@@ -1,11 +1,11 @@
 # cxas workspace
 
-`cxas workspace` manages ephemeral GitOps CES workspaces tied to your feature branches — spinning up an isolated sandbox app from local source, emitting a gitignored `.cxas/profiles/ws.local.yml` profile so every CLI command targets it seamlessly, and sweeping expired sandboxes or orphaned `[CI] PR-*` apps automatically.
+`cxas workspace` manages ephemeral GitOps CES workspaces tied to your feature branches — spinning up an isolated sandbox app from local source, emitting a gitignored branch-scoped `.cxas/profiles/ws-<branch-slug>.local.yml` profile (falling back to `ws.local.yml` when no branch is detected) so parallel branches/worktrees never collide, and sweeping expired sandboxes or orphaned `[CI] PR-*` apps automatically.
 
 ## Usage
 
 ```bash
-cxas workspace up [--app-dir DIR] [--profile PROFILE] [--name NAME] [--team TEAM] [--ttl-days DAYS] [--env-file FILE] [--no-write-profile]
+cxas workspace up [--app-dir DIR] [--profile PROFILE] [--name NAME] [--team TEAM] [--ttl-days DAYS] [--env-file FILE | --no-env-file] [--no-write-profile]
 cxas workspace list [--mine] [--team TEAM] [--include-ci] [--json]
 cxas workspace down [NAME] [--branch BRANCH] [--pr NUM] [--force] [--yes]
 cxas workspace cleanup [--team TEAM] [--all-users] [--include-ci] [--ci-ttl-hours HOURS] [--dry-run] [--yes]
@@ -15,7 +15,9 @@ cxas workspace cleanup [--team TEAM] [--all-users] [--include-ci] [--ci-ttl-hour
 
 ### `cxas workspace up`
 
-Idempotently creates or updates an ephemeral workspace app named `ws/<user>/<branch-slug>` (or `--name`), inherits `project_id`, `location`, `env_file`, `app_dir`, and `overrides` from `--profile` if provided, stamps `cxas.workspace` + `cxas.expiry` metadata, and writes `.cxas/profiles/ws.local.yml`.
+Idempotently creates or updates an ephemeral workspace app named `ws/<user>/<branch-slug>` (or `--name`), inherits `project_id`, `location`, `app_dir`, and `overrides` from `--profile` if provided, stamps `cxas.workspace` + `cxas.expiry` metadata, and writes `.cxas/profiles/ws-<branch-slug>.local.yml`.
+
+If `--env-file` is not passed, `workspace up` checks for an isolated `envs/env-ws.local.json` first; if it falls back to inheriting a shared `env_file` from `--profile`, it prints a warning recommending `envs/env-ws.local.json`, `--env-file`, or `--no-env-file` so ephemeral workspaces do not accidentally write into shared `dev` backends.
 
 Refuses shared branches (`main`, `master`, `dev`, `qa`, `uat`, `prod`) unless `--name` is passed explicitly.
 
@@ -27,8 +29,9 @@ Refuses shared branches (`main`, `master`, `dev`, `qa`, `uat`, `prod`) unless `-
 | `--branch BRANCH` | Current Git branch | Override detected Git branch name. |
 | `--team TEAM` | — | Optional team tag recorded in `cxas.team`. |
 | `--ttl-days DAYS` | `14` | Expiration TTL in days (recorded in `cxas.expiry`). |
-| `--env-file FILE` | Profile `env_file` | Environment JSON file to inject. |
-| `--no-write-profile` | `false` | Skip writing `.cxas/profiles/ws.local.yml`. |
+| `--env-file FILE` | `envs/env-ws.local.json` or profile `env_file` | Environment JSON file to inject. |
+| `--no-env-file` | `false` | Do not inherit `env_file` from `--profile`. |
+| `--no-write-profile` | `false` | Skip writing `.cxas/profiles/ws-<branch-slug>.local.yml`. |
 
 ### `cxas workspace list`
 
@@ -72,12 +75,12 @@ Deletes expired workspaces (and optionally orphaned `[CI] PR-*` apps older than 
 # Spin up a personal sandbox for your current feature branch
 cxas workspace up --profile dev --team payments
 
-# Iterate with zero stash tax using the generated ws.local profile
-export CXAS_PROFILE=ws.local
+# Iterate with zero stash tax using the generated branch-scoped profile
+export CXAS_PROFILE=ws-feat-payments.local
 cxas push
 cxas run --tags smoke --wait
 
-# Tear down when your PR merges
+# Tear down when your PR merges (automatically unlocks locked workspaces)
 cxas workspace down --yes
 
 # Nightly CI sweep of expired workspaces and orphaned PR apps
@@ -86,5 +89,5 @@ cxas workspace cleanup --all-users --include-ci --yes --project-id my-proj --loc
 
 ## Related Commands
 
-- [`cxas profile`](profile.md) — Runtime profiles (`ws.local.yml`).
+- [`cxas profile`](profile.md) — Runtime profiles (`ws-<branch-slug>.local.yml`).
 - [`cxas push`](push.md) — Push local edits to your workspace or environment.

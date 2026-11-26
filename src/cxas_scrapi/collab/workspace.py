@@ -36,6 +36,7 @@ import json
 import logging
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +44,7 @@ import yaml
 
 from cxas_scrapi.collab.metadata import (
     EXPIRY_KEY,
+    LOCK_KEY,
     METADATA_PREFIX,
     TEAM_KEY,
     WORKSPACE_KEY,
@@ -161,6 +163,13 @@ def default_workspace_display_name(user: str, branch: str) -> str:
     user_slug = _slug(local_user, max_len=24)
     branch_slug = _slug(branch, max_len=40)
     return f"ws/{user_slug}/{branch_slug}"
+
+
+def default_workspace_profile_filename(branch: str | None) -> str:
+    """Return ``ws-<branch-slug>.local.yml`` or ``ws.local.yml``."""
+    if branch and branch.strip():
+        return f"ws-{_slug(branch, max_len=40)}.local.yml"
+    return WS_LOCAL_PROFILE_FILENAME
 
 
 def is_ci_pr_app_name(display_name: str) -> bool:
@@ -380,6 +389,19 @@ def delete_workspace(
             f"Workspace '{info.display_name}' is owned by {owner}, not you. "
             "Pass --force to delete another user's workspace."
         )
+    app_obj = app
+    if isinstance(app, WorkspaceInfo):
+        try:
+            app_obj = apps.get_app(app_name=info.name)
+        except Exception:  # noqa: BLE001
+            app_obj = None
+    if getattr(app_obj, "locked", False) is True:
+        caller = user or current_user()
+        AppMetadataStore(info.name, apps=apps, user=caller).update(
+            lambda d: d.pop(LOCK_KEY, None),
+            native_lock=False,
+            check_lock=False,
+        )
     apps.delete_app(app_name=info.name, force=True)
     return info
 
@@ -506,6 +528,7 @@ def workspace_up(
     team: str | None = None,
     ttl_days: float = DEFAULT_TTL_DAYS,
     env_file: str | None = None,
+    use_profile_env_file: bool = True,
     write_profile: bool = True,
     write_profile_path: str | Path | None = None,
     apps: Apps | None = None,
@@ -543,11 +566,6 @@ def workspace_up(
         )
         or "."
     )
-    eff_env_file = env_file or (
-        str(resolved_profile.env_file)
-        if resolved_profile and resolved_profile.env_file
-        else None
-    )
 
     caller = user or current_user()
     eff_branch = branch or current_git_branch(cwd=eff_app_dir)
@@ -568,12 +586,36 @@ def workspace_up(
     else:
         display_name = name
 
+    # Resolve env_file with shared-dev isolation guard:
+    # --env-file > --no-env-file > envs/env-ws.local.json > profile (warn)
+    isolated_ws_env = project_root / "envs" / "env-ws.local.json"
+    if env_file:
+        eff_env_file: str | None = env_file
+    elif not use_profile_env_file:
+        eff_env_file = None
+    elif isolated_ws_env.is_file():
+        eff_env_file = str(isolated_ws_env)
+    elif resolved_profile and resolved_profile.env_file:
+        eff_env_file = str(resolved_profile.env_file)
+        print(
+            f"Warning: Workspace '{display_name}' is inheriting shared "
+            f"env_file '{eff_env_file}' from profile "
+            f"'{resolved_profile.name}'. To avoid writing into shared dev "
+            "resources (e.g. BQ/GCS), create 'envs/env-ws.local.json', "
+            "pass --env-file <isolated.json>, or pass --no-env-file.",
+            file=sys.stderr,
+        )
+    else:
+        eff_env_file = None
+
     apps_client = apps or AppsClient(
         project_id=eff_project_id, location=eff_location
     )
     existing = apps_client.get_app_by_display_name(display_name)
     created = existing is None
     target_app_name = getattr(existing, "name", None) if existing else None
+
+    profile_filename = default_workspace_profile_filename(eff_branch)
 
     # Build a staging profile so app_overrides apply AND displayName is always
     # pinned to the workspace display_name (preventing import_app from renaming
@@ -595,10 +637,8 @@ def workspace_up(
             }
     else:
         staging_profile = ResolvedProfile(
-            name="ws.local",
-            source_path=project_root
-            / PROFILES_REL_DIR
-            / WS_LOCAL_PROFILE_FILENAME,
+            name=profile_filename.removesuffix(".yml"),
+            source_path=project_root / PROFILES_REL_DIR / profile_filename,
             project_root=project_root,
             overrides={"app.json": {"displayName": display_name}},
         )
@@ -646,7 +686,7 @@ def workspace_up(
         target_profile_path = (
             Path(write_profile_path)
             if write_profile_path
-            else project_root / PROFILES_REL_DIR / WS_LOCAL_PROFILE_FILENAME
+            else project_root / PROFILES_REL_DIR / profile_filename
         )
         app_id = pushed_app_name.rsplit("/", 1)[-1]
         written_profile = _write_ws_local_profile(
