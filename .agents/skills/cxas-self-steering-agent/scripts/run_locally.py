@@ -219,12 +219,24 @@ class Runner:
         return response, request
 
 
+def _empty(schema: dict[str, Any]) -> Any:
+    """Returns a variable's declared default, or an empty value of its type."""
+    if "default" in schema:
+        return schema["default"]
+    kind = schema.get("type")
+    if kind == "OBJECT":
+        return {
+            k: _empty(v) for k, v in (schema.get("properties") or {}).items()
+        }
+    if kind == "ARRAY":
+        return []
+    return {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}.get(kind)
+
+
 def _defaults(app: dict[str, Any]) -> dict[str, Any]:
-    empty = {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}
     out = {}
     for var in app.get("variableDeclarations", []):
-        schema = var.get("schema", {})
-        out[var["name"]] = schema.get("default", empty.get(schema.get("type")))
+        out[var["name"]] = _empty(var.get("schema", {}))
     tz = app.get("timeZoneSettings", {}).get("timeZone", "UTC")
     out.setdefault("current_date", f"{datetime.date.today().isoformat()}[{tz}]")
     return out

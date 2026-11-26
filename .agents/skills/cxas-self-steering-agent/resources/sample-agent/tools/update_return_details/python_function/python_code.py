@@ -20,7 +20,8 @@ def update_return_details(
 
   Supports initial slot collection, early details volunteered by the customer,
   and edits during the pre-booking summary review. Modifying any detail resets
-  return_summary_confirmed so the updated summary is confirmed before booking.
+  summary_confirmed so the updated summary is confirmed before booking.
+  Details collected for a different order start over.
 
   Args:
     reason (Optional[str]): Why the customer is returning the item, one of
@@ -39,25 +40,39 @@ def update_return_details(
       not_recorded for any fields skipped because availability was not checked
       yet, or pickup_already_booked once the pickup has been booked.
   """
-  if context.state.get("return_pickup_completed"):
+  order_id = (context.state.get("order") or {}).get("order_id") or ""
+  if not order_id:
+    return {"status": "error", "error": "no_active_order"}
+  if (context.state.get("return_pickup") or {}).get("order_id") == order_id:
     return {"status": "error", "error": "pickup_already_booked"}
-
+  details = dict(context.state.get("return_details") or {})
+  if details.get("order_id") != order_id:
+    # Details collected for another order don't carry over.
+    details = {
+        "order_id": order_id,
+        "reason": "",
+        "pickup_day": "",
+        "pickup_window": "",
+        "contact_phone": "",
+        "summary_confirmed": False,
+    }
+  availability_checked = (
+      context.state.get("availability_order_id") == order_id
+  )
   updated: dict[str, Any] = {}
   not_recorded: dict[str, str] = {}
   edited = False
-
   if reason is not None:
     if reason not in VALID_REASONS:
       return {
           "status": "invalid_reason",
           "valid_reasons": list(VALID_REASONS),
       }
-    context.state["return_reason"] = reason
-    updated["return_reason"] = reason
+    details["reason"] = reason
+    updated["reason"] = reason
     edited = True
-
   if pickup_day is not None or pickup_window is not None:
-    if not context.state.get("return_availability_checked"):
+    if not availability_checked:
       if pickup_day is not None:
         not_recorded["pickup_day"] = "availability_not_checked"
       if pickup_window is not None:
@@ -66,48 +81,48 @@ def update_return_details(
       if pickup_day is not None:
         matched_day = _match_day(pickup_day)
         if not matched_day:
+          context.state["return_details"] = details
           return {
               "status": "invalid_pickup_day",
               "available_days": list(AVAILABLE_DAYS),
               "updated": updated,
           }
-        context.state["return_pickup_day"] = matched_day
-        updated["return_pickup_day"] = matched_day
+        details["pickup_day"] = matched_day
+        updated["pickup_day"] = matched_day
         edited = True
       if pickup_window is not None:
         window = pickup_window.strip().lower()
         if window not in VALID_WINDOWS:
+          context.state["return_details"] = details
           return {
               "status": "invalid_pickup_window",
               "valid_windows": list(VALID_WINDOWS),
               "updated": updated,
           }
-        context.state["return_pickup_window"] = window
-        updated["return_pickup_window"] = window
+        details["pickup_window"] = window
+        updated["pickup_window"] = window
         edited = True
-
   if contact_phone is not None:
     phone_status, formatted_phone = _validate_us_phone(contact_phone)
     if phone_status != "ok":
+      context.state["return_details"] = details
       return {
           "status": phone_status,
           "updated": updated,
       }
-    context.state["return_contact_phone"] = formatted_phone
-    updated["return_contact_phone"] = formatted_phone
+    details["contact_phone"] = formatted_phone
+    updated["contact_phone"] = formatted_phone
     edited = True
-
   if edited:
-    context.state["return_summary_confirmed"] = False
+    details["summary_confirmed"] = False
   elif summary_confirmed is not None:
-    context.state["return_summary_confirmed"] = bool(summary_confirmed)
-    updated["return_summary_confirmed"] = bool(summary_confirmed)
-
+    details["summary_confirmed"] = bool(summary_confirmed)
+    updated["summary_confirmed"] = bool(summary_confirmed)
+  context.state["return_details"] = details
   result: dict[str, Any] = {"status": "updated", "updated": updated}
   if not_recorded:
     result["not_recorded"] = not_recorded
   return result
-
 
 def _match_day(raw_day: str) -> str:
   cleaned = (raw_day or "").strip().lower()

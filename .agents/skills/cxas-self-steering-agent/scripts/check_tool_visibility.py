@@ -56,7 +56,7 @@ VALID_OUTPUT_EXPR = re.compile(
 SINGLE_VAR = re.compile(r"(?<!\{)\{([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\}(?!\})")
 TAG = re.compile(r"\{\{%.*?%\}\}|(?<!\{)\{%.*?%\}(?!\})|\{\{.*?\}\}", re.S)
 PROSE_STATE_CHECK = re.compile(
-    r"\b(?:if|when|once|whether|unless)\s+`?([A-Za-z_]\w*)`?\s*"
+    r"\b(?:if|when|once|whether|unless)\s+`?([A-Za-z_]\w*(?:\.\w+)*)`?\s*"
     r"(?:==|!=|\bis\s+(?:not\s+)?(?:empty|true|false|set|none|null)\b)"
     r"|`([A-Za-z_]\w*)`\s*(?:==|!=)",
     re.I,
@@ -91,6 +91,7 @@ VERBATIM_RESULT = re.compile(
 TOOL_REF = re.compile(r"\{@TOOL:\s*\w+\s*\}")
 # State the router tools may write.
 ROUTER_STATE_KEYS = frozenset({"current_playbook", "current_task"})
+QUOTED = re.compile(r"['\"]([^'\"]+)['\"]")
 # Static blocks where an always-available tool must not be named.
 NO_TOOL_BLOCKS = ("role", "context", "constraints")
 OPEN_PLAYBOOK_CODE = "tools/open_playbook/python_function/python_code.py"
@@ -136,12 +137,24 @@ def _literal(path: pathlib.Path, name: str) -> Any:
     return None
 
 
+def _empty(schema: dict[str, Any]) -> Any:
+    """Returns a variable's declared default, or an empty value of its type."""
+    if "default" in schema:
+        return schema["default"]
+    kind = schema.get("type")
+    if kind == "OBJECT":
+        return {
+            k: _empty(v) for k, v in (schema.get("properties") or {}).items()
+        }
+    if kind == "ARRAY":
+        return []
+    return {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}.get(kind)
+
+
 def _defaults(app: dict[str, Any]) -> dict[str, Any]:
-    empty = {"STRING": "", "BOOLEAN": False, "NUMBER": 0, "INTEGER": 0}
     out = {}
     for var in app.get("variableDeclarations", []):
-        schema = var.get("schema", {})
-        out[var["name"]] = schema.get("default", empty.get(schema.get("type")))
+        out[var["name"]] = _empty(var.get("schema", {}))
     tz = app.get("timeZoneSettings", {}).get("timeZone", "UTC")
     out.setdefault("current_date", f"{datetime.date.today().isoformat()}[{tz}]")
     return out
@@ -328,7 +341,7 @@ def _syntax_problems(app: _App) -> list[str]:
         )
     for match in PROSE_STATE_CHECK.finditer(prose):
         var = match.group(1) or match.group(2)
-        if var in declared:
+        if var.split(".")[0] in declared:
             snippet = " ".join(match.group(0).split())
             problems.append(
                 f"prose state check on variable {var!r} ({snippet!r}): branch"
@@ -445,6 +458,36 @@ def _router_state_problems(app: _App) -> list[str]:
                     " routers set"
                     " only current_playbook and current_task, and the tool that"
                     " changes a record clears what depended on it"
+                )
+    return problems
+
+
+def _object_schemas(app: _App) -> dict[str, dict[str, Any]]:
+    """Returns the schema of each declared OBJECT variable."""
+    return {
+        v["name"]: v.get("schema", {})
+        for v in app.config.get("variableDeclarations", [])
+        if v.get("schema", {}).get("type") == "OBJECT"
+    }
+
+
+def _nested_property_problems(app: _App) -> list[str]:
+    """Finds instruction refs to properties an OBJECT variable doesn't declare.
+
+    An undeclared property always renders empty, which silently flips the
+    branch it's in.
+    """
+    problems = []
+    objects = _object_schemas(app)
+    for tag in TAG.findall(app.without_comments):
+        body = QUOTED.sub(" ", tag)
+        for head, child in re.findall(r"(?<![\w.])(\w+)\.(\w+)", body):
+            props = objects.get(head, {}).get("properties")
+            if props and child not in props:
+                problems.append(
+                    f"{head}.{child} isn't a declared property of {head!r}"
+                    f" (declared: {', '.join(sorted(props))}); it always"
+                    " renders empty"
                 )
     return problems
 
@@ -774,6 +817,7 @@ def main() -> None:
         + _code_problems(app)
         + _router_problems(app, playbook_tasks)
         + _router_state_problems(app)
+        + _nested_property_problems(app)
     )
     try:
         template, undeclared = _compile(app)

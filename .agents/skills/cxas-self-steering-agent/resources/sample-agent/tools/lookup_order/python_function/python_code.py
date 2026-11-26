@@ -31,6 +31,7 @@ SAMPLE_ORDERS = {
 }
 
 
+
 def lookup_order(order_number: str) -> dict[str, Any]:
   """Looks up an order by its order number.
 
@@ -44,44 +45,26 @@ def lookup_order(order_number: str) -> dict[str, Any]:
       the customer verifies its shipping ZIP code.
   """
   number = re.sub(r"\D", "", order_number or "")
-  order = SAMPLE_ORDERS.get(number)
-  if order is None:
-    _reset_order_state(context.state)
+  found = SAMPLE_ORDERS.get(number)
+  if found is None:
+    context.state["order"] = {
+        "order_id": "",
+        "status": "",
+        "item": "",
+        "delivery": "",
+        "on_file_zip": "",
+    }
     return {"found": False, "order_number": order_number}
 
-  if context.state.get("order_id") == number:
-    # Keep the status and verification of the order already selected.
-    return {"found": True, "order_number": number}
-
-  _reset_order_state(context.state)
-  context.state["order_id"] = number
-  context.state["order_status"] = order["status"]
-  context.state["order_item"] = order["item"]
-  context.state["order_delivery"] = (
-      f"estimated delivery {order['estimated_delivery']}"
-      if "estimated_delivery" in order
-      else f"delivered {order['delivered_on']}"
-  )
-  context.state["on_file_zip"] = order["zip"]
+  context.state["order"] = {
+      "order_id": number,
+      "status": found["status"],
+      "item": found["item"],
+      "delivery": (
+          f"estimated delivery {found['estimated_delivery']}"
+          if "estimated_delivery" in found
+          else f"delivered {found['delivered_on']}"
+      ),
+      "on_file_zip": found["zip"],
+  }
   return {"found": True, "order_number": number}
-
-
-def _reset_order_state(state: Any) -> None:
-  """Clears the order and return details kept from the previous order."""
-  for key, val in (
-      ("order_id", ""),
-      ("order_status", ""),
-      ("order_item", ""),
-      ("order_delivery", ""),
-      ("on_file_zip", ""),
-      ("zip_verified", False),
-      ("return_reason", ""),
-      ("return_availability_checked", False),
-      ("return_pickup_day", ""),
-      ("return_pickup_window", ""),
-      ("return_contact_phone", ""),
-      ("return_summary_confirmed", False),
-      ("return_pickup_completed", False),
-      ("return_confirmation_id", ""),
-  ):
-    state[key] = val

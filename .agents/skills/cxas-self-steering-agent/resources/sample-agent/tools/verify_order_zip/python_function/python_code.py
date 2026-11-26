@@ -20,26 +20,32 @@ def verify_order_zip(postal_code: str) -> dict[str, Any]:
       flag, the order's details once verified, and remaining attempts on a
       mismatch.
   """
-  if not context.state.get("order_id"):
+  order = context.state.get("order") or {}
+  order_id = order.get("order_id") or ""
+  if not order_id:
     return {"status": "no_active_order", "verified": False}
 
   code = (postal_code or "").strip()
   if not re.fullmatch(r"\d{5}", code):
     return {"status": "invalid_zip", "verified": False}
 
-  if code == context.state.get("on_file_zip"):
-    context.state["zip_verified"] = True
+  zip_check = dict(context.state.get("zip_check") or {})
+  if code == order.get("on_file_zip"):
+    zip_check["verified_order_id"] = order_id
+    context.state["zip_check"] = zip_check
     return {
         "status": "verified",
         "verified": True,
-        "order_number": context.state.get("order_id") or "",
-        "item": context.state.get("order_item") or "",
-        "order_status": context.state.get("order_status") or "",
-        "delivery": context.state.get("order_delivery") or "",
+        "order_number": order_id,
+        "item": order.get("item") or "",
+        "order_status": order.get("status") or "",
+        "delivery": order.get("delivery") or "",
     }
 
-  attempts = int(context.state.get("zip_attempts") or 0) + 1
-  context.state["zip_attempts"] = attempts
+  # Numbers in OBJECT variables come back as floats.
+  attempts = int(zip_check.get("failed_attempts") or 0) + 1
+  zip_check["failed_attempts"] = attempts
+  context.state["zip_check"] = zip_check
   if attempts >= MAX_ZIP_ATTEMPTS:
     context.state["pending_handoff_reason"] = "zip_verification_failed"
     return {

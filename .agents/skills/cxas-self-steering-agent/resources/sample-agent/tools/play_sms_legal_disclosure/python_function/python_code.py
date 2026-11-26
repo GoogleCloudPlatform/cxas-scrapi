@@ -16,7 +16,7 @@ def play_sms_legal_disclosure() -> dict[str, Any]:
   Returns:
     dict[str, Any]: Status and the order number for which terms were shared.
   """
-  order_id = context.state.get("order_id") or ""
+  order_id = (context.state.get("order") or {}).get("order_id") or ""
   if not order_id:
     return {"status": "error", "error": "no_active_order"}
 

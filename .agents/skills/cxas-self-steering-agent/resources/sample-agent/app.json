@@ -83,64 +83,58 @@
       }
     },
     {
-      "name": "order_id",
-      "description": "Order number of the order that was last looked up.",
+      "name": "order",
+      "description": "Written only by lookup_order: the order the customer is asking about (number, status, item, delivery) and its on-file shipping ZIP code, which is never shown to the model.",
       "schema": {
-        "type": "STRING",
-        "default": ""
+        "type": "OBJECT",
+        "properties": {
+          "order_id": {
+            "type": "STRING"
+          },
+          "status": {
+            "type": "STRING"
+          },
+          "item": {
+            "type": "STRING"
+          },
+          "delivery": {
+            "type": "STRING"
+          },
+          "on_file_zip": {
+            "type": "STRING"
+          }
+        },
+        "default": {
+          "order_id": "",
+          "status": "",
+          "item": "",
+          "delivery": "",
+          "on_file_zip": ""
+        }
       }
     },
     {
-      "name": "order_status",
-      "description": "Status of the order that was last looked up (Processing, Shipped, Delivered, Canceled, Return Started, Return Pickup Scheduled).",
+      "name": "zip_check",
+      "description": "Written only by verify_order_zip: the order number whose shipping ZIP code the customer verified, and failed ZIP attempts in the conversation.",
       "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "order_item",
-      "description": "Item name for the order that was last looked up.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "order_delivery",
-      "description": "Estimated or actual delivery of the order that was last looked up.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "on_file_zip",
-      "description": "Shipping ZIP code stored on the looked-up order, checked by verify_order_zip and never shown in the prompt before verification.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
-      }
-    },
-    {
-      "name": "zip_verified",
-      "description": "Whether the customer verified the shipping ZIP code for the current order.",
-      "schema": {
-        "type": "BOOLEAN",
-        "default": false
-      }
-    },
-    {
-      "name": "zip_attempts",
-      "description": "Number of non-matching ZIP code attempts in the conversation, across all orders.",
-      "schema": {
-        "type": "INTEGER",
-        "default": 0
+        "type": "OBJECT",
+        "properties": {
+          "verified_order_id": {
+            "type": "STRING"
+          },
+          "failed_attempts": {
+            "type": "INTEGER"
+          }
+        },
+        "default": {
+          "verified_order_id": "",
+          "failed_attempts": 0
+        }
       }
     },
     {
       "name": "sms_disclosure_played",
-      "description": "Order number for which the text message terms were shared with the customer.",
+      "description": "Written only by play_sms_legal_disclosure: the order number the text message terms were shared for.",
       "schema": {
         "type": "STRING",
         "default": ""
@@ -148,74 +142,96 @@
     },
     {
       "name": "sms_summary_sent",
-      "description": "Order number for which the order summary text was sent.",
+      "description": "Written only by send_sms_summary: the order number whose summary was texted.",
       "schema": {
         "type": "STRING",
         "default": ""
       }
     },
     {
-      "name": "return_reason",
-      "description": "Validated return reason for a return pickup (damaged, wrong_item, changed_mind, other).",
+      "name": "canceled_order_id",
+      "description": "Written only by submit_cancellation: the order number canceled in this conversation.",
       "schema": {
         "type": "STRING",
         "default": ""
       }
     },
     {
-      "name": "return_availability_checked",
-      "description": "Whether pickup days and windows have been checked for the current order.",
-      "schema": {
-        "type": "BOOLEAN",
-        "default": false
-      }
-    },
-    {
-      "name": "return_pickup_day",
-      "description": "Selected pickup day for a return pickup.",
+      "name": "mail_return_order_id",
+      "description": "Written only by create_mail_return: the order number a mail return was started for.",
       "schema": {
         "type": "STRING",
         "default": ""
       }
     },
     {
-      "name": "return_pickup_window",
-      "description": "Selected time window for a return pickup (morning or afternoon).",
+      "name": "availability_order_id",
+      "description": "Written only by check_return_pickup_availability: the order number pickup availability was checked for.",
       "schema": {
         "type": "STRING",
         "default": ""
       }
     },
     {
-      "name": "return_contact_phone",
-      "description": "Validated 10-digit callback phone number for a return pickup.",
+      "name": "return_details",
+      "description": "Written only by update_return_details: the courier pickup details collected for one order, and whether the customer confirmed the summary.",
       "schema": {
-        "type": "STRING",
-        "default": ""
+        "type": "OBJECT",
+        "properties": {
+          "order_id": {
+            "type": "STRING"
+          },
+          "reason": {
+            "type": "STRING"
+          },
+          "pickup_day": {
+            "type": "STRING"
+          },
+          "pickup_window": {
+            "type": "STRING"
+          },
+          "contact_phone": {
+            "type": "STRING"
+          },
+          "summary_confirmed": {
+            "type": "BOOLEAN"
+          }
+        },
+        "default": {
+          "order_id": "",
+          "reason": "",
+          "pickup_day": "",
+          "pickup_window": "",
+          "contact_phone": "",
+          "summary_confirmed": false
+        }
       }
     },
     {
-      "name": "return_summary_confirmed",
-      "description": "Whether the customer confirmed the pre-booking return pickup summary.",
+      "name": "return_pickup",
+      "description": "Written only by submit_return_pickup: the booked courier pickup (order number, confirmation ID, day and window).",
       "schema": {
-        "type": "BOOLEAN",
-        "default": false
-      }
-    },
-    {
-      "name": "return_pickup_completed",
-      "description": "Whether the return pickup booking has been submitted for the current order.",
-      "schema": {
-        "type": "BOOLEAN",
-        "default": false
-      }
-    },
-    {
-      "name": "return_confirmation_id",
-      "description": "Confirmation ID returned when a return pickup is booked.",
-      "schema": {
-        "type": "STRING",
-        "default": ""
+        "type": "OBJECT",
+        "properties": {
+          "order_id": {
+            "type": "STRING"
+          },
+          "confirmation_id": {
+            "type": "STRING"
+          },
+          "pickup_day": {
+            "type": "STRING"
+          },
+          "pickup_window": {
+            "type": "STRING"
+          }
+        },
+        "default": {
+          "order_id": "",
+          "confirmation_id": "",
+          "pickup_day": "",
+          "pickup_window": ""
+        }
       }
     }
   ],

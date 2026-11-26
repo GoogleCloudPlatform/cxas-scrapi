@@ -7,3 +7,10 @@ rules:
   A007: "off"  # Channel-neutral sample (chat or voice); no voice Director's Note in app.json.
   A009: "off"  # Channel-neutral sample (chat or voice); no voice Director's Note in app.json.
   T014: "off"  # Routing, disclosure and handoff tools are called without speaking first.
+
+options:
+  V105:
+    # Routing and handoff plumbing: open_playbook clears current_task before
+    # load_task sets it, and execute_live_agent_handover clears the reason
+    # verify_order_zip set. Neither pair runs in the same step.
+    ignore: [current_task, pending_handoff_reason]

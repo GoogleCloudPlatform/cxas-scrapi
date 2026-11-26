@@ -11,7 +11,7 @@ def send_sms_summary() -> dict[str, Any]:
   Returns:
     dict[str, Any]: Delivery status and the order number summarized.
   """
-  order_id = context.state.get("order_id") or ""
+  order_id = (context.state.get("order") or {}).get("order_id") or ""
   if not order_id:
     return {"status": "error", "error": "no_active_order"}
   if context.state.get("sms_disclosure_played") != order_id:

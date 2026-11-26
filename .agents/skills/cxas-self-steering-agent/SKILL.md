@@ -171,7 +171,7 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    - Intake/update tools (`update_...`) return only the fields updated in
      that call (plus `not_recorded` when co-batched fields were skipped
      because an earlier gate wasn't complete), never a full state dump.
-   - Keep unverified on-file data (such as `on_file_zip` or full account
+   - Keep unverified on-file data (such as `order.on_file_zip` or full account
      numbers) in session state for verification tools to check, and return
      only verified flags or masked values (such as `last4`) to the model. The
      sample's `lookup_order` returns only whether the order exists, and
@@ -199,6 +199,50 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
      no way to change a booking), or, if the backend can change a submitted
      request, add a tool that changes it there and updates state in the same
      call, and name that tool in the done step.
+1. **Few session variables, grouped by the tool that writes them.** Every
+   slot, flag and counter declared as its own top-level variable makes an app
+   grow by hundreds of variables that are hard to read, review and migrate.
+   - Store only what a `{{% if %}}` branch, a rendered fact or a later tool
+     needs. Don't copy into state what a tool result already gave the model,
+     and don't add a flag for something a branch can test directly.
+   - Each tool that writes several values keeps them in one OBJECT variable
+     that only it writes: the record a lookup tool found (the sample's
+     `order`), the slots an intake tool collects (`return_details`), the
+     result of a submit tool (`return_pickup`). A tool that writes one value
+     can keep a flat variable. So objects are capped by the number of tools
+     that write state.
+   - Never let two tools write the same variable. In the default `PARALLEL`
+     tool execution mode, tools the model calls in the same step all start
+     from the same state, and each write replaces the variable's whole value,
+     so one write is lost. A per-playbook object written by every tool in the
+     playbook loses writes this way.
+   - Instead of having one tool reset another tool's state when the record
+     changes, store the record's ID with the state and compare it:
+     `zip_check.verified_order_id == order.order_id`,
+     `return_details.order_id == order.order_id`. State from another order
+     simply stops matching.
+   - Keep variables flat for routing (`current_playbook`, `current_task`), the
+     skill's plumbing (`next_agent_actions`, `played_greeting`,
+     `pending_handoff_reason`, `handoff_summary`), and keys another system
+     reads as session parameters, such as reporting or telephony keys. Make
+     those STRING, since `get_session_params` ignores objects and non-strings.
+     If two tools that never run in the same step set one of those keys, list
+     it under V105 `ignore` in `cxaslint.yaml`.
+   - `cxas lint` reports a variable written by more than one tool in
+     `PARALLEL` mode (V105, a warning) and a tool writing several flat
+     variables (V106, info). Lint still passes with them, so fix every V105.
+   - Data loaded at session start that no tool owns goes in one object only
+     the session-start or `before_model` callback writes. `before_tool` and
+     `after_tool` callbacks run per tool call and race like tools, so V105
+     counts them as writers. Eval mocks go in one read-only object.
+   - Declare each OBJECT with `properties` (a type for each) and a `default`
+     that lists every property, so the instruction never reads a missing key
+     and `cxas lint` (V100 to V104) catches a misspelled property or a name
+     left over from a flat layout.
+   - The owning tool reads the object, changes it and writes the whole object
+     back; never change a nested value in place. Numbers inside objects come
+     back as floats, so cast counters with `int()`. The instruction uses dot
+     access: `{{% if return_details.reason %}}`, `{{order.order_id}}`.
 1. **Anytime actions.** `<anytime_actions>` is static and names
    `{@TOOL: graceful_end_session}` and `{@TOOL: execute_live_agent_handover}`
    (plus any other action that must work from any state, such as a transfer to
@@ -270,7 +314,8 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
 
 1. Plan before editing files. Write a table with one row per task (its
    playbook, the steps in its `<current_step>` chain, the tools each step uses,
-   the state each tool sets, the tool that changes each earlier answer and the
+   the state each tool sets and the variable it lives in (the tool's own
+   object or a flat variable), the tool that changes each earlier answer and the
    state it clears, and what can still change once the task is done). Steps
    that several tasks share go in one row for the shared prerequisite block.
    Show it to the user before writing files, unless they asked you to go ahead
@@ -300,13 +345,13 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    `send_sms_summary`, `create_mail_return`,
    `check_return_pickup_availability`, `update_return_details`, and
    `submit_return_pickup` from `tools/` and from the root agent JSON's `tools`
-   list, and delete the `order_id`, `order_status`, `order_item`,
-   `order_delivery`, `on_file_zip`, `zip_verified`, `zip_attempts`,
-   `sms_disclosure_played`, `sms_summary_sent`, `return_reason`,
-   `return_availability_checked`, `return_pickup_day`, `return_pickup_window`,
-   `return_contact_phone`, `return_summary_confirmed`,
-   `return_pickup_completed`, and `return_confirmation_id` variables from
-   `app.json`. Keep `open_playbook`, `load_task`, `graceful_end_session`,
+   list. In `app.json`, delete the sample's domain variables (`order`,
+   `zip_check`, `sms_disclosure_played`, `sms_summary_sent`,
+   `canceled_order_id`, `mail_return_order_id`, `availability_order_id`,
+   `return_details` and `return_pickup`) and declare your tools' state the
+   same way: one OBJECT per tool that writes several values, a flat variable
+   for a tool that writes one. Keep `open_playbook`, `load_task`,
+   `graceful_end_session`,
    `execute_live_agent_handover`, `set_next_agent_actions`, and `end_session`,
    and the `current_playbook`, `current_task`, `next_agent_actions`,
    `played_greeting`, `pending_handoff_reason`, and `handoff_summary`
@@ -315,8 +360,8 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    representative. Write each new tool in the same shape as a sample tool
    (`tools/<name>/python_function/python_code.py` plus
    `tools/<name>/<name>.json`, entry function first), add it to the `tools`
-   list, and declare every state variable it reads or writes in `app.json`
-   `variableDeclarations`. Then sync the descriptions:
+   list, and declare every state variable and object property it reads or
+   writes in `app.json` `variableDeclarations`. Then sync the descriptions:
    `python3 <skill-dir>/scripts/sync_tool_descriptions.py cxas_app/<app-dir>`.
    The sync only updates tools that already have a JSON file, so copy a sample
    tool's JSON, replace the tool name in it, and leave the description for the
@@ -343,7 +388,8 @@ agent. It has the reasoning, the code patterns, and the platform gotchas.
    (`message`, `instructions`, `phrase`) or spreading a dict into the result,
    `afterModelCallbacks`, names shared by a playbook or task and a tool, router
    lists that don't match the instruction, routers writing other state or
-   reading `rationale`, tool names outside `{@TOOL: ...}` or in `<role>`,
+   reading `rationale`, references to object properties that aren't
+   declared, tool names outside `{@TOOL: ...}` or in `<role>`
    or `<constraints>`, tools visible at the start that
    `<anytime_actions>` doesn't name, registered tools nothing uses, and a
    visible `end_session` or `set_next_agent_actions`. To check branches that
@@ -459,6 +505,11 @@ instruction, the visible tool declarations, and `llm_request.contents`.
   repeat, no raw payloads or full-state echoes, no unmasked secrets), and
   never run regex or phrase checks on utterances or model replies.
 - [ ] Every variable the instruction or tools use is declared in `app.json`.
+  Each variable has one writer tool, a tool that writes several values keeps
+  them in one OBJECT declared with `properties` and a full `default`, and
+  per-record state holds the record's ID instead of being reset by another
+  tool.
 - [ ] Tool JSON descriptions match the docstrings (`sync_tool_descriptions.py --check`).
-- [ ] `cxas lint` passes, `check_tool_visibility.py` reports no problems, and
-  a `run_locally.py` flow per task runs without errors.
+- [ ] `cxas lint` passes with no V105 warnings, `check_tool_visibility.py`
+  reports no problems, and a `run_locally.py` flow per task runs without
+  errors.
