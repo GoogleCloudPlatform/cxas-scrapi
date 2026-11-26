@@ -390,15 +390,21 @@ def delete_workspace(
             "Pass --force to delete another user's workspace."
         )
     app_obj = app
-    if isinstance(app, WorkspaceInfo):
+    # CES ListApps omits App.locked (returning False), so always fetch the
+    # authoritative GetApp view whenever locked is not already True.
+    if getattr(app_obj, "locked", False) is not True:
         try:
             app_obj = apps.get_app(app_name=info.name)
         except Exception:  # noqa: BLE001
             app_obj = None
     if getattr(app_obj, "locked", False) is True:
         caller = user or current_user()
+
+        def _clear_lock(d: dict[str, Any]) -> None:
+            d.pop(LOCK_KEY, None)
+
         AppMetadataStore(info.name, apps=apps, user=caller).update(
-            lambda d: d.pop(LOCK_KEY, None),
+            _clear_lock,
             native_lock=False,
             check_lock=False,
         )

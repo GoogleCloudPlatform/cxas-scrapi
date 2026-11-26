@@ -436,6 +436,23 @@ def test_delete_workspace_unlocks_locked_app_before_delete() -> None:
     ws.delete_workspace(fake_apps, info, user="alice@example.com")
     assert call_order == ["unlock", "delete"]
 
+    # Passing a ListApps App proto (where CES omits locked -> False) must ALSO
+    # fetch GetApp (locked=True) and unlock before DeleteApp.
+    state["locked"] = True
+    state["metadata"]["cxas.lock"] = json.dumps(
+        {"by": "alice@example.com", "until": "2099-01-01T00:00:00Z"}
+    )
+    call_order.clear()
+    stale_list_app = types.App(
+        name=app_name,
+        display_name="ws/alice/feat-x",
+        locked=False,
+        metadata=dict(state["metadata"]),
+        etag=state["etag"],
+    )
+    ws.delete_workspace(fake_apps, stale_list_app, user="alice@example.com")
+    assert call_order == ["unlock", "delete"]
+
 
 def test_workspace_up_env_file_isolation_and_parallel_branches(
     tmp_path: Path,
