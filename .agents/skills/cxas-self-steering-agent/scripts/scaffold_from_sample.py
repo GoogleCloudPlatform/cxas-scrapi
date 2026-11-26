@@ -114,9 +114,9 @@ def main() -> None:
     print(f"  root agent:   {args.agent_name}")
     print(
         "Next: rewrite the instruction, GREETING and agent description,"
-        " update the router lists, replace the sample's order tools and"
-        " variables, then run cxas lint, check_tool_visibility.py and"
-        " run_locally.py before pushing."
+        " update the router lists, replace the sample's order and return"
+        " tools and variables, then run cxas lint, check_tool_visibility.py"
+        " and run_locally.py before pushing."
     )
 
 

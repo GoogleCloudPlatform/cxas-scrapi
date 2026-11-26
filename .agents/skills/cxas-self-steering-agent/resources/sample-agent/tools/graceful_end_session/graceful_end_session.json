@@ -3,7 +3,7 @@
   "pythonFunction": {
     "name": "graceful_end_session",
     "pythonCode": "tools/graceful_end_session/python_function/python_code.py",
-    "description": "Says goodbye and ends the conversation.\n\nCall this directly without replying to the customer first. Put the goodbye\nin goodbye_message instead.\n\nArgs:\n  goodbye_message (Optional[str]): A short, warm goodbye to send before the\n    conversation ends."
+    "description": "Says goodbye and ends the conversation.\n\nCall this directly without replying to the customer first. Put the goodbye\nin goodbye_message instead.\n\nArgs:\n  goodbye_message (Optional[str]): A short, warm goodbye to send before the\n    conversation ends.\n\nReturns:\n  dict[str, Any]: Status of the goodbye."
   },
   "executionType": "SYNCHRONOUS",
   "displayName": "graceful_end_session"

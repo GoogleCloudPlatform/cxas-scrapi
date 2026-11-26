@@ -1,10 +1,11 @@
 {
   "name": "Support_Agent",
   "displayName": "Support_Agent",
-  "description": "Sample support agent for chat or voice. Uses playbooks and tasks in a Jinja instruction, dynamic tool hiding, and deterministic actions.",
+  "description": "Sample support agent for chat or voice. Uses playbooks and tasks in a Jinja instruction, step-by-step progressive disclosure, dynamic tool hiding, and deterministic actions.",
   "instruction": "agents/Support_Agent/instruction.txt",
   "tools": [
-    "create_return",
+    "check_return_pickup_availability",
+    "create_mail_return",
     "end_session",
     "execute_live_agent_handover",
     "graceful_end_session",
@@ -14,7 +15,10 @@
     "play_sms_legal_disclosure",
     "send_sms_summary",
     "set_next_agent_actions",
-    "submit_cancellation"
+    "submit_cancellation",
+    "submit_return_pickup",
+    "update_return_details",
+    "verify_order_zip"
   ],
   "beforeModelCallbacks": [
     {

@@ -3,7 +3,7 @@
   "pythonFunction": {
     "name": "lookup_order",
     "pythonCode": "tools/lookup_order/python_function/python_code.py",
-    "description": "Looks up an order by its order number.\n\nArgs:\n  order_number (str): The order number the customer gave, as a string, e.g.\n    \"1001\".\n\nReturns:\n  dict[str, Any]: The order's status, item, and delivery details, or\n    found=False if no order has that number."
+    "description": "Looks up an order by its order number.\n\nArgs:\n  order_number (str): The order number the customer gave, as a string, e.g.\n    \"1001\".\n\nReturns:\n  dict[str, Any]: found=True and the order number, or found=False if no\n    order has that number. The order's details stay in session state until\n    the customer verifies its shipping ZIP code."
   },
   "executionType": "SYNCHRONOUS",
   "displayName": "lookup_order"

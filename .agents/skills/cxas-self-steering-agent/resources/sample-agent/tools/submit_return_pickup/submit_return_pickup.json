@@ -1,0 +1,10 @@
+{
+  "name": "submit_return_pickup",
+  "pythonFunction": {
+    "name": "submit_return_pickup",
+    "pythonCode": "tools/submit_return_pickup/python_function/python_code.py",
+    "description": "Books the courier return pickup using the validated details in session state.\n\nOnly call this after reading back the return pickup summary (order, pickup\nday, time window, and callback phone) and getting the customer's confirmation.\n\nArgs:\n  summary_confirmed (bool): True when the customer just confirmed the\n    pre-booking summary.\n\nReturns:\n  dict[str, Any]: Booking status, confirmation ID, and scheduled pickup\n    window, missing_prerequisites with the list of missing fields, or\n    pickup_already_booked if this order's pickup is already booked."
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "submit_return_pickup"
+}

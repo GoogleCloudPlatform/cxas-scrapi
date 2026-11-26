@@ -14,13 +14,17 @@ def play_sms_legal_disclosure() -> dict[str, Any]:
   Call this directly without replying to the customer first.
 
   Returns:
-    dict[str, Any]: Whether the terms were shared.
+    dict[str, Any]: Status and the order number for which terms were shared.
   """
-  context.state["sms_disclosure_played"] = True
+  order_id = context.state.get("order_id") or ""
+  if not order_id:
+    return {"status": "error", "error": "no_active_order"}
+
+  context.state["sms_disclosure_played"] = order_id
   tools.set_next_agent_actions({
       "customized_response": {
           "content": DISCLOSURE_TEXT,
           "disable_barge_in": True,
       },
   })
-  return {"success": True, "status": "terms_shared"}
+  return {"status": "terms_shared", "order_number": order_id}
