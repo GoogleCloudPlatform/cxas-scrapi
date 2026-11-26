@@ -169,6 +169,20 @@ def _is_not_found(exc: BaseException) -> bool:
     return "404" in str(exc) or "not found" in str(exc).lower()
 
 
+def _is_locked_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    if "locked" in msg:
+        return True
+    try:
+        from google.api_core import exceptions as gexc  # noqa: PLC0415
+
+        if isinstance(exc, gexc.FailedPrecondition) and "lock" in msg:
+            return True
+    except ImportError:  # pragma: no cover
+        pass
+    return False
+
+
 def _resource_id(name: str | None) -> str | None:
     return name.rsplit("/", 1)[-1] if name else None
 
@@ -225,25 +239,56 @@ def freeze_snapshot_info(
 
         deployments = Deployments(app_name=app_name)
 
-    display_name = snapshot_version_display_name(user)
-    description = f"cxas test snapshot by {user}"
-    if label:
-        description += f": {label}"
-    version = versions.create_version(
-        display_name=display_name, description=description
-    )
-    version_name = version.name
-    version_id = _resource_id(version_name) or ""
-
     deployment_id = snapshot_deployment_id(user)
     created = False
+    existing_dep = None
     try:
-        deployments.get_deployment(deployment_id)
+        existing_dep = deployments.get_deployment(deployment_id)
         exists = True
     except Exception as e:  # noqa: BLE001
         if not _is_not_found(e):
             raise
         exists = False
+
+    # Pre-prune older snapshot versions BEFORE create_version so apps near
+    # CES's 200-version cap free a slot ahead of creating the new snapshot.
+    pruned_before: list[str] = []
+    if keep is not None:
+        protect_before: set[str] = set()
+        current_dep_ver = (
+            getattr(existing_dep, "app_version", None)
+            if existing_dep is not None
+            else None
+        )
+        if current_dep_ver:
+            protect_before.add(current_dep_ver)
+        with contextlib.suppress(Exception):
+            pruned_before = prune_snapshot_versions(
+                versions,
+                user=user,
+                keep=max(keep - 1, 0),
+                protect=protect_before,
+            )
+
+    display_name = snapshot_version_display_name(user)
+    description = f"cxas test snapshot by {user}"
+    if label:
+        description += f": {label}"
+    try:
+        version = versions.create_version(
+            display_name=display_name, description=description
+        )
+    except Exception as exc:
+        if _is_locked_error(exc):
+            raise RuntimeError(
+                f"Cannot create snapshot version on locked app '{app_name}': "
+                "CES CreateAppVersion cannot run on a natively locked app. "
+                "Unlock the app first (`cxas unlock`) or run `--snapshot` "
+                "against an unlocked dev/workspace app."
+            ) from exc
+        raise
+    version_name = version.name
+    version_id = _resource_id(version_name) or ""
 
     if exists:
         deployment = deployments.update_deployment(
@@ -270,12 +315,16 @@ def freeze_snapshot_info(
         created_deployment=created,
         reused_version=bool(getattr(version, "display_name", ""))
         and version.display_name != display_name,
+        pruned_versions=list(pruned_before),
     )
     if keep is not None:
         with contextlib.suppress(Exception):
-            info.pruned_versions = prune_snapshot_versions(
+            pruned_after = prune_snapshot_versions(
                 versions, user=user, keep=keep, protect={version_name}
             )
+            for v in pruned_after:
+                if v not in info.pruned_versions:
+                    info.pruned_versions.append(v)
     return info
 
 

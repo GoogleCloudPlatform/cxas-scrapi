@@ -662,11 +662,14 @@ def test_pull_branch_creates_git_branch_and_rejects_dirty_tree(
     assert branch2 == "fix/new-dir"
 
 
-def test_push_with_lock_on_initially_unlocked_app_preserves_cxas_lock(
+def test_push_with_lock_on_initially_unlocked_app_injects_and_clears_lease(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """--with-lock on an unlocked app must keep cxas.lock alongside App.locked=True."""
+    """--with-lock without pre-lock injects cxas.lock in zip & clears lease on exit."""
+    import io  # noqa: PLC0415
+    import zipfile  # noqa: PLC0415
+
     app_dir = tmp_path / "agent"
     app_dir.mkdir()
     (app_dir / "app.json").write_text(
@@ -675,6 +678,96 @@ def test_push_with_lock_on_initially_unlocked_app_preserves_cxas_lock(
     )
     monkeypatch.setenv("CXAS_USER", "alice@example.com")
     state: dict = {"locked": False, "metadata": {}, "etag": "e1"}
+    staged_app_json: dict = {}
+
+    def _get_app(name: str) -> types.App:
+        return types.App(
+            name=name,
+            locked=state["locked"],
+            metadata=dict(state["metadata"]),
+            etag=state["etag"],
+        )
+
+    def _update_app(request: types.UpdateAppRequest) -> types.App:
+        if "metadata" in request.update_mask.paths:
+            state["metadata"] = dict(request.app.metadata)
+        if "locked" in request.update_mask.paths:
+            state["locked"] = bool(request.app.locked)
+        state["etag"] += "x"
+        return _get_app(request.app.name)
+
+    def _import_app(**kwargs: object) -> mock.MagicMock:
+        raw_zip = kwargs["app_content"]
+        assert isinstance(raw_zip, bytes)
+        with zipfile.ZipFile(io.BytesIO(raw_zip)) as zf:
+            staged_app_json.update(json.loads(zf.read("agent/app.json")))
+        lro = mock.MagicMock()
+        lro.result.return_value = SimpleNamespace(name=APP_NAME, warnings=[])
+        return lro
+
+    fake_apps = mock.MagicMock()
+    fake_apps.get_app.side_effect = _get_app
+    fake_apps.client.update_app.side_effect = _update_app
+    fake_apps.import_app.side_effect = _import_app
+
+    with (
+        mock.patch("cxas_scrapi.cli.app.Apps", return_value=fake_apps),
+        mock.patch("cxas_scrapi.cli.app.record_last_push"),
+    ):
+        cli_app.app_push(
+            argparse.Namespace(
+                app_dir=str(app_dir),
+                to=APP_NAME,
+                app_name=None,
+                display_name=None,
+                env_file=None,
+                project_id=None,
+                location=None,
+                overwrite=False,
+                with_lock=True,
+                on_drift="overwrite",
+                fail_if_version_exists=False,
+                create_version=False,
+                profile=None,
+                allow_protected=False,
+                dry_run=False,
+            )
+        )
+
+    # (a) Staged zip preserved cxas.lock during import_app window
+    assert "cxas.lock" in staged_app_json.get("metadata", {})
+    assert (
+        json.loads(staged_app_json["metadata"]["cxas.lock"])["by"]
+        == "alice@example.com"
+    )
+    # (b) After exit: App.locked=True, but temporary cxas.lock lease is cleared
+    assert state["locked"] is True
+    assert "cxas.lock" not in state["metadata"]
+
+
+def test_push_with_lock_preserves_preowned_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--with-lock with a pre-owned lock preserves that lock in finally."""
+    app_dir = tmp_path / "agent"
+    app_dir.mkdir()
+    (app_dir / "app.json").write_text(
+        json.dumps({"displayName": "My App", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CXAS_USER", "alice@example.com")
+    existing_lock = {
+        "by": "alice@example.com",
+        "since": "2026-11-26T00:00:00Z",
+        "until": "2099-11-26T01:00:00Z",
+        "reason": "manual release lock",
+    }
+    state: dict = {
+        "locked": True,
+        "metadata": {"cxas.lock": json.dumps(existing_lock)},
+        "etag": "e1",
+    }
 
     def _get_app(name: str) -> types.App:
         return types.App(
@@ -693,7 +786,6 @@ def test_push_with_lock_on_initially_unlocked_app_preserves_cxas_lock(
         return _get_app(request.app.name)
 
     def _import_app(**_kwargs: object) -> mock.MagicMock:
-        # Simulate CES import_app wiping metadata that wasn't in the zip
         state["metadata"] = {}
         lro = mock.MagicMock()
         lro.result.return_value = SimpleNamespace(name=APP_NAME, warnings=[])
@@ -731,5 +823,66 @@ def test_push_with_lock_on_initially_unlocked_app_preserves_cxas_lock(
     assert state["locked"] is True
     assert "cxas.lock" in state["metadata"]
     assert (
-        json.loads(state["metadata"]["cxas.lock"])["by"] == "alice@example.com"
+        json.loads(state["metadata"]["cxas.lock"])["reason"]
+        == "manual release lock"
     )
+
+
+def test_strip_cxas_metadata_on_pull_json_and_yaml(tmp_path: Path) -> None:
+    """_strip_cxas_metadata_on_pull removes cxas.* keys and keeps user metadata."""
+    import io  # noqa: PLC0415
+    import zipfile  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    # 1. Pull zip with mixed cxas.* + user metadata in app.json
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(
+            "my_agent/app.json",
+            json.dumps(
+                {
+                    "displayName": "My Agent",
+                    "metadata": {
+                        "cxas.lock": '{"by":"a"}',
+                        "cxas.last_push": '{"by":"a"}',
+                        "cxas.workspace": "true",
+                        "cxas.expiry": "2026-12-01T00:00:00Z",
+                        "team": "billing",
+                    },
+                }
+            ),
+        )
+    fake_apps = mock.MagicMock()
+    lro = mock.MagicMock()
+    lro.result.return_value = SimpleNamespace(app_content=buf.getvalue())
+    fake_apps.export_app.return_value = lro
+
+    out_dir = tmp_path / "pulled"
+    cli_app._app_pull(fake_apps, APP_NAME, str(out_dir))
+    pulled_json = json.loads(
+        (out_dir / "my_agent" / "app.json").read_text(encoding="utf-8")
+    )
+    assert pulled_json["metadata"] == {"team": "billing"}
+
+    # 2. app.yaml with ONLY cxas.* metadata -> removes metadata key entirely
+    yaml_dir = tmp_path / "yaml_app"
+    yaml_dir.mkdir()
+    (yaml_dir / "app.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "displayName": "Yaml Agent",
+                "metadata": {
+                    "cxas.last_push": '{"by":"bob"}',
+                    "cxas.lock": '{"by":"bob"}',
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    stripped = cli_app._strip_cxas_metadata_on_pull(yaml_dir)
+    assert set(stripped) == {"cxas.last_push", "cxas.lock"}
+    pulled_yaml = yaml.safe_load(
+        (yaml_dir / "app.yaml").read_text(encoding="utf-8")
+    )
+    assert "metadata" not in pulled_yaml

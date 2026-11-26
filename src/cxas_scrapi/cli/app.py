@@ -289,6 +289,64 @@ def app_pull(args: argparse.Namespace) -> None:
     )
 
 
+def _strip_cxas_metadata_on_pull(pulled_app_root: str | Path) -> list[str]:
+    """Strip server-side ``cxas.*`` metadata keys from pulled app config.
+
+    Preserves any non-``cxas.`` user metadata keys and removes the ``metadata``
+    dict entirely if it becomes empty.
+    """
+    root = Path(pulled_app_root)
+    app_cfg = next(
+        (
+            p
+            for name in ("app.json", "app.yaml", "app.yml")
+            if (p := root / name).is_file()
+        ),
+        None,
+    )
+    if app_cfg is None:
+        return []
+
+    try:
+        raw_text = app_cfg.read_text(encoding="utf-8")
+        data = (
+            yaml.safe_load(raw_text)
+            if app_cfg.suffix in (".yaml", ".yml")
+            else json.loads(raw_text)
+        )
+    except (OSError, ValueError, yaml.YAMLError):
+        return []
+
+    if not isinstance(data, dict):
+        return []
+
+    target_dict = data["app"] if isinstance(data.get("app"), dict) else data
+    meta = target_dict.get("metadata")
+    if not isinstance(meta, dict):
+        return []
+
+    cxas_keys = [
+        k
+        for k in list(meta)
+        if isinstance(k, str) and k.startswith(METADATA_PREFIX)
+    ]
+    if not cxas_keys:
+        return []
+
+    for key in cxas_keys:
+        meta.pop(key, None)
+    if not meta:
+        target_dict.pop("metadata", None)
+
+    if app_cfg.suffix in (".yaml", ".yml"):
+        app_cfg.write_text(
+            yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
+        )
+    else:
+        app_cfg.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return cxas_keys
+
+
 def _app_pull(
     apps_client: Apps,
     app_name: str,
@@ -479,6 +537,8 @@ def _app_pull(
                                     f"{dir_path}"
                                 )
                                 os.rmdir(dir_path)
+
+        _strip_cxas_metadata_on_pull(pulled_app_root)
 
         if prev_env_vars:
             preserved = preserve_env_var_placeholders_on_pull(
@@ -708,23 +768,28 @@ def _atomic_push_lock(
     was_natively_locked: bool,
     active_lock: dict[str, Any] | None,
     caller: str,
-) -> Iterator[bool]:
+) -> Iterator[tuple[bool, dict[str, Any] | None]]:
     """Context manager for ``--with-lock``: unlock -> push -> guaranteed re-lock.
 
-    Yields ``ignore_app_lock`` boolean for ``Apps.import_app()``.
+    Yields ``(ignore_app_lock, active_push_lock)`` so callers can inject the
+    in-flight ``cxas.lock`` into the staged ``app.json``/``app.yaml`` before
+    ``Apps.import_app()`` runs.
     """
     if not with_lock or meta_store is None:
-        yield bool(
-            was_natively_locked
-            and active_lock
-            and active_lock.get("by") == caller
+        yield (
+            bool(
+                was_natively_locked
+                and active_lock
+                and active_lock.get("by") == caller
+            ),
+            active_lock,
         )
         return
 
-    # Ensure we hold cxas.lock before unlocking native App.locked so foreign
-    # writers remain blocked during the push window.
+    # Track whether we acquired a temporary lock solely for this push window.
+    acquired_for_push = not (active_lock and active_lock.get("by") == caller)
     held_lock = active_lock
-    if not held_lock or held_lock.get("by") != caller:
+    if acquired_for_push:
         held_lock = meta_store.acquire_lock(
             user=caller,
             reason="cxas push --with-lock",
@@ -732,15 +797,18 @@ def _atomic_push_lock(
         )
 
     # Temporarily clear native App.locked while keeping cxas.lock intact, then
-    # ALWAYS re-lock (and re-stamp cxas.lock in case import_app replaced
-    # metadata) in finally — even if import_app fails!
+    # ALWAYS re-lock in finally — even if import_app fails! If we acquired the
+    # lock solely for this push, clear cxas.lock while keeping native_lock=True
+    # so we don't leave a 60-minute lease blocking subsequent CI runs/engineers.
     meta_store.update(lambda _d: None, native_lock=False, check_lock=False)
     try:
-        yield True
+        yield True, held_lock
     finally:
 
         def _restore_lock(d: dict[str, Any]) -> None:
-            if held_lock is not None:
+            if acquired_for_push:
+                d.pop(LOCK_KEY, None)
+            elif held_lock is not None:
                 d[LOCK_KEY] = held_lock
 
         try:
@@ -935,41 +1003,47 @@ def _app_push(
         # overrides in the staged inner_dir before creating the zip archive.
         resolve_env_booleans_in_dir(inner_dir)
 
-        # Preserve server-side cxas.* metadata keys so import_app never wipes
-        # lock, last_push, workspace, or expiry state.
-        if existing_meta:
-            _inject_preserved_cxas_metadata(inner_dir, existing_meta)
-
-        # ZIP does not support timestamps before 1980.
-        # Touch files and directories in temp_dir with timestamps before 1980.
-        limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
-        for root, dirs, files in os.walk(temp_dir):
-            for name in files:
-                path = os.path.join(root, name)
-                if os.path.getmtime(path) < limit_time:
-                    os.utime(path, None)
-            for name in dirs:
-                path = os.path.join(root, name)
-                if os.path.getmtime(path) < limit_time:
-                    os.utime(path, None)
-
-        # Zip the filtered agent directory
-        shutil.make_archive(temp_zip.replace(".zip", ""), "zip", temp_dir)
-
-        with open(temp_zip, "rb") as f:
-            app_content = f.read()
-
-        # If no target is specified, the SDK creates a new app with the
-        # provided display_name.
-        print("Uploading to CES...")
-
         with _atomic_push_lock(
             meta_store=meta_store,
             with_lock=with_lock,
             was_natively_locked=is_natively_locked,
             active_lock=active_lock,
             caller=caller,
-        ) as ignore_app_lock:
+        ) as (ignore_app_lock, active_push_lock):
+            # Preserve server-side cxas.* metadata keys (including any lock
+            # acquired for this --with-lock window) so import_app never wipes
+            # lock, last_push, workspace, or expiry state.
+            staged_meta = dict(existing_meta)
+            if active_push_lock is not None:
+                staged_meta[f"{METADATA_PREFIX}{LOCK_KEY}"] = json.dumps(
+                    active_push_lock, separators=(",", ":"), sort_keys=True
+                )
+            if staged_meta:
+                _inject_preserved_cxas_metadata(inner_dir, staged_meta)
+
+            # ZIP does not support timestamps before 1980.
+            # Touch files and directories in temp_dir with timestamps < 1980.
+            limit_time = time.mktime((1980, 1, 1, 0, 0, 0, 0, 0, 0))
+            for root, dirs, files in os.walk(temp_dir):
+                for name in files:
+                    path = os.path.join(root, name)
+                    if os.path.getmtime(path) < limit_time:
+                        os.utime(path, None)
+                for name in dirs:
+                    path = os.path.join(root, name)
+                    if os.path.getmtime(path) < limit_time:
+                        os.utime(path, None)
+
+            # Zip the filtered agent directory
+            shutil.make_archive(temp_zip.replace(".zip", ""), "zip", temp_dir)
+
+            with open(temp_zip, "rb") as f:
+                app_content = f.read()
+
+            # If no target is specified, the SDK creates a new app with the
+            # provided display_name.
+            print("Uploading to CES...")
+
             if target_app_name:
                 conflict_strategy = (
                     "OVERWRITE"
