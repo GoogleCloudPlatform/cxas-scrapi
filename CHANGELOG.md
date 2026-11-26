@@ -1,6 +1,62 @@
 # Changelog
 
 
+## [1.12.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.11.0...v1.12.0) (2026-11-26)
+
+
+### Features
+
+* **arc:** cxas arc — CLI and client for the CX Agent Studio AI assistant ([282bc19](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/282bc19fe71af206b756e6565aebf333bb2ef958))
+* **cli:** add zero-downtime differential hot-patching via cxas push --patch and cxas watch ([38dfb9f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/38dfb9fa7c6b384e4bc12407459488c10f2ea60c))
+* **cli:** add zero-downtime differential hot-patching via cxas push --patch and cxas watch ([7128de1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7128de189fa2bb111edbadfd5e2e26a22d00aeb4))
+* **cli:** resolve $env_var tool and toolset configs from environment.json ([9d6c8f3](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/9d6c8f38abba8d26838ab2e5e57a0884ab071ddc))
+* **cli:** resolve $env_var tool and toolset configs from environment.json ([4bd3660](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4bd36600754c93c56a4ffc4d436a17593090c5a1))
+* **env:** support boolean templating and overrides in environment configs ([eebf50f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/eebf50f59e8fef900e1bc13b682cf289e80725ee))
+* **evals:** add --sim-user-tts-model to choose simulated caller TTS model ([f1cc1d7](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f1cc1d7669fc6f7ffdf0ce33ac69735200979c80))
+* **evals:** add --sim-user-tts-model to choose simulated caller TTS model ([4932e3f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4932e3f4f79e8b1c034760ff104ff5c97a2d9c95))
+* **evals:** export eval results to BigQuery ([fde9921](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/fde99214ddaf6f11f645c3b3d107636f3f039d2a))
+* **evals:** export eval results to BigQuery ([f9c8d42](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f9c8d42d35bf6f503de484935ed56e817709dd1c))
+* **lint:** add V105 variable-single-writer and V106 tool-flat-variable-group ([77312b4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/77312b4a1131ce765af785bf2b36d5357d4e2885))
+* **lint:** add V105 variable-single-writer and V106 tool-flat-variable-group ([16464c4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/16464c41e5d0f240c6fc9788f2d49278e2652ab7))
+* **skills:** add cxas-self-steering-agent skill ([810c33a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/810c33a18632fb45a3a58b442e18f7436aee8257))
+* **skills:** group self-steering session state by the tool that writes it ([5278cea](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/5278cea80181b3cff0c190f94f097e221b2e01fc))
+* **skills:** group self-steering session state into OBJECT variables ([7b32369](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/7b32369f3c49b1b0439d33d8f9fe818018102ef7))
+* **skills:** group self-steering state by the tool that writes it ([594e43a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/594e43a36760752681145b7fe8b6bb3f0c106bf7))
+* **skills:** improve cxas-self-steering-agent skill and sample ([c5a2608](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c5a2608d778f6d841eb91d31feb0702a16084083))
+* **skills:** improve cxas-self-steering-agent skill and sample ([495746a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/495746a68840cbf5a58d651b0ba24fcf1e8815c9))
+* **trace:** surface Python tool/callback span logs and per-turn raw JSON ([f9683cb](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f9683cbd8e3e5440cf215c461fc73bd02c72e35b))
+
+
+### Bug Fixes
+
+* Add _is_event_step helper checking static_utterance.strip().startswith('event:'), exclude those steps in expected_caller_turns, and add test_event_only_scenario_is_not_inconclusive. ([3498ee4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3498ee4dbbc3ddf7caa3d8e1840cc34939466747))
+* **cli:** prune resources deleted in CXAS on `cxas pull --overwrite` ([6f88ce1](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6f88ce17c7f75b4b15f8c39eada69005b5ca29b3))
+* **cli:** prune resources deleted in CXAS on `cxas pull --overwrite` ([2eef242](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/2eef24260ac5ac1696c2fdd0a66f11899924cb2c)), closes [#394](https://github.com/GoogleCloudPlatform/cxas-scrapi/issues/394)
+* **evals:** keep agent text in order with tool calls in detailed_trace ([c8e6c7b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c8e6c7bb96c02d5fdfad21ec8aad3d5e0c338b80))
+* **evals:** keep agent text in order with tool calls in detailed_trace ([a96c0a5](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/a96c0a55f9c0c855eca7fd0561d348554050fbb8))
+* **evals:** let an opening event step replace the welcome event ([f270b74](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f270b74e6f2b8bc4bc998396b375089d33b85777))
+* **evals:** let an opening event step replace the welcome event ([747700e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/747700ef7fc2dd3d80720fd9092f997c4c593d69))
+* **evals:** resolve sim tags from app_dir when simulation_dir is unset ([55d956a](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/55d956af5e442bd52928c4a4e83c72d41afc27e0))
+* **evals:** skip static event steps in expected_caller_turns ([249fa09](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/249fa094ee50ddba81b4c3357c2d6355cee294ea))
+* **evals:** skip static event steps in expected_caller_turns ([3498ee4](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/3498ee4dbbc3ddf7caa3d8e1840cc34939466747))
+* harden CES SDK compatibility, lazy package imports, and non-TTY/symlink guards ([64de29d](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/64de29d243bee16d3f99e5edbd66f237c0ab9af7))
+* **lint:** count before_tool/after_tool callback writes in V105 ([e01aa2e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/e01aa2e7ee4e3d70ceec87ccf347dc6d4c44d895))
+* **lint:** count nested, pop() and del state writes in V105/V106 ([6e31da5](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/6e31da5c9514f654016a1f238d2bf41984283da0))
+* Plumb sim_user_tts_model through main CLI, runner.py, reporting.py, and SimulationEvals._voice_config_for (keeping per-test-case voice_config.model_name higher precedence), and update docs and unit tests. ([4932e3f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/4932e3f4f79e8b1c034760ff104ff5c97a2d9c95))
+* **reporting:** search all candidate audio buckets for dual-bucket apps ([540531f](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/540531f9faa78d2dec013ba956e27eb69b913c7f))
+* **sessions:** stream caller silence while agent answers event or dtmf turns ([385c6f0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/385c6f072a06c75401b301824e1d6159839f38d5))
+* **sessions:** stream caller silence while agent answers event or dtmf turns ([bbcca36](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/bbcca3602990be7d333b53896f60ee8f9ac7cf8a))
+* **skills:** move today's date into &lt;status&gt; and return dicts from plumbing tools ([1dbcb2b](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/1dbcb2be018441b0788bf68edac91d1dc576db4b))
+* **trace:** resolve evaluationAudioRecordingConfig bucket for eval audio ([98f961e](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/98f961ec0a1e4aa001fe0a852d0427dc8ca74747))
+* **trace:** resolve evaluationAudioRecordingConfig bucket for eval audio ([f8763c0](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/f8763c07b10509938ce16c4c4aed5ea8703b3a53))
+
+
+### Documentation
+
+* **skills:** before_tool/after_tool callback writes race like tools ([8ba38b5](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8ba38b5cf258a0d1dd1200087c0e34468bf98255))
+* **skills:** fix variable name in template gotcha ([c671987](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/c671987f15274dc38312359c105d58271a9cc436))
+* **skills:** note that single-brace object refs send the whole object ([8522662](https://github.com/GoogleCloudPlatform/cxas-scrapi/commit/8522662cc6cab572a4d6662edcfa9578f7fda30a))
+
 ## [1.11.0](https://github.com/GoogleCloudPlatform/cxas-scrapi/compare/v1.10.0...v1.11.0) (2026-11-09)
 
 
