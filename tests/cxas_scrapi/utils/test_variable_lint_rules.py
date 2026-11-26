@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for variable lint rule coverage (V100-V103) and state AST extraction."""
+"""Tests for variable lint rule coverage (V100-V106) and state AST extraction."""
 
+import json
 import typing
 
 import pytest
@@ -26,9 +27,12 @@ from cxas_scrapi.utils.lint_rules.variables import (
     EvalVariableDeclared,
     InstructionStaleFlatVar,
     InstructionVariableRef,
+    ToolFlatVariableGroup,
     ToolVariableDeclared,
+    ToolVariableSingleWriter,
     ToolVariableTypeMatch,
     _clear_schema_cache,
+    _clear_writer_cache,
     _collect_state_accesses,
 )
 from cxas_scrapi.utils.linter import LintContext
@@ -442,3 +446,215 @@ def test_v100_eval_validates_milestone_step_inject_variables(
     results = rule.check(f, f.read_text(), var_context)
     assert len(results) == 1
     assert "undeclared_sim_var" in results[0].message
+
+
+# ── Tool writers (V105-V106) ─────────────────────────────────────────────
+
+
+def _writer_app(
+    tmp_path: typing.Any,
+    tools: dict[str, str],
+    *,
+    mode: str | None = None,
+    options: dict | None = None,
+) -> LintContext:
+    """Writes an app with the given tool bodies and returns its context."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    config = {
+        "name": "test-app",
+        "rootAgent": "Root_Agent",
+        "variableDeclarations": [
+            {"name": "status", "schema": {"type": "STRING"}},
+            {"name": "item", "schema": {"type": "STRING"}},
+            {"name": "zip", "schema": {"type": "STRING"}},
+            {"name": "notes", "schema": {"type": "STRING"}},
+            {
+                "name": "order",
+                "schema": {
+                    "type": "OBJECT",
+                    "properties": {"order_id": {"type": "STRING"}},
+                },
+            },
+        ],
+    }
+    if mode:
+        config["toolExecutionMode"] = mode
+    (tmp_path / "app.json").write_text(json.dumps(config))
+    for name, body in tools.items():
+        code = tmp_path / "tools" / name / "python_function" / "python_code.py"
+        code.parent.mkdir(parents=True, exist_ok=True)
+        code.write_text(body)
+    _clear_schema_cache()
+    _clear_writer_cache()
+    return LintContext(
+        project_root=tmp_path,
+        app_dir=tmp_path,
+        evals_dir=tmp_path / "evals",
+        app_root=tmp_path,
+        options=options or {},
+    )
+
+
+def _tool_path(tmp_path: typing.Any, name: str) -> typing.Any:
+    return tmp_path / "tools" / name / "python_function" / "python_code.py"
+
+
+_LOOKUP = (
+    "def lookup(n):\n"
+    "    context.state['order'] = {'order_id': n}\n"
+    "    context.state['status'] = 'Processing'\n"
+)
+_CANCEL = "def cancel():\n    context.state['status'] = 'Canceled'\n"
+
+
+def test_v105_flags_variable_written_by_two_tools(tmp_path: typing.Any) -> None:
+    ctx = _writer_app(tmp_path, {"lookup": _LOOKUP, "cancel": _CANCEL})
+    rule_obj = ToolVariableSingleWriter()
+    for tool, other in (("lookup", "cancel"), ("cancel", "lookup")):
+        path = _tool_path(tmp_path, tool)
+        results = rule_obj.check(path, path.read_text(), ctx)
+        assert len(results) == 1
+        assert results[0].rule_id == "V105"
+        assert "'status'" in results[0].message
+        assert other in results[0].message
+
+
+def test_v105_single_writer_and_sequential_mode_are_quiet(
+    tmp_path: typing.Any,
+) -> None:
+    ctx = _writer_app(
+        tmp_path,
+        {
+            "lookup": _LOOKUP,
+            "verify": "def v():\n    context.state['zip'] = 'x'\n",
+        },
+    )
+    path = _tool_path(tmp_path, "lookup")
+    assert ToolVariableSingleWriter().check(path, path.read_text(), ctx) == []
+
+    ctx = _writer_app(
+        tmp_path, {"lookup": _LOOKUP, "cancel": _CANCEL}, mode="SEQUENTIAL"
+    )
+    assert ToolVariableSingleWriter().check(path, path.read_text(), ctx) == []
+
+
+def test_v105_ignore_option_and_callbacks_not_counted(
+    tmp_path: typing.Any,
+) -> None:
+    first = tmp_path / "ignored"
+    ctx = _writer_app(
+        first,
+        {"lookup": _LOOKUP, "cancel": _CANCEL},
+        options={"V105": {"ignore": ["status"]}},
+    )
+    path = _tool_path(first, "lookup")
+    assert ToolVariableSingleWriter().check(path, path.read_text(), ctx) == []
+
+    # A before_model callback finishes before any tool runs, so no race.
+    second = tmp_path / "callback"
+    ctx = _writer_app(second, {"lookup": _LOOKUP})
+    path = _tool_path(second, "lookup")
+    callback = (
+        second
+        / "agents"
+        / "Root_Agent"
+        / "before_model_callbacks"
+        / "before_model_callbacks_01"
+        / "python_code.py"
+    )
+    callback.parent.mkdir(parents=True, exist_ok=True)
+    callback.write_text(
+        "def cb(callback_context):\n    callback_context.state['status'] = ''\n"
+    )
+    assert ToolVariableSingleWriter().check(path, path.read_text(), ctx) == []
+
+
+@pytest.mark.parametrize("kind", ["before_tool", "after_tool"])
+def test_v105_counts_tool_callback_writes(
+    tmp_path: typing.Any, kind: str
+) -> None:
+    ctx = _writer_app(tmp_path, {"lookup": _LOOKUP})
+    callback = (
+        tmp_path
+        / "agents"
+        / "Root_Agent"
+        / f"{kind}_callbacks"
+        / f"{kind}_callbacks_01"
+        / "python_code.py"
+    )
+    callback.parent.mkdir(parents=True, exist_ok=True)
+    callback.write_text(
+        "def cb(tool, input, callback_context):\n"
+        "    callback_context.state['status'] = tool.name\n"
+    )
+    _clear_writer_cache()
+    path = _tool_path(tmp_path, "lookup")
+    results = ToolVariableSingleWriter().check(path, path.read_text(), ctx)
+    assert len(results) == 1
+    assert "'status'" in results[0].message
+    assert f"Root_Agent {kind} callback" in results[0].message
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        "context.state['order']['order_id'] = ''",
+        "context.state.pop('order', None)",
+        "del context.state['order']",
+    ],
+)
+def test_v105_counts_nested_pop_and_del_writes(
+    tmp_path: typing.Any, write: str
+) -> None:
+    ctx = _writer_app(
+        tmp_path, {"lookup": _LOOKUP, "reset": f"def r():\n    {write}\n"}
+    )
+    path = _tool_path(tmp_path, "reset")
+    results = ToolVariableSingleWriter().check(path, path.read_text(), ctx)
+    assert len(results) == 1
+    assert "'order'" in results[0].message
+    assert "lookup" in results[0].message
+
+
+def test_v105_local_dict_and_reads_are_not_writes(tmp_path: typing.Any) -> None:
+    body = (
+        "def r():\n"
+        "    result = {}\n"
+        "    result['order'] = context.state.get('order')\n"
+        "    return context.state['order']['order_id']\n"
+    )
+    ctx = _writer_app(tmp_path, {"lookup": _LOOKUP, "read": body})
+    path = _tool_path(tmp_path, "lookup")
+    assert ToolVariableSingleWriter().check(path, path.read_text(), ctx) == []
+
+
+def test_v106_flags_tool_writing_many_flat_variables(
+    tmp_path: typing.Any,
+) -> None:
+    body = (
+        "def lookup(n):\n"
+        "    context.state['status'] = 'Processing'\n"
+        "    context.state['item'] = 'lamp'\n"
+        "    context.state['zip'] = '10001'\n"
+        "    context.state['order'] = {'order_id': n}\n"
+    )
+    ctx = _writer_app(tmp_path, {"lookup": body})
+    path = _tool_path(tmp_path, "lookup")
+    results = ToolFlatVariableGroup().check(path, path.read_text(), ctx)
+    assert len(results) == 1
+    assert results[0].rule_id == "V106"
+    assert "3 flat variables" in results[0].message
+    assert "order" not in results[0].message.split("(")[1]
+
+    ctx = _writer_app(
+        tmp_path,
+        {"lookup": body},
+        options={"V106": {"max_flat_variables": 3}},
+    )
+    assert ToolFlatVariableGroup().check(path, path.read_text(), ctx) == []
+
+
+def test_v106_two_flat_variables_are_fine(tmp_path: typing.Any) -> None:
+    ctx = _writer_app(tmp_path, {"lookup": _LOOKUP})
+    path = _tool_path(tmp_path, "lookup")
+    assert ToolFlatVariableGroup().check(path, path.read_text(), ctx) == []
