@@ -176,6 +176,21 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C012 | `after-model-unreturned-response` | Error | `after_model_callback` mutates or constructs `LlmResponse` without returning it |
     | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
     | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
+    | C101 | `unconditional-callback-short-circuit` | Warning | Callback unconditionally returns a non-None value, making subsequent callbacks unreachable |
+    | C102 | `shared-state-reference-aliasing` | Warning | Mutable local variable is assigned to multiple session state keys without `copy`/`deepcopy` |
+    | C103 | `undeclared-state-subscript-read` | Warning | Direct subscript read `state['k']` on an undeclared and previously unwritten state key |
+    | C104 | `state-none-deletes-key` | Warning | Assigning `None` to `state['k']` deletes the key in the CES runtime |
+    | C105 | `invalid-tool-callback-return` | Warning | Tool callback returns empty dict `{}` or non-dict literal |
+    | C106 | `unreturned-llm-response-mutation` | Warning | `after_model` callback mutates `llm_response` in-place on a path that returns `None` |
+    | C107 | `unsupported-llm-request-mutation` | Warning | `before_model` callback mutates non-persisted `llm_request` attributes |
+    | C108 | `non-string-state-dict-key-v2` | Error | State assignment contains a non-string dict key under V2 image (`orjson`) |
+    | C109 | `callback-chain-load-error` | Error | Failed to load callback chain configuration or referenced `pythonCode` file |
+
+    *Note: Rule IDs `C008` and `C009` are retired.*
+
+    *Per-finding severity:* Rules that emit mixed-severity findings (such as `C101`–`C109`, `A009` accent mismatch warnings vs. missing voice errors, and `E012` unknown key warnings vs. structural errors) preserve the explicit `Severity` passed to `Rule.make_result(..., severity=...)` unless overridden in `cxaslint.yaml` (`rules:` or `per_file:`).
+
+    *Global callbacks in `app.json` (preview):* `globalBeforeModelCallbacks` (`global_before_model_callbacks`) and `globalAfterModelCallbacks` (`global_after_model_callbacks`) are supported as local preview features for simulation and cross-callback linting (`C101`–`C109`), but are not yet part of the public `google.cloud.ces_v1` / `ces_v1beta` `types.App` protobuf schema. When present in `app.json`, `V001` (`schema-app-valid`) emits a `Warning` (rather than a blocking schema `Error`) noting that `cxas push` will reject these fields until exposed by the platform.
 
     ---
 

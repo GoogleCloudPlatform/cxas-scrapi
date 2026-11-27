@@ -488,18 +488,46 @@ class SchemaValid(Rule):
             except FileNotFoundError as e:
                 return [self.make_result(rel, f"Missing referenced file: {e}")]
 
-        # Pop custom tools field from app_config to avoid proto validation
-        # failure, while validating embedded remoteAgentTool shapes if needed.
-        if self.target == "app_config" and "tools" in data:
-            embedded_tools = data.pop("tools")
-            if getattr(types, "RemoteAgentTool", None) is None and isinstance(
-                embedded_tools, list
+        # Pop custom tools from app_config to avoid proto validation failure
+        # (while validating embedded remoteAgentTool shapes if needed), and
+        # emit a WARNING for preview global callback fields not yet in the
+        # public google.cloud.ces_v1 / ces_v1beta types.App proto schema.
+        preview_warnings: list[LintResult] = []
+        if self.target == "app_config":
+            for _ext_app_key in (
+                "globalBeforeModelCallbacks",
+                "global_before_model_callbacks",
+                "globalAfterModelCallbacks",
+                "global_after_model_callbacks",
             ):
-                for item in embedded_tools:
-                    if isinstance(item, dict):
-                        err = _validate_legacy_remote_agent_tool(item)
-                        if err is not None:
-                            return [self.make_result(rel, err)]
+                if _ext_app_key in data:
+                    data.pop(_ext_app_key, None)
+                    preview_warnings.append(
+                        self.make_result(
+                            rel,
+                            (
+                                f"Preview field '{_ext_app_key}' is not in the "
+                                "public CES protobuf schema "
+                                "(google.cloud.ces_v1beta.types.App) and will "
+                                "be rejected by 'cxas push' until exposed by "
+                                "the platform."
+                            ),
+                            severity=Severity.WARNING,
+                        )
+                    )
+            if "tools" in data:
+                embedded_tools = data.pop("tools")
+                if getattr(
+                    types, "RemoteAgentTool", None
+                ) is None and isinstance(embedded_tools, list):
+                    for item in embedded_tools:
+                        if isinstance(item, dict):
+                            err = _validate_legacy_remote_agent_tool(item)
+                            if err is not None:
+                                return [
+                                    *preview_warnings,
+                                    self.make_result(rel, err),
+                                ]
 
         # Pop any custom _comment_ fields used for inline documentation
         for key in list(data.keys()):
@@ -540,7 +568,7 @@ class SchemaValid(Rule):
         try:
             _validate_fields(data, self._proto_type, path=str(resource_dir))
         except ValueError as e:
-            return [self.make_result(rel, str(e))]
+            return [*preview_warnings, self.make_result(rel, str(e))]
 
         _strip_v1main_only_fields(data, self.target)
 
@@ -584,10 +612,11 @@ class SchemaValid(Rule):
             json_format.ParseDict(data, obj._pb, ignore_unknown_fields=False)
         except Exception as e:
             return [
-                self.make_result(rel, f"Proto schema validation failed: {e}")
+                *preview_warnings,
+                self.make_result(rel, f"Proto schema validation failed: {e}"),
             ]
 
-        return []
+        return preview_warnings
 
 
 # Register one rule per resource type
