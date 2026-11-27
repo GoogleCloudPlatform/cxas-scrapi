@@ -355,6 +355,131 @@ def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
         )
 
 
+_PROTO_STRUCT_TYPES: frozenset[str] = frozenset(
+    {"google.protobuf.Struct", "google.protobuf.Value"}
+)
+_RESOLVED_FILE_SUFFIXES: tuple[str, ...] = (".txt", ".py", ".yaml", ".json")
+
+
+def _walk_map_proto_field(
+    val: typing.Any, msg_type: typing.Any, sub_path: str
+) -> list[str]:
+    val_field = msg_type.fields_by_name.get("value")
+    if (
+        val_field is None
+        or val_field.message_type is None
+        or not isinstance(val, Mapping)
+    ):
+        return []
+    errors: list[str] = []
+    for map_k, map_v in val.items():
+        if isinstance(map_v, Mapping):
+            errors.extend(
+                _find_snake_case_proto_keys(
+                    map_v, val_field.message_type, f"{sub_path}.{map_k}"
+                )
+            )
+    return errors
+
+
+def _walk_nested_proto_field(
+    val: typing.Any, field: typing.Any, sub_path: str
+) -> list[str]:
+    msg_type = field.message_type
+    if msg_type is None or msg_type.full_name in _PROTO_STRUCT_TYPES:
+        return []
+    if msg_type.GetOptions().map_entry:
+        return _walk_map_proto_field(val, msg_type, sub_path)
+    is_repeated = getattr(
+        field,
+        "is_repeated",
+        getattr(field, "label", None) == field.LABEL_REPEATED,
+    )
+    if is_repeated and isinstance(val, list):
+        errors: list[str] = []
+        for idx, item in enumerate(val):
+            if isinstance(item, Mapping):
+                errors.extend(
+                    _find_snake_case_proto_keys(
+                        item, msg_type, f"{sub_path}[{idx}]"
+                    )
+                )
+        return errors
+    if isinstance(val, Mapping):
+        return _find_snake_case_proto_keys(val, msg_type, sub_path)
+    return []
+
+
+def _find_snake_case_proto_keys(
+    data: Mapping[str, typing.Any],
+    descriptor: typing.Any,
+    path: str = "app",
+) -> list[str]:
+    """Reject snake_case protobuf field names in CES App configs."""
+    if descriptor is None or descriptor.full_name in _PROTO_STRUCT_TYPES:
+        return []
+    errors: list[str] = []
+    for field in descriptor.fields:
+        if field.name != field.json_name and field.name in data:
+            errors.append(
+                f"Field '{path}.{field.name}' uses snake_case; "
+                f"CES App configs require camelCase '{field.json_name}'."
+            )
+        val = (
+            data[field.json_name]
+            if field.json_name in data
+            else data.get(field.name)
+        )
+        if val is not None:
+            errors.extend(
+                _walk_nested_proto_field(
+                    val, field, f"{path}.{field.json_name}"
+                )
+            )
+    return errors
+
+
+def _check_path_string(
+    value: str, app_root_resolved: Path, path: str
+) -> list[str]:
+    if (
+        "://" in value
+        or any(c.isspace() for c in value)
+        or not value.endswith(_RESOLVED_FILE_SUFFIXES)
+    ):
+        return []
+    resolved = (app_root_resolved / value).resolve()
+    if not resolved.is_relative_to(app_root_resolved):
+        return [f"Referenced path '{value}' at '{path}' escapes app directory."]
+    return []
+
+
+def _check_path_confinement(
+    value: typing.Any, app_root_resolved: Path, path: str = "app"
+) -> list[str]:
+    """Ensure file references in App configs stay within ``app_root``."""
+    if isinstance(value, str):
+        return _check_path_string(value, app_root_resolved, path)
+    if isinstance(value, Mapping):
+        return [
+            err
+            for k, v in value.items()
+            if k not in _NON_PATH_KEYS
+            for err in _check_path_confinement(
+                v, app_root_resolved, f"{path}.{k}"
+            )
+        ]
+    if isinstance(value, list):
+        return [
+            err
+            for idx, item in enumerate(value)
+            for err in _check_path_confinement(
+                item, app_root_resolved, f"{path}[{idx}]"
+            )
+        ]
+    return []
+
+
 def _pop_legacy_app_tools(payload: dict[str, typing.Any]) -> str | None:
     """Remove app-level custom ``tools`` and validate legacy remote tools."""
     if "tools" not in payload:
@@ -387,6 +512,10 @@ def validate_app_config_data(
     )
 
     payload: dict[str, typing.Any] = copy.deepcopy(dict(data))
+    confinement_errors = _check_path_confinement(payload, app_root.resolve())
+    if confinement_errors:
+        return confinement_errors
+
     try:
         payload = _resolve_paths(payload, (), str(app_root))
     except FileNotFoundError as exc:
@@ -398,6 +527,12 @@ def validate_app_config_data(
 
     for key in [k for k in payload if k.startswith("_comment_")]:
         payload.pop(key)
+
+    snake_errors = _find_snake_case_proto_keys(
+        payload, types.App.pb().DESCRIPTOR
+    )
+    if snake_errors:
+        return snake_errors
 
     try:
         _validate_fields(payload, types.App, path="app")

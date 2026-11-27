@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import yaml
 
@@ -43,3 +44,61 @@ for _bool_lead in "tTfF":
     Yaml12SafeLoader.add_implicit_resolver(
         "tag:yaml.org,2002:bool", _YAML12_BOOL_RE, [_bool_lead]
     )
+
+
+class UniqueKeyYaml12SafeLoader(Yaml12SafeLoader):
+    """YAML 1.2 SafeLoader rejecting duplicate explicit mapping keys.
+
+    Allows standard ``<<: *anchor`` merge-key overrides and nested anchors
+    while failing fast on explicit duplicate keys (including inside inline
+    merge targets).
+    """
+
+    def __init__(self, stream: Any) -> None:
+        super().__init__(stream)
+        self._checked_nodes: set[int] = set()
+
+    def _check_merge_target(self, val_node: yaml.Node, *, deep: bool) -> None:
+        if isinstance(val_node, yaml.MappingNode):
+            self._check_mapping_node(val_node, deep=deep)
+        elif isinstance(val_node, yaml.SequenceNode):
+            for sub_node in val_node.value:
+                if isinstance(sub_node, yaml.MappingNode):
+                    self._check_mapping_node(sub_node, deep=deep)
+
+    def _check_mapping_node(
+        self, node: yaml.MappingNode, *, deep: bool
+    ) -> None:
+        node_id = id(node)
+        if node_id in self._checked_nodes:
+            return
+        self._checked_nodes.add(node_id)
+        seen: set[Any] = set()
+        for key_node, val_node in node.value:
+            if key_node.tag == "tag:yaml.org,2002:merge":
+                self._check_merge_target(val_node, deep=deep)
+                continue
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in seen
+            except TypeError as exc:
+                raise yaml.constructor.ConstructorError(
+                    "while constructing a mapping",
+                    node.start_mark,
+                    "found unhashable key",
+                    key_node.start_mark,
+                ) from exc
+            if duplicate:
+                raise yaml.constructor.ConstructorError(
+                    None,
+                    None,
+                    f"Duplicate mapping key '{key}'",
+                    key_node.start_mark,
+                )
+            seen.add(key)
+
+    def construct_mapping(
+        self, node: yaml.MappingNode, deep: bool = False
+    ) -> dict[Any, Any]:
+        self._check_mapping_node(node, deep=deep)
+        return super().construct_mapping(node, deep=deep)

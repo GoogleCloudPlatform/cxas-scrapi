@@ -49,7 +49,7 @@ from cxas_scrapi.build.manifests import (
     validate_app_overlay_mapping,
 )
 from cxas_scrapi.core.packaging import package_app_archive
-from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
+from cxas_scrapi.utils.yaml_utils import UniqueKeyYaml12SafeLoader
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -60,6 +60,7 @@ ConfigMap: TypeAlias = dict[str, JsonValue]
 AppLayer: TypeAlias = tuple[str, Mapping[str, JsonValue]]
 
 _KEY_ROOT_AGENT = "rootAgent"
+_KEY_ROOT_AGENT_SNAKE = "root_agent"
 _KEY_AUDIO_PROCESSING_CONFIG = "audioProcessingConfig"
 _KEY_SYNTHESIZE_SPEECH_CONFIGS = "synthesizeSpeechConfigs"
 _KEY_LANGUAGE_SETTINGS = "languageSettings"
@@ -93,59 +94,6 @@ _DYNAMIC_COND_KINDS = frozenset({"AgentEnabled", "ToolEnabled"})
 _IDENTITY_YAML_KEY_RE = re.compile(
     r"""^(?:["']?(?:displayName|name)["']?)\s*:"""
 )
-
-
-class _UniqueKeyYaml12Loader(Yaml12SafeLoader):
-    """YAML 1.2 SafeLoader rejecting duplicate explicit mapping keys."""
-
-    def __init__(self, stream: JsonValue) -> None:
-        super().__init__(stream)
-        self._checked_nodes: set[int] = set()
-
-    def _check_merge_target(self, val_node: yaml.Node, *, deep: bool) -> None:
-        if isinstance(val_node, yaml.MappingNode):
-            self._check_mapping_node(val_node, deep=deep)
-        elif isinstance(val_node, yaml.SequenceNode):
-            for sub_node in val_node.value:
-                if isinstance(sub_node, yaml.MappingNode):
-                    self._check_mapping_node(sub_node, deep=deep)
-
-    def _check_mapping_node(
-        self, node: yaml.MappingNode, *, deep: bool
-    ) -> None:
-        node_id = id(node)
-        if node_id in self._checked_nodes:
-            return
-        self._checked_nodes.add(node_id)
-        seen: set[JsonValue] = set()
-        for key_node, val_node in node.value:
-            if key_node.tag == "tag:yaml.org,2002:merge":
-                self._check_merge_target(val_node, deep=deep)
-                continue
-            key = self.construct_object(key_node, deep=deep)
-            try:
-                duplicate = key in seen
-            except TypeError as exc:
-                raise yaml.constructor.ConstructorError(
-                    "while constructing a mapping",
-                    node.start_mark,
-                    "found unhashable key",
-                    key_node.start_mark,
-                ) from exc
-            if duplicate:
-                raise yaml.constructor.ConstructorError(
-                    None,
-                    None,
-                    f"Duplicate mapping key '{key}'",
-                    key_node.start_mark,
-                )
-            seen.add(key)
-
-    def construct_mapping(
-        self, node: yaml.MappingNode, deep: bool = False
-    ) -> dict[JsonValue, JsonValue]:
-        self._check_mapping_node(node, deep=deep)
-        return super().construct_mapping(node, deep=deep)
 
 
 class BuildError(Exception):
@@ -861,7 +809,7 @@ def _read_yaml_with_renderer(path: Path, renderer: _BuildRenderer) -> JsonValue:
     if not renderer.allow_resource_conditionals and has_cond:
         try:
             stripped = renderer.preprocess_yaml_for_identifiers(text)
-            return yaml.load(stripped, Loader=_UniqueKeyYaml12Loader)
+            return yaml.load(stripped, Loader=UniqueKeyYaml12SafeLoader)
         except (yaml.YAMLError, BuildError) as exc:
             raise BuildError(f"{path}: {exc}") from exc
     return _parse_yaml_with_conditionals(
@@ -1087,7 +1035,7 @@ def _read_raw_config_identifiers(cfg_path: Path) -> set[str]:
         data = (
             json.loads(text)
             if cfg_path.suffix == ".json"
-            else yaml.load(text, Loader=_UniqueKeyYaml12Loader)
+            else yaml.load(text, Loader=UniqueKeyYaml12SafeLoader)
         )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, yaml.YAMLError):
         return set()
@@ -1272,9 +1220,15 @@ def _prune_agent_config_refs(
 
 def _ensure_dict_section(data: ConfigMap, key: str) -> ConfigMap:
     section = data.get(key)
-    if not isinstance(section, dict):
+    if section is None:
         section = {}
         data[key] = section
+        return section
+    if not isinstance(section, dict):
+        raise BuildError(
+            f"Expected '{key}' to be an object/mapping, got "
+            f"{type(section).__name__}."
+        )
     return section
 
 
@@ -1286,14 +1240,18 @@ def _update_root_agent(
 ) -> bool:
     current_root = data.get(_KEY_ROOT_AGENT)
     if entry_agent:
-        changed = current_root != entry_agent
+        had_snake = _KEY_ROOT_AGENT_SNAKE in data
+        data.pop(_KEY_ROOT_AGENT_SNAKE, None)
+        changed = current_root != entry_agent or had_snake
         data[_KEY_ROOT_AGENT] = entry_agent
         return changed
-    if _matches_resource_ref(current_root, disabled_agents, "agents"):
-        raise BuildError(
-            f"rootAgent '{current_root}' is disabled for channel "
-            f"'{channel}' and no replacement entry_agent is configured."
-        )
+    for root_key in (_KEY_ROOT_AGENT, _KEY_ROOT_AGENT_SNAKE):
+        root_val = data.get(root_key)
+        if _matches_resource_ref(root_val, disabled_agents, "agents"):
+            raise BuildError(
+                f"{root_key} '{root_val}' is disabled for channel "
+                f"'{channel}' and no replacement entry_agent is configured."
+            )
     return False
 
 
@@ -1463,7 +1421,7 @@ def _parse_yaml_with_conditionals(
     try:
         if has_tokens and ("{@start" in text or "{@end" in text):
             text = renderer.process_conditional_blocks(text)
-        return yaml.load(text, Loader=_UniqueKeyYaml12Loader)
+        return yaml.load(text, Loader=UniqueKeyYaml12SafeLoader)
     except (yaml.YAMLError, BuildError) as exc:
         raise BuildError(f"{path}: {exc}") from exc
 
@@ -1620,26 +1578,20 @@ def _render_staged_tree(
     return warnings
 
 
-def _validate_merged_app_config(staging_dir: Path, source_label: str) -> None:
-    app_cfg_path = next(
-        (
-            candidate
-            for fname in APP_CONFIG_FILENAMES
-            if (candidate := staging_dir / fname).is_file()
-        ),
-        None,
-    )
-    if app_cfg_path is None:
-        names = ", ".join(APP_CONFIG_FILENAMES)
-        raise BuildError(
-            f"{source_label}: '{FIELD_ENV_APP}:' overrides configured, but "
-            f"no app config ({names}) found in core directory."
+def _validate_single_app_config(
+    app_cfg_path: Path, staging_dir: Path, source_label: str
+) -> None:
+    try:
+        data = (
+            _read_json_strict(app_cfg_path)
+            if app_cfg_path.suffix == ".json"
+            else yaml.load(
+                app_cfg_path.read_text("utf-8"),
+                Loader=UniqueKeyYaml12SafeLoader,
+            )
         )
-    data = (
-        _read_json_strict(app_cfg_path)
-        if app_cfg_path.suffix == ".json"
-        else yaml.load(app_cfg_path.read_text("utf-8"), Loader=Yaml12SafeLoader)
-    )
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise BuildError(f"{app_cfg_path}: invalid YAML: {exc}") from exc
     if isinstance(data, Mapping):
         from cxas_scrapi.utils.lint_rules.schema import (  # noqa: PLC0415
             validate_app_config_data,
@@ -1654,6 +1606,22 @@ def _validate_merged_app_config(staging_dir: Path, source_label: str) -> None:
             f"{source_label} (merged into {app_cfg_path.name}): invalid "
             f"App config: {joined}"
         )
+
+
+def _validate_merged_app_config(staging_dir: Path, source_label: str) -> None:
+    app_cfg_paths = [
+        candidate
+        for fname in APP_CONFIG_FILENAMES
+        if (candidate := staging_dir / fname).is_file()
+    ]
+    if not app_cfg_paths:
+        names = ", ".join(APP_CONFIG_FILENAMES)
+        raise BuildError(
+            f"{source_label}: '{FIELD_ENV_APP}:' overrides configured, but "
+            f"no app config ({names}) found in core directory."
+        )
+    for app_cfg_path in app_cfg_paths:
+        _validate_single_app_config(app_cfg_path, staging_dir, source_label)
 
 
 def _write_deployment_manifest(

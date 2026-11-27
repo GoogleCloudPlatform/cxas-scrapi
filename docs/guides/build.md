@@ -122,6 +122,8 @@ Merge semantics for `app:`:
 - Lists replace wholesale (never concatenated).
 - Scalars replace.
 - Explicit `null` deletes the key at any depth.
+- CES `App` config keys must use camelCase (for example `timeZoneSettings`,
+  `audioProcessingConfig`, `rootAgent`), matching `cxas lint` rule `A006`.
 
 Server-managed, read-only, and lock-controlled `App` fields are forbidden at the
 top level of `app:` (in both camelCase and snake_case): `name`, `locked`,

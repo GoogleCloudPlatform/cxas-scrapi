@@ -359,3 +359,21 @@ def test_env_manifest_app_rejects_non_string_keys_and_non_mapping(
 
     with pytest.raises(ManifestError, match=expected_match):
         load_manifests(tmp_path)
+
+
+def test_env_manifest_rejects_duplicate_yaml_keys(tmp_path: Path) -> None:
+    _write_minimal_profile(tmp_path)
+    envs_dir = tmp_path / "envs"
+    envs_dir.mkdir()
+    (envs_dir / "prod.yaml").write_text(
+        "environment: prod\n"
+        "app:\n"
+        "  description: first\n"
+        "  description: second\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ManifestError, match=r"prod\.yaml:.*Duplicate mapping key 'description'"
+    ):
+        load_manifests(tmp_path)

@@ -2834,3 +2834,294 @@ def test_docs_build_guide_env_app_example_passes_cxas_lint(
     run_rules(registry, config, context, discovery, report)
     errors = [r for r in report.results if r.severity == Severity.ERROR]
     assert errors == [], f"Unexpected lint errors: {errors}"
+
+
+def test_env_app_snake_case_root_agent_pruned_raises(tmp_path: Path) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["channels"]["DIGITAL_APP"]["disabled_agents"] = ["pruned_agent_display"]
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+
+    (core_dir / "app.json").write_text(
+        json.dumps({"displayName": "Valid App"}), encoding="utf-8"
+    )
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  root_agent: pruned_agent_dir\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BuildError):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_pruned_snake_root",
+        )
+
+
+def test_env_app_snake_case_root_agent_cannot_override_entry_agent(
+    tmp_path: Path,
+) -> None:
+    from google.cloud.ces_v1beta import types  # noqa: PLC0415
+    from google.protobuf import json_format  # noqa: PLC0415
+
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").write_text(
+        json.dumps({"displayName": "Valid App", "rootAgent": "default_agent"}),
+        encoding="utf-8",
+    )
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  root_agent: pruned_agent_dir\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_snake_root_with_entry"
+    try:
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            out_dir,
+        )
+    except BuildError:
+        return
+
+    app_cfg = json.loads((out_dir / "app.json").read_text("utf-8"))
+    assert "root_agent" not in app_cfg
+    assert app_cfg["rootAgent"] == "custom_entry"
+    proto_app = types.App()
+    json_format.ParseDict(app_cfg, proto_app._pb, ignore_unknown_fields=False)
+    assert proto_app.root_agent == "custom_entry"
+
+
+def test_env_app_snake_case_sections_cannot_clobber_profile_precedence(
+    tmp_path: Path,
+) -> None:
+    from google.cloud.ces_v1beta import types  # noqa: PLC0415
+    from google.protobuf import json_format  # noqa: PLC0415
+
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Valid App",
+                "rootAgent": "default_agent",
+                "audioProcessingConfig": {"inactivityTimeout": "120s"},
+                "languageSettings": {
+                    "defaultLanguageCode": "en",
+                    "supportedLanguageCodes": ["en"],
+                    "enableMultilingualSupport": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  audio_processing_config:\n"
+        "    inactivity_timeout: 300s\n"
+        "    synthesize_speech_configs:\n"
+        "      en:\n"
+        "        voice: env-override-should-lose\n"
+        "        speaking_rate: 2.0\n"
+        "  language_settings:\n"
+        "    default_language_code: fr\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_snake_sections"
+    try:
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            out_dir,
+        )
+    except BuildError:
+        return
+
+    app_cfg = json.loads((out_dir / "app.json").read_text("utf-8"))
+    assert "audio_processing_config" not in app_cfg
+    assert "language_settings" not in app_cfg
+    proto_app = types.App()
+    json_format.ParseDict(app_cfg, proto_app._pb, ignore_unknown_fields=False)
+    assert proto_app.language_settings.default_language_code == "en"
+    assert (
+        proto_app.audio_processing_config.synthesize_speech_configs["en"].voice
+        == "en-US-Standard-A"
+    )
+
+
+def test_env_app_nested_snake_case_rejected_and_struct_map_keys_allowed(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").write_text(
+        json.dumps({"displayName": "Valid App", "rootAgent": "default_agent"}),
+        encoding="utf-8",
+    )
+
+    # User-defined snake_case keys in metadata, Schema.properties, and
+    # google.protobuf.Value defaults must remain allowed.
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  metadata:\n"
+        "    my_snake_key: ok\n"
+        "  variableDeclarations:\n"
+        "    - name: user_profile\n"
+        "      description: User profile\n"
+        "      schema:\n"
+        "        type: OBJECT\n"
+        "        properties:\n"
+        "          first_name:\n"
+        "            type: STRING\n"
+        "        default:\n"
+        "          my_snake_key: 1\n",
+        encoding="utf-8",
+    )
+    out_ok = tmp_path / "out_allowed_maps"
+    build_app(
+        core_dir, manifests_dir, "profile_2", "DIGITAL_APP", "prod", out_ok
+    )
+    app_cfg = json.loads((out_ok / "app.json").read_text("utf-8"))
+    assert app_cfg["metadata"] == {"my_snake_key": "ok"}
+    assert app_cfg["variableDeclarations"][0]["schema"]["default"] == {
+        "my_snake_key": 1
+    }
+
+    # Nested proto snake_case fields (including inside map values) must fail.
+    for snippet, expected_camel in [
+        (
+            "  audioProcessingConfig:\n    inactivity_timeout: 300s\n",
+            "inactivityTimeout",
+        ),
+        (
+            "  audioProcessingConfig:\n"
+            "    synthesizeSpeechConfigs:\n"
+            "      en:\n"
+            "        voice: en-US-Standard-A\n"
+            "        speaking_rate: 1.0\n",
+            "speakingRate",
+        ),
+    ]:
+        (manifests_dir / "envs" / "prod.yaml").write_text(
+            "environment: prod\n"
+            "templates:\n"
+            "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+            f"app:\n{snippet}",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildError, match=expected_camel):
+            build_app(
+                core_dir,
+                manifests_dir,
+                "profile_2",
+                "DIGITAL_APP",
+                "prod",
+                tmp_path / f"out_nested_{expected_camel}",
+            )
+
+
+@pytest.mark.parametrize(
+    ("section_key", "bad_value"),
+    [
+        ("languageSettings", '"not_a_dict"'),
+        ("audioProcessingConfig", "[1, 2]"),
+    ],
+)
+def test_env_app_non_dict_profile_sections_raise(
+    tmp_path: Path, section_key: str, bad_value: str
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").write_text(
+        json.dumps({"displayName": "Valid App", "rootAgent": "default_agent"}),
+        encoding="utf-8",
+    )
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        f"  {section_key}: {bad_value}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BuildError, match=rf"{section_key}.*mapping"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / f"out_bad_{section_key}",
+        )
+
+
+def test_env_app_path_escape_and_dual_app_configs_validated(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").write_text(
+        json.dumps({"displayName": "Valid App", "rootAgent": "default_agent"}),
+        encoding="utf-8",
+    )
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        '  globalInstruction: "../manifests/envs/prod.yaml"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match="escapes app directory"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_path_escape",
+        )
+
+    # When both app.json and app.yaml exist in core, both must be validated.
+    (core_dir / "app.yaml").write_text(
+        "displayName: YAML App\nbogusYamlField: 123\n", encoding="utf-8"
+    )
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  description: Merged\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match=r"app\.yaml.*bogusYamlField"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_dual_configs",
+        )

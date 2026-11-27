@@ -43,7 +43,7 @@ from pydantic import (
     model_validator,
 )
 
-from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
+from cxas_scrapi.utils.yaml_utils import UniqueKeyYaml12SafeLoader
 
 PROFILE_ID_PATTERN = r"^[a-z0-9_-]{2,64}$"
 _PROFILE_ID_RE = re.compile(PROFILE_ID_PATTERN)
@@ -327,7 +327,7 @@ class Manifests(BaseModel):
 def _read_yaml(path: Path) -> dict[str, ManifestValue]:
     try:
         data = yaml.load(
-            path.read_text(encoding="utf-8"), Loader=Yaml12SafeLoader
+            path.read_text(encoding="utf-8"), Loader=UniqueKeyYaml12SafeLoader
         )
     except yaml.YAMLError as exc:
         raise ManifestError(f"{path}: invalid YAML: {exc}") from exc
