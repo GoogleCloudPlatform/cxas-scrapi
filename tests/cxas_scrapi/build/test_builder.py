@@ -21,6 +21,7 @@ import filecmp
 import hashlib
 import json
 import os
+import shutil
 import zipfile
 from typing import TYPE_CHECKING
 
@@ -45,8 +46,11 @@ def _setup_sample_workspace(tmp_path: Path) -> tuple[Path, Path]:
     core_dir.mkdir()
 
     app_json = {
+        "displayName": "Sample App",
         "rootAgent": "default_agent",
-        "variableDeclarations": [{"name": "var1"}],
+        "variableDeclarations": [
+            {"name": "var1", "schema": {"type": "STRING"}}
+        ],
     }
     (core_dir / "app.json").write_text(json.dumps(app_json), encoding="utf-8")
     (core_dir / "environment.json").write_text(
@@ -401,7 +405,10 @@ def test_root_agent_fallback_when_pruned_and_explicit_identity_block(
 ) -> None:
     core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
     (core_dir / "app.json").write_text(
-        json.dumps({"rootAgent": "pruned_agent_display"}), encoding="utf-8"
+        json.dumps(
+            {"displayName": "Fallback App", "rootAgent": "pruned_agent_display"}
+        ),
+        encoding="utf-8",
     )
     (core_dir / "global_instruction.txt").write_text(
         "HEADER\n@@profile.identity_block@@\nFOOTER\n", encoding="utf-8"
@@ -684,7 +691,8 @@ def test_yaml_pruning_and_app_yaml_settings(tmp_path: Path) -> None:
     # Replace app.json with tokenless app.yaml pointing to pruned rootAgent.
     (core_dir / "app.json").unlink()
     (core_dir / "app.yaml").write_text(
-        "rootAgent: pruned_agent_display\n", encoding="utf-8"
+        "displayName: YAML App\nrootAgent: pruned_agent_display\n",
+        encoding="utf-8",
     )
 
     out_dir = tmp_path / "out_yaml_prune"
@@ -1525,6 +1533,7 @@ def test_env_agents_pruning_tokenized_root_empty_app_yaml_and_unicode_dep(
                         "default_agent": {"kept": True},
                     }
                 },
+                "app": {"displayName": "From Env App"},
             },
             sort_keys=False,
         ),
@@ -2132,10 +2141,17 @@ def test_post_pruning_enabled_conditionals_and_static_identity_conditionals(
 
     # Static Channel/Profile conditional in displayName prunes or survives in
     # a single deterministic pass.
+    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["channels"]["VOICE_TELEPHONY"]["disabled_agents"].append(
+        "static_voice_disabled"
+    )
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+
     static_dir = core_dir / "agents" / "static_cond_agent"
     static_dir.mkdir()
     (static_dir / "static_cond_agent.yaml").write_text(
-        'displayName: "{@startChannel_VOICE_TELEPHONY}pruned_agent_display'
+        'displayName: "{@startChannel_VOICE_TELEPHONY}static_voice_disabled'
         "{@endChannel_VOICE_TELEPHONY}"
         "{@startChannel_DIGITAL_APP}Digital Static{@endChannel_DIGITAL_APP}"
         '"\n',
@@ -2645,6 +2661,7 @@ def test_env_app_block_on_comment_only_app_yaml(tmp_path: Path) -> None:
         "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
         "app:\n"
         "  displayName: From Env App\n"
+        "  rootAgent: default_agent\n"
         "  timeZoneSettings:\n"
         "    timeZone: UTC\n",
         encoding="utf-8",
@@ -2657,6 +2674,7 @@ def test_env_app_block_on_comment_only_app_yaml(tmp_path: Path) -> None:
     merged = yaml.safe_load((out_dir / "app.yaml").read_text("utf-8"))
     assert merged == {
         "displayName": "From Env App",
+        "rootAgent": "default_agent",
         "timeZoneSettings": {"timeZone": "UTC"},
     }
 
@@ -2665,8 +2683,7 @@ def test_no_env_app_block_preserves_byte_identical_minimal_output(
     tmp_path: Path,
 ) -> None:
     core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
-    # Sample workspace app.json intentionally omits displayName and env has no
-    # app: block — must still build cleanly and byte-identically.
+    # Without an env app: block, repeated builds remain byte-identical.
     out1 = tmp_path / "out_no_app_1"
     out2 = tmp_path / "out_no_app_2"
     r1 = build_app(
@@ -3106,7 +3123,10 @@ def test_env_app_path_escape_and_dual_app_configs_validated(
 
     # When both app.json and app.yaml exist in core, both must be validated.
     (core_dir / "app.yaml").write_text(
-        "displayName: YAML App\nbogusYamlField: 123\n", encoding="utf-8"
+        "displayName: YAML App\n"
+        "rootAgent: default_agent\n"
+        "bogusYamlField: 123\n",
+        encoding="utf-8",
     )
     (manifests_dir / "envs" / "prod.yaml").write_text(
         "environment: prod\n"
@@ -3124,4 +3144,412 @@ def test_env_app_path_escape_and_dual_app_configs_validated(
             "DIGITAL_APP",
             "prod",
             tmp_path / "out_dual_configs",
+        )
+
+
+def test_indented_block_scalar_and_flow_yaml_reject_dynamic_identity_conditionals(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # 2-space indented YAML with dynamic conditional on description & nested
+    # parameters.properties.name must build cleanly.
+    ok_tool = core_dir / "tools" / "indented_ok_tool"
+    ok_tool.mkdir()
+    (ok_tool / "indented_ok_tool.yaml").write_text(
+        "  displayName: Indented Ok Tool\n"
+        "  {@startToolEnabled_active_tool}\n"
+        "  description: Uses active tool\n"
+        "  parameters:\n"
+        "    properties:\n"
+        "      name: string\n"
+        "  {@endToolEnabled_active_tool}\n",
+        encoding="utf-8",
+    )
+    out_ok = tmp_path / "out_indented_ok"
+    build_app(
+        core_dir, manifests_dir, "profile_1", "VOICE_TELEPHONY", "prod", out_ok
+    )
+    rendered_ok = yaml.safe_load(
+        (
+            out_ok / "tools" / "indented_ok_tool" / "indented_ok_tool.yaml"
+        ).read_text("utf-8")
+    )
+    assert rendered_ok["displayName"] == "Indented Ok Tool"
+    assert rendered_ok["description"] == "Uses active tool"
+    assert rendered_ok["parameters"]["properties"]["name"] == "string"
+
+    # Indented top-level displayName, block scalar displayName, and flow-mapping
+    # root displayName wrapped in dynamic conditionals must all fail fast.
+    bad_cases = [
+        (
+            "indented_ident",
+            "  {@startToolEnabled_active_tool}\n"
+            "  displayName: Indented Dynamic\n"
+            "  {@endToolEnabled_active_tool}\n"
+            "  description: test\n",
+        ),
+        (
+            "block_scalar_ident",
+            "displayName: |\n"
+            "  {@startToolEnabled_active_tool}\n"
+            "  Block Scalar Name\n"
+            "  {@endToolEnabled_active_tool}\n",
+        ),
+        (
+            "flow_root_ident",
+            "{\n"
+            "{@startToolEnabled_active_tool}\n"
+            '  "displayName": "Flow Dynamic",\n'
+            "{@endToolEnabled_active_tool}\n"
+            '  "description": "test"\n'
+            "}\n",
+        ),
+    ]
+    for folder_name, yaml_content in bad_cases:
+        bad_dir = core_dir / "tools" / folder_name
+        bad_dir.mkdir()
+        (bad_dir / f"{folder_name}.yaml").write_text(
+            yaml_content, encoding="utf-8"
+        )
+        with pytest.raises(BuildError, match="not allowed inside resource"):
+            build_app(
+                core_dir,
+                manifests_dir,
+                "profile_1",
+                "VOICE_TELEPHONY",
+                "prod",
+                tmp_path / f"out_{folder_name}",
+            )
+        shutil.rmtree(bad_dir)
+
+    # Illegal dynamic conditional must not be swallowed even on a disabled tool.
+    (core_dir / "tools" / "secret_tool_dir" / "secret_tool_dir.json").unlink()
+    (
+        core_dir / "tools" / "secret_tool_dir" / "secret_tool_dir.yaml"
+    ).write_text(
+        "  {@startToolEnabled_active_tool}\n"
+        "  displayName: secret_tool_disabled\n"
+        "  {@endToolEnabled_active_tool}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match="not allowed inside resource"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_disabled_illegal_cond",
+        )
+
+
+def test_root_agent_must_exist_in_surviving_agents_and_cannot_be_null_or_missing(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # Overlay setting rootAgent to non-existent agent fails without entry_agent.
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  rootAgent: ghost_agent\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match="does not match any surviving agent"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_ghost_root",
+        )
+
+    # Overlay deleting rootAgent via explicit null fails without entry_agent.
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  rootAgent: null\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match="rootAgent cannot be null"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_null_root",
+        )
+
+    # Missing rootAgent in core/app.json fails when agents exist and no entry_agent.
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n",
+        encoding="utf-8",
+    )
+    (core_dir / "app.json").write_text(
+        json.dumps({"displayName": "No Root App"}), encoding="utf-8"
+    )
+    with pytest.raises(BuildError, match="missing 'rootAgent'"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_missing_root",
+        )
+
+    # Empty string rootAgent in core/app.json fails without entry_agent.
+    (core_dir / "app.json").write_text(
+        json.dumps({"displayName": "Blank Root App", "rootAgent": ""}),
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match="rootAgent cannot be empty or null"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_blank_root",
+        )
+
+
+def test_always_validates_final_app_config_and_attributes_blame_accurately(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").unlink()
+
+    # 1. Invalid snake_case key in core/app.yaml fails BOTH without and with
+    # an env app: overlay, blaming core/app.yaml in both cases.
+    (core_dir / "app.yaml").write_text(
+        "displayName: Core App\n"
+        "rootAgent: default_agent\n"
+        "root_agent: default_agent\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError) as exc_no_overlay:
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_core_snake_no_overlay",
+        )
+    assert "core/app.yaml" in str(exc_no_overlay.value)
+    assert "envs/prod.yaml" not in str(exc_no_overlay.value)
+
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  description: Valid env description\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError) as exc_with_overlay:
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_core_snake_with_overlay",
+        )
+    assert "core/app.yaml" in str(exc_with_overlay.value)
+    assert "envs/prod.yaml" not in str(exc_with_overlay.value)
+
+    # 2. Missing displayName in core/app.yaml fails in both envs, blaming core.
+    (core_dir / "app.yaml").write_text(
+        "rootAgent: default_agent\n", encoding="utf-8"
+    )
+    with pytest.raises(BuildError) as exc_missing_dn:
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_missing_dn",
+        )
+    assert "core/app.yaml" in str(exc_missing_dn.value)
+    assert "envs/prod.yaml" not in str(exc_missing_dn.value)
+
+    # 3. Valid core/app.yaml + invalid envs/prod.yaml overlay blames envs/prod.yaml.
+    (core_dir / "app.yaml").write_text(
+        "displayName: Core App\nrootAgent: default_agent\n", encoding="utf-8"
+    )
+    for bad_overlay in (
+        "  displayName: null\n",
+        "  time_zone_settings:\n    timeZone: UTC\n",
+    ):
+        (manifests_dir / "envs" / "prod.yaml").write_text(
+            "environment: prod\n"
+            "templates:\n"
+            "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+            f"app:\n{bad_overlay}",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildError) as exc_overlay:
+            build_app(
+                core_dir,
+                manifests_dir,
+                "profile_1",
+                "DIGITAL_APP",
+                "prod",
+                tmp_path / "out_bad_overlay",
+            )
+        assert "envs/prod.yaml" in str(exc_overlay.value)
+        assert "core/app.yaml" not in str(exc_overlay.value)
+
+
+def test_duplicate_sibling_resource_identifiers_fail_fast(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # Tool folder tool_a vs sibling tool_b whose displayName is also "tool_a".
+    tool_a = core_dir / "tools" / "tool_a"
+    tool_a.mkdir()
+    (tool_a / "tool_a.json").write_text(
+        json.dumps({"displayName": "tool_a"}), encoding="utf-8"
+    )
+    tool_b = core_dir / "tools" / "tool_b"
+    tool_b.mkdir()
+    (tool_b / "tool_b.json").write_text(
+        json.dumps({"displayName": "tool_a"}), encoding="utf-8"
+    )
+    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["channels"]["VOICE_TELEPHONY"]["disabled_tools"].append("tool_a")
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(BuildError, match="Ambiguous tools identifier 'tool_a'"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_dup_tool",
+        )
+
+    shutil.rmtree(tool_a)
+    shutil.rmtree(tool_b)
+
+    # Two sibling agents sharing the same displayName must also fail fast.
+    ag_a = core_dir / "agents" / "agent_a"
+    ag_a.mkdir()
+    (ag_a / "agent_a.json").write_text(
+        json.dumps({"displayName": "Shared Agent"}), encoding="utf-8"
+    )
+    ag_b = core_dir / "agents" / "agent_b"
+    ag_b.mkdir()
+    (ag_b / "agent_b.json").write_text(
+        json.dumps({"displayName": "Shared Agent"}), encoding="utf-8"
+    )
+    with pytest.raises(
+        BuildError, match="Ambiguous agents identifier 'Shared Agent'"
+    ):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_dup_agent",
+        )
+
+
+def test_validate_app_config_data_does_not_read_cwd_or_symlinks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from cxas_scrapi.utils.lint_rules.schema import (  # noqa: PLC0415
+        validate_app_config_data,
+    )
+
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    leaked_file = outside_dir / "cwd_leak.txt"
+    leaked_file.write_text("SECRET FROM CWD\n", encoding="utf-8")
+
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    monkeypatch.chdir(outside_dir)
+
+    errors = validate_app_config_data(
+        {"displayName": "Valid App", "globalInstruction": "cwd_leak.txt"},
+        app_root,
+    )
+    assert errors, "Expected missing-file error instead of CWD fallback"
+    assert any("Missing referenced file" in e for e in errors)
+
+    sym_path = app_root / "sym_instruction.txt"
+    sym_path.symlink_to(leaked_file)
+    sym_errors = validate_app_config_data(
+        {
+            "displayName": "Valid App",
+            "globalInstruction": "sym_instruction.txt",
+        },
+        app_root,
+    )
+    assert any("escapes app directory" in e for e in sym_errors)
+
+
+@pytest.mark.parametrize(
+    "tool_yaml",
+    [
+        (
+            "_base: &base\n"
+            "  other: 1\n"
+            "  {@startToolEnabled_active_tool}\n"
+            "  displayName: secret_tool_disabled\n"
+            "  {@endToolEnabled_active_tool}\n"
+            "<<: *base\n"
+            "description: Ok\n"
+        ),
+        (
+            "_base: &base\n"
+            "  displayName: secret_tool_disabled\n"
+            "{@startToolEnabled_active_tool}\n"
+            "<<: *base\n"
+            "{@endToolEnabled_active_tool}\n"
+            "description: Ok\n"
+        ),
+        (
+            "{@startToolEnabled_active_tool}\n"
+            "? displayName\n"
+            ": secret_tool_disabled\n"
+            "{@endToolEnabled_active_tool}\n"
+            "description: Ok\n"
+        ),
+    ],
+)
+def test_yaml_anchor_merge_and_explicit_key_identity_conditionals_rejected(
+    tmp_path: Path, tool_yaml: str
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "tools" / "active_tool" / "active_tool.json").unlink()
+    (core_dir / "tools" / "active_tool" / "active_tool.yaml").write_text(
+        tool_yaml, encoding="utf-8"
+    )
+
+    with pytest.raises(BuildError, match=r"Conditional tag|identity"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_anchor_identity_cond",
         )

@@ -476,3 +476,82 @@ def test_package_app_archive_resolves_tool_and_toolset_env_vars(
     assert staged_ts["connectorToolset"]["connection"] == (
         "projects/demo/locations/us-central1/connections/erp-prod"
     )
+
+
+def test_package_app_archive_resolves_both_openapi_url_and_schema_and_rejects_external_schema(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "app"
+    tool_dir = app_dir / "tools" / "crm_api"
+    tool_dir.mkdir(parents=True)
+    (app_dir / "app.json").write_text(
+        json.dumps({"displayName": "CRM App"}), encoding="utf-8"
+    )
+    schema_rel = "tools/crm_api/openapi.yaml"
+    (app_dir / schema_rel).write_text(
+        "openapi: 3.0.0\nservers:\n  - url: $env_var\n", encoding="utf-8"
+    )
+    (tool_dir / "crm_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "crm_api",
+                "openApiTool": {
+                    "url": "$env_var",
+                    "openApiSchema": schema_rel,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "env.json"
+    env_file.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "crm_api": {
+                        "openApiTool": {"url": "https://crm.prod.example.com"}
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resolved_tools: list[str] = []
+    zip_path = package_app_archive(
+        app_dir,
+        tmp_path / "crm.zip",
+        env_file,
+        resolved_tool_env_vars=resolved_tools,
+    )
+    assert resolved_tools == ["crm_api.openApiTool.url"]
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        staged_manifest = json.loads(
+            zf.read("tools/crm_api/crm_api.json").decode("utf-8")
+        )
+        staged_schema = zf.read(schema_rel).decode("utf-8")
+    assert (
+        staged_manifest["openApiTool"]["url"] == "https://crm.prod.example.com"
+    )
+    assert "https://crm.prod.example.com" in staged_schema
+    assert "$env_var" not in staged_schema
+
+    # Out-of-app openApiSchema must fail packaging without touching external file.
+    external = tmp_path / "external_schema.yaml"
+    external_orig = "openapi: 3.0.0\nservers:\n  - url: $env_var\n"
+    external.write_text(external_orig, encoding="utf-8")
+    (tool_dir / "crm_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "crm_api",
+                "openApiTool": {
+                    "url": "$env_var",
+                    "openApiSchema": "../external_schema.yaml",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="escapes app"):
+        package_app_archive(app_dir, tmp_path / "bad.zip", env_file)
+    assert external.read_text(encoding="utf-8") == external_orig

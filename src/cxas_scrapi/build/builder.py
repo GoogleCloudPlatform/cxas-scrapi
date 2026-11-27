@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import copy
 import functools
 import io
@@ -49,7 +50,10 @@ from cxas_scrapi.build.manifests import (
     validate_app_overlay_mapping,
 )
 from cxas_scrapi.core.packaging import package_app_archive
-from cxas_scrapi.utils.yaml_utils import UniqueKeyYaml12SafeLoader
+from cxas_scrapi.utils.yaml_utils import (
+    UniqueKeyYaml12SafeLoader,
+    Yaml12SafeLoader,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -60,7 +64,6 @@ ConfigMap: TypeAlias = dict[str, JsonValue]
 AppLayer: TypeAlias = tuple[str, Mapping[str, JsonValue]]
 
 _KEY_ROOT_AGENT = "rootAgent"
-_KEY_ROOT_AGENT_SNAKE = "root_agent"
 _KEY_AUDIO_PROCESSING_CONFIG = "audioProcessingConfig"
 _KEY_SYNTHESIZE_SPEECH_CONFIGS = "synthesizeSpeechConfigs"
 _KEY_LANGUAGE_SETTINGS = "languageSettings"
@@ -91,8 +94,16 @@ _STAGE_IGNORE_PATTERNS = ("__pycache__", "*.pyc", ".DS_Store", "manifests")
 _RESOURCE_CONFIG_SUFFIXES = (".json", ".yaml", ".yml")
 _BUILD_MARKER_FILE = ".cxas-build-output"
 _DYNAMIC_COND_KINDS = frozenset({"AgentEnabled", "ToolEnabled"})
+_ILLEGAL_COND_ERROR_MARKERS = (
+    "Conditional tag",
+    "Unbalanced",
+    "Unknown conditional",
+)
 _IDENTITY_YAML_KEY_RE = re.compile(
     r"""^(?:["']?(?:displayName|name)["']?)\s*:"""
+)
+_FLOW_IDENTITY_YAML_KEY_RE = re.compile(
+    r"""(?:^|[{,\s])["']?(?:displayName|name)["']?\s*:"""
 )
 
 
@@ -200,23 +211,153 @@ def _active_dynamic_kind(
     return static_active, dyn_kind
 
 
-def _append_identifier_line(
-    line: str,
-    stack: list[tuple[str, str, bool]],
-    out_lines: list[str],
+def _raise_identity_cond_error(dyn_kind: str) -> None:
+    raise BuildError(
+        f"Conditional tag kind '{dyn_kind}' is not allowed inside "
+        "resource identity fields (displayName/name); use Channel "
+        "or Profile conditionals instead."
+    )
+
+
+def _is_yaml_ignorable_line(stripped: str) -> bool:
+    return (
+        not stripped or stripped.startswith("#") or stripped in ("---", "...")
+    )
+
+
+def _yaml_root_layout(
+    collected: list[tuple[str, str | None]],
+) -> tuple[int, bool]:
+    indents: list[int] = []
+    first_stripped = ""
+    for line, _ in collected:
+        stripped = line.lstrip(" ")
+        if _is_yaml_ignorable_line(stripped):
+            continue
+        if not first_stripped:
+            first_stripped = stripped
+        indents.append(len(line) - len(stripped))
+    return (min(indents) if indents else 0), first_stripped.startswith("{")
+
+
+def _validate_flow_identity_lines(
+    collected: list[tuple[str, str | None]],
 ) -> None:
-    static_active, dyn_kind = _active_dynamic_kind(stack)
-    if not static_active:
-        return
-    if dyn_kind is None:
-        out_lines.append(line)
-        return
-    if _IDENTITY_YAML_KEY_RE.match(line):
-        raise BuildError(
-            f"Conditional tag kind '{dyn_kind}' is not allowed inside "
-            "resource identity fields (displayName/name); use Channel "
-            "or Profile conditionals instead."
+    for line, dyn_kind in collected:
+        if dyn_kind is not None and _FLOW_IDENTITY_YAML_KEY_RE.search(line):
+            _raise_identity_cond_error(dyn_kind)
+
+
+def _starts_multiline_identity(stripped: str) -> bool:
+    _, _, rest = stripped.partition(":")
+    val = rest.strip()
+    return not val or val[0] in ("|", ">")
+
+
+def _update_root_identity_line(
+    stripped: str, dyn_kind: str | None
+) -> tuple[bool, bool]:
+    is_ident = bool(_IDENTITY_YAML_KEY_RE.match(stripped))
+    if dyn_kind is not None and is_ident:
+        _raise_identity_cond_error(dyn_kind)
+    next_scalar = is_ident and dyn_kind is None
+    return next_scalar, next_scalar and _starts_multiline_identity(stripped)
+
+
+def _step_block_identity_state(
+    line: str,
+    dyn_kind: str | None,
+    root_indent: int,
+    in_scalar: bool,
+    in_block: bool,
+) -> tuple[bool, bool]:
+    stripped = line.lstrip(" ")
+    if _is_yaml_ignorable_line(stripped):
+        if in_block and dyn_kind is not None:
+            _raise_identity_cond_error(dyn_kind)
+        return in_scalar, in_block
+    if len(line) - len(stripped) <= root_indent:
+        return _update_root_identity_line(stripped, dyn_kind)
+    if in_scalar and dyn_kind is not None:
+        _raise_identity_cond_error(dyn_kind)
+    return in_scalar, in_block
+
+
+def _validate_block_identity_lines(
+    collected: list[tuple[str, str | None]], root_indent: int
+) -> None:
+    in_scalar = False
+    in_block = False
+    for line, dyn_kind in collected:
+        in_scalar, in_block = _step_block_identity_state(
+            line, dyn_kind, root_indent, in_scalar, in_block
         )
+
+
+def _extract_identity_pair(
+    data: JsonValue,
+) -> tuple[JsonValue, JsonValue]:
+    if not isinstance(data, dict):
+        return None, None
+    return data.get("name"), data.get("displayName")
+
+
+def _check_branch_duplicate_identity(branch_text: str, dyn_kind: str) -> None:
+    try:
+        yaml.load(branch_text, Loader=UniqueKeyYaml12SafeLoader)
+    except yaml.constructor.ConstructorError as exc:
+        msg = str(exc)
+        if (
+            "Duplicate mapping key 'displayName'" in msg
+            or "Duplicate mapping key 'name'" in msg
+        ):
+            _raise_identity_cond_error(dyn_kind)
+    except yaml.YAMLError:
+        return
+
+
+def _verify_single_dynamic_branch(
+    base_ids: tuple[JsonValue, JsonValue],
+    dyn_kind: str,
+    branch_text: str,
+) -> None:
+    _check_branch_duplicate_identity(branch_text, dyn_kind)
+    try:
+        branch_data = yaml.load(branch_text, Loader=Yaml12SafeLoader)
+    except yaml.YAMLError:
+        _raise_identity_cond_error(dyn_kind)
+    if not isinstance(branch_data, dict):
+        _raise_identity_cond_error(dyn_kind)
+    if _extract_identity_pair(branch_data) != base_ids:
+        _raise_identity_cond_error(dyn_kind)
+
+
+def _verify_dynamic_yaml_branches(
+    base_data: JsonValue,
+    branches: Sequence[tuple[str, str]],
+) -> None:
+    base_ids = _extract_identity_pair(base_data)
+    for dyn_kind, branch_text in branches:
+        _verify_single_dynamic_branch(base_ids, dyn_kind, branch_text)
+
+
+def _build_dynamic_branches(
+    collected: list[tuple[str, str | None, tuple[int, ...]]],
+    block_kinds: list[str],
+    block_ancestors: list[frozenset[int]],
+    stripped: str,
+) -> list[tuple[str, str]]:
+    branches: list[tuple[str, str]] = []
+    for bid, dyn_kind in enumerate(block_kinds):
+        enabled = block_ancestors[bid]
+        branch_text = "\n".join(
+            line
+            for line, _, dyn_ids in collected
+            if all(d in enabled for d in dyn_ids)
+        )
+        if branch_text != stripped:
+            branches.append((dyn_kind, branch_text))
+    return branches
 
 
 def _assert_cond_stack_empty(
@@ -414,18 +555,66 @@ class _BuildRenderer:
             return False
         return True
 
-    def preprocess_yaml_for_identifiers(self, content: str) -> str:
-        """Evaluate static block conditionals while deferring dynamic ones."""
-        out_lines: list[str] = []
+    def _track_dynamic_block_tag(
+        self,
+        stripped: str,
+        line_no: int,
+        stack: list[tuple[str, str, bool]],
+        dyn_stack: list[int],
+        block_kinds: list[str],
+        block_ancestors: list[frozenset[int]],
+    ) -> bool:
+        prev_len = len(stack)
+        prev_top_kind = stack[-1][0] if stack else ""
+        if not self._handle_block_tag(
+            stripped, line_no, stack, defer_dynamic=True
+        ):
+            return False
+        if len(stack) > prev_len and stack[-1][0] in _DYNAMIC_COND_KINDS:
+            bid = len(block_kinds)
+            block_kinds.append(stack[-1][0])
+            block_ancestors.append(frozenset(dyn_stack) | {bid})
+            dyn_stack.append(bid)
+        elif len(stack) < prev_len and prev_top_kind in _DYNAMIC_COND_KINDS:
+            dyn_stack.pop()
+        return True
+
+    def preprocess_yaml_for_identifiers(
+        self, content: str
+    ) -> tuple[str, list[tuple[str, str]]]:
+        """Evaluate static block conditionals and collect dynamic branches."""
+        collected: list[tuple[str, str | None, tuple[int, ...]]] = []
         stack: list[tuple[str, str, bool]] = []
+        dyn_stack: list[int] = []
+        block_kinds: list[str] = []
+        block_ancestors: list[frozenset[int]] = []
         for idx, line in enumerate(content.split("\n"), start=1):
-            if self._handle_block_tag(
-                line.strip(), idx, stack, defer_dynamic=True
+            if self._track_dynamic_block_tag(
+                line.strip(),
+                idx,
+                stack,
+                dyn_stack,
+                block_kinds,
+                block_ancestors,
             ):
                 continue
-            _append_identifier_line(line, stack, out_lines)
+            static_active, dyn_kind = _active_dynamic_kind(stack)
+            if static_active:
+                collected.append((line, dyn_kind, tuple(dyn_stack)))
         _assert_cond_stack_empty(stack)
-        return "\n".join(out_lines)
+        line_pairs = [(line, dyn_kind) for line, dyn_kind, _ in collected]
+        root_indent, is_flow = _yaml_root_layout(line_pairs)
+        if is_flow:
+            _validate_flow_identity_lines(line_pairs)
+        else:
+            _validate_block_identity_lines(line_pairs, root_indent)
+        stripped = "\n".join(
+            line for line, dyn_kind, _ in collected if dyn_kind is None
+        )
+        branches = _build_dynamic_branches(
+            collected, block_kinds, block_ancestors, stripped
+        )
+        return stripped, branches
 
     def process_conditional_blocks(self, content: str) -> str:
         if "{@start" not in content and "{@end" not in content:
@@ -808,8 +997,10 @@ def _read_yaml_with_renderer(path: Path, renderer: _BuildRenderer) -> JsonValue:
     has_cond = "{@start" in text or "{@end" in text
     if not renderer.allow_resource_conditionals and has_cond:
         try:
-            stripped = renderer.preprocess_yaml_for_identifiers(text)
-            return yaml.load(stripped, Loader=UniqueKeyYaml12SafeLoader)
+            stripped, branches = renderer.preprocess_yaml_for_identifiers(text)
+            base_data = yaml.load(stripped, Loader=UniqueKeyYaml12SafeLoader)
+            _verify_dynamic_yaml_branches(base_data, branches)
+            return base_data
         except (yaml.YAMLError, BuildError) as exc:
             raise BuildError(f"{path}: {exc}") from exc
     return _parse_yaml_with_conditionals(
@@ -1007,13 +1198,34 @@ def _entry_matches_disabled(
     return _matches_resource_ref(item, disabled, collection)
 
 
-def _is_agent_config_file(rel_path: Path) -> bool:
+def _is_resource_config_file(rel_path: Path, collection: str) -> bool:
     return (
         len(rel_path.parts) == 3
-        and rel_path.parts[0] == "agents"
+        and rel_path.parts[0] == collection
         and rel_path.stem == rel_path.parts[1]
         and rel_path.suffix in _RESOURCE_CONFIG_SUFFIXES
     )
+
+
+def _assert_rendered_resource_not_disabled(
+    data: JsonValue, rel_path: Path, renderer: _BuildRenderer
+) -> None:
+    if not isinstance(data, Mapping):
+        return
+    if _is_resource_config_file(rel_path, "agents"):
+        collection, disabled = "agents", renderer.disabled_agents
+    elif _is_resource_config_file(rel_path, "tools"):
+        collection, disabled = "tools", renderer.disabled_tools
+    else:
+        return
+    if not disabled:
+        return
+    for ident in _extract_raw_identifiers(data):
+        if _matches_resource_ref(ident, disabled, collection):
+            raise BuildError(
+                f"{rel_path}: rendered resource identity '{ident}' matches a "
+                f"disabled {collection[:-1]} for channel '{renderer.channel}'."
+            )
 
 
 def _extract_raw_identifiers(data: Mapping[str, JsonValue]) -> set[str]:
@@ -1073,7 +1285,9 @@ def _inspect_prunable_entry(
     if _matches_any_disabled(frozenset(raw_ids), disabled_set, collection):
         try:
             _, rendered_ids = _read_resource_identifiers(entry, renderer)
-        except BuildError:
+        except BuildError as exc:
+            if any(m in str(exc) for m in _ILLEGAL_COND_ERROR_MARKERS):
+                raise
             rendered_ids = set()
         return True, raw_ids | rendered_ids
 
@@ -1083,6 +1297,26 @@ def _inspect_prunable_entry(
         _matches_any_disabled(frozenset(all_ids), disabled_set, collection),
         all_ids,
     )
+
+
+def _register_unique_identifiers(
+    owner_by_id: dict[str, str],
+    entry_name: str,
+    entry_ids: set[str],
+    collection: str,
+) -> None:
+    for ident in sorted(entry_ids):
+        if "@@" in ident or "{@" in ident:
+            continue
+        prev_owner = owner_by_id.get(ident)
+        if prev_owner is not None and prev_owner != entry_name:
+            raise BuildError(
+                f"Ambiguous {collection} identifier '{ident}' is shared by "
+                f"'{prev_owner}' and '{entry_name}'; resource folder names, "
+                "names, and displayNames must be unique within "
+                f"'{collection}/'."
+            )
+        owner_by_id[ident] = entry_name
 
 
 def _prune_resource_dir(
@@ -1095,12 +1329,18 @@ def _prune_resource_dir(
     if not resource_dir.exists():
         return frozenset(pruned)
     disabled_set = frozenset(disabled)
+    owner_by_id: dict[str, str] = {}
+    to_prune: list[tuple[Path, set[str]]] = []
     for entry in sorted(p for p in resource_dir.iterdir() if p.is_dir()):
         matched, entry_ids = _inspect_prunable_entry(
             entry, disabled_set, collection, renderer
         )
-        if not matched:
-            continue
+        _register_unique_identifiers(
+            owner_by_id, entry.name, entry_ids, collection
+        )
+        if matched:
+            to_prune.append((entry, entry_ids))
+    for entry, entry_ids in to_prune:
         pruned.update(entry_ids)
         shutil.rmtree(entry)
     return frozenset(pruned)
@@ -1232,39 +1472,62 @@ def _ensure_dict_section(data: ConfigMap, key: str) -> ConfigMap:
     return section
 
 
+def _validate_existing_root_agent(
+    current_root: JsonValue,
+    channel: str,
+    disabled_agents: frozenset[str],
+    surviving_agents: frozenset[str],
+) -> None:
+    if not isinstance(current_root, str) or not current_root.strip():
+        raise BuildError(
+            f"rootAgent cannot be empty or null for channel '{channel}' "
+            "when no replacement entry_agent is configured."
+        )
+    if _matches_resource_ref(current_root, disabled_agents, "agents"):
+        raise BuildError(
+            f"rootAgent '{current_root}' is disabled for channel "
+            f"'{channel}' and no replacement entry_agent is configured."
+        )
+    if not _matches_resource_ref(current_root, surviving_agents, "agents"):
+        raise BuildError(
+            f"rootAgent '{current_root}' does not match any surviving "
+            f"agent for channel '{channel}'."
+        )
+
+
 def _update_root_agent(
     data: ConfigMap,
     channel: str,
     entry_agent: str | None,
     disabled_agents: frozenset[str],
+    surviving_agents: frozenset[str],
+    *,
+    root_agent_nulled: bool = False,
 ) -> bool:
     current_root = data.get(_KEY_ROOT_AGENT)
     if entry_agent:
-        had_snake = _KEY_ROOT_AGENT_SNAKE in data
-        data.pop(_KEY_ROOT_AGENT_SNAKE, None)
-        changed = current_root != entry_agent or had_snake
+        changed = current_root != entry_agent
         data[_KEY_ROOT_AGENT] = entry_agent
         return changed
-    for root_key in (_KEY_ROOT_AGENT, _KEY_ROOT_AGENT_SNAKE):
-        root_val = data.get(root_key)
-        if _matches_resource_ref(root_val, disabled_agents, "agents"):
-            raise BuildError(
-                f"{root_key} '{root_val}' is disabled for channel "
-                f"'{channel}' and no replacement entry_agent is configured."
-            )
+    if root_agent_nulled:
+        raise BuildError(
+            f"rootAgent cannot be null for channel '{channel}' "
+            "when no replacement entry_agent is configured."
+        )
+    if _KEY_ROOT_AGENT in data:
+        _validate_existing_root_agent(
+            current_root, channel, disabled_agents, surviving_agents
+        )
+        return False
+    if surviving_agents:
+        raise BuildError(
+            f"App config is missing 'rootAgent' for channel '{channel}'."
+        )
     return False
 
 
-def _apply_app_manifest_settings(
-    data: ConfigMap,
-    profile: ProfileIdentity,
-    channel: str,
-    channel_caps: ChannelCapabilities,
-    disabled_agents: frozenset[str],
-) -> bool:
-    updated = _update_root_agent(
-        data, channel, channel_caps.entry_agent, disabled_agents
-    )
+def _apply_profile_sections(data: ConfigMap, profile: ProfileIdentity) -> bool:
+    updated = False
     if profile.tts_voices:
         audio_cfg = _ensure_dict_section(data, _KEY_AUDIO_PROCESSING_CONFIG)
         audio_cfg[_KEY_SYNTHESIZE_SPEECH_CONFIGS] = {
@@ -1286,12 +1549,34 @@ def _apply_app_manifest_settings(
     return updated
 
 
+def _apply_app_manifest_settings(
+    data: ConfigMap,
+    profile: ProfileIdentity,
+    channel: str,
+    channel_caps: ChannelCapabilities,
+    disabled_agents: frozenset[str],
+    surviving_agents: frozenset[str],
+    *,
+    root_agent_nulled: bool = False,
+) -> bool:
+    updated = _update_root_agent(
+        data,
+        channel,
+        channel_caps.entry_agent,
+        disabled_agents,
+        surviving_agents,
+        root_agent_nulled=root_agent_nulled,
+    )
+    return _apply_profile_sections(data, profile) or updated
+
+
 def _apply_app_layers(
     data: ConfigMap,
     app_layers: Sequence[AppLayer],
     renderer: _BuildRenderer,
-) -> ConfigMap:
+) -> tuple[ConfigMap, bool]:
     merged = data
+    root_agent_nulled = False
     for source_label, layer in app_layers:
         rendered_layer = _wrap_path_error(
             Path(source_label),
@@ -1303,8 +1588,10 @@ def _apply_app_layers(
             validate_app_overlay_mapping(rendered_layer)
         except ValueError as exc:
             raise BuildError(f"{source_label}: {exc}") from exc
+        if _KEY_ROOT_AGENT in rendered_layer:
+            root_agent_nulled = rendered_layer[_KEY_ROOT_AGENT] is None
         merged = merge_app_config(merged, rendered_layer)
-    return merged
+    return merged, root_agent_nulled
 
 
 def _finalize_app_config(
@@ -1313,16 +1600,25 @@ def _finalize_app_config(
     renderer: _BuildRenderer,
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
+    surviving_agents: frozenset[str],
+    *,
+    rel_name: str = "",
+    core_app_snapshots: dict[str, ConfigMap] | None = None,
 ) -> tuple[ConfigMap, bool]:
+    if core_app_snapshots is not None and rel_name:
+        core_app_snapshots[rel_name] = copy.deepcopy(data)
     layered = bool(app_layers)
+    root_agent_nulled = False
     if app_layers:
-        data = _apply_app_layers(data, app_layers, renderer)
+        data, root_agent_nulled = _apply_app_layers(data, app_layers, renderer)
     updated = _apply_app_manifest_settings(
         data,
         profile,
         renderer.channel,
         channel_caps,
         renderer.disabled_agents,
+        surviving_agents,
+        root_agent_nulled=root_agent_nulled,
     )
     return data, layered or updated
 
@@ -1367,7 +1663,9 @@ def _render_json_file(
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
+    surviving_agents: frozenset[str],
     app_layers: Sequence[AppLayer] = (),
+    core_app_snapshots: dict[str, ConfigMap] | None = None,
 ) -> None:
     rel_path = path.relative_to(out_dir)
     is_env_json = rel_path == Path("environment.json")
@@ -1378,14 +1676,22 @@ def _render_json_file(
     rendered = _wrap_path_error(path, lambda: renderer.render_data(data))
     if is_env_json and isinstance(rendered, dict):
         _prune_env_json(rendered, renderer)
-    elif _is_agent_config_file(rel_path):
+    elif _is_resource_config_file(rel_path, "agents"):
         _prune_agent_config_refs(
             rendered, renderer.disabled_agents, renderer.disabled_tools
         )
+    _assert_rendered_resource_not_disabled(rendered, rel_path, renderer)
 
     if rel_path == Path("app.json") and isinstance(rendered, dict):
         rendered, _ = _finalize_app_config(
-            rendered, app_layers, renderer, profile, channel_caps
+            rendered,
+            app_layers,
+            renderer,
+            profile,
+            channel_caps,
+            surviving_agents,
+            rel_name=rel_path.name,
+            core_app_snapshots=core_app_snapshots,
         )
     path.write_text(json.dumps(rendered, indent=2) + "\n", "utf-8")
 
@@ -1430,7 +1736,7 @@ def _yaml_render_flags(
     rel_path: Path, text: str, renderer: _BuildRenderer
 ) -> tuple[bool, bool, bool, bool]:
     has_tokens = "@@" in text or "{@start" in text or "{@end" in text
-    is_agent_cfg = _is_agent_config_file(rel_path)
+    is_agent_cfg = _is_resource_config_file(rel_path, "agents")
     has_disabled = bool(renderer.disabled_agents or renderer.disabled_tools)
     needs_prune = (
         is_agent_cfg
@@ -1446,10 +1752,13 @@ def _apply_yaml_mutations(
     renderer: _BuildRenderer,
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
+    surviving_agents: frozenset[str],
     app_layers: Sequence[AppLayer],
     *,
     is_agent_cfg: bool,
     is_app_yaml: bool,
+    rel_name: str,
+    core_app_snapshots: dict[str, ConfigMap] | None = None,
 ) -> tuple[JsonValue, bool]:
     pruned = is_agent_cfg and _prune_agent_config_refs(
         data, renderer.disabled_agents, renderer.disabled_tools
@@ -1459,7 +1768,14 @@ def _apply_yaml_mutations(
     if not (is_app_yaml and isinstance(data, dict)):
         return data, pruned
     data, app_updated = _finalize_app_config(
-        data, app_layers, renderer, profile, channel_caps
+        data,
+        app_layers,
+        renderer,
+        profile,
+        channel_caps,
+        surviving_agents,
+        rel_name=rel_name,
+        core_app_snapshots=core_app_snapshots,
     )
     return data, pruned or app_updated
 
@@ -1470,7 +1786,9 @@ def _render_yaml_file(
     renderer: _BuildRenderer,
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
+    surviving_agents: frozenset[str],
     app_layers: Sequence[AppLayer] = (),
+    core_app_snapshots: dict[str, ConfigMap] | None = None,
 ) -> None:
     try:
         text = path.read_text("utf-8")
@@ -1492,14 +1810,18 @@ def _render_yaml_file(
             path,
             lambda: renderer.render_data(data, evaluate_conditionals=False),
         )
+    _assert_rendered_resource_not_disabled(data, rel_path, renderer)
     data, modified = _apply_yaml_mutations(
         data,
         renderer,
         profile,
         channel_caps,
+        surviving_agents,
         app_layers,
         is_agent_cfg=is_agent_cfg,
         is_app_yaml=is_app_yaml,
+        rel_name=rel_path.name,
+        core_app_snapshots=core_app_snapshots,
     )
     if has_tokens or modified:
         path.write_text(
@@ -1525,7 +1847,9 @@ def _render_single_file(
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
+    surviving_agents: frozenset[str],
     app_layers: Sequence[AppLayer] = (),
+    core_app_snapshots: dict[str, ConfigMap] | None = None,
 ) -> list[str]:
     suffix = path.suffix
     if suffix == ".json":
@@ -1536,13 +1860,22 @@ def _render_single_file(
             profile,
             channel_caps,
             env_overrides,
+            surviving_agents,
             app_layers,
+            core_app_snapshots,
         )
     elif suffix == ".txt":
         return _render_text_file(path, out_dir, manifests, renderer)
     elif suffix in (".yaml", ".yml"):
         _render_yaml_file(
-            path, out_dir, renderer, profile, channel_caps, app_layers
+            path,
+            out_dir,
+            renderer,
+            profile,
+            channel_caps,
+            surviving_agents,
+            app_layers,
+            core_app_snapshots,
         )
     elif suffix == ".py":
         _render_python_file(path, renderer)
@@ -1556,7 +1889,9 @@ def _render_staged_tree(
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
+    surviving_agents: frozenset[str],
     app_layers: Sequence[AppLayer] = (),
+    core_app_snapshots: dict[str, ConfigMap] | None = None,
 ) -> list[str]:
     warnings: list[str] = []
     for root, dirs, files in os.walk(out_dir):
@@ -1572,17 +1907,17 @@ def _render_staged_tree(
                     profile,
                     channel_caps,
                     env_overrides,
+                    surviving_agents,
                     app_layers,
+                    core_app_snapshots,
                 )
             )
     return warnings
 
 
-def _validate_single_app_config(
-    app_cfg_path: Path, staging_dir: Path, source_label: str
-) -> None:
+def _read_app_config_for_validation(app_cfg_path: Path) -> JsonValue:
     try:
-        data = (
+        return (
             _read_json_strict(app_cfg_path)
             if app_cfg_path.suffix == ".json"
             else yaml.load(
@@ -1592,6 +1927,61 @@ def _validate_single_app_config(
         )
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise BuildError(f"{app_cfg_path}: invalid YAML: {exc}") from exc
+
+
+def _compute_base_app_errors(
+    core_snapshot: ConfigMap,
+    staging_dir: Path,
+    profile: ProfileIdentity,
+    channel_caps: ChannelCapabilities,
+) -> set[str]:
+    base_data = copy.deepcopy(core_snapshot)
+    if channel_caps.entry_agent:
+        base_data[_KEY_ROOT_AGENT] = channel_caps.entry_agent
+    with contextlib.suppress(BuildError):
+        _apply_profile_sections(base_data, profile)
+    from cxas_scrapi.utils.lint_rules.schema import (  # noqa: PLC0415
+        validate_app_config_data,
+    )
+
+    return set(validate_app_config_data(base_data, staging_dir))
+
+
+def _format_app_validation_error(
+    errors: list[str],
+    core_app_path: Path,
+    source_label: str,
+    base_errors: set[str] | None,
+) -> str:
+    if base_errors is None:
+        return f"{core_app_path}: invalid App config: {'; '.join(errors)}"
+    core_errs = [err for err in errors if err in base_errors]
+    overlay_errs = [err for err in errors if err not in base_errors]
+    parts: list[str] = []
+    if core_errs:
+        parts.append(
+            f"{core_app_path}: invalid App config: {'; '.join(core_errs)}"
+        )
+    if overlay_errs:
+        parts.append(
+            f"{source_label} (merged into {core_app_path.name}): invalid "
+            f"App config: {'; '.join(overlay_errs)}"
+        )
+    return "; ".join(parts)
+
+
+def _validate_single_app_config(
+    app_cfg_path: Path,
+    core_dir: Path,
+    staging_dir: Path,
+    source_label: str,
+    *,
+    has_app_layers: bool,
+    core_snapshot: ConfigMap | None,
+    profile: ProfileIdentity,
+    channel_caps: ChannelCapabilities,
+) -> None:
+    data = _read_app_config_for_validation(app_cfg_path)
     if isinstance(data, Mapping):
         from cxas_scrapi.utils.lint_rules.schema import (  # noqa: PLC0415
             validate_app_config_data,
@@ -1600,28 +1990,56 @@ def _validate_single_app_config(
         errors = validate_app_config_data(data, staging_dir)
     else:
         errors = [f"expected a mapping, got {type(data).__name__}"]
-    if errors:
-        joined = "; ".join(errors)
-        raise BuildError(
-            f"{source_label} (merged into {app_cfg_path.name}): invalid "
-            f"App config: {joined}"
+    if not errors:
+        return
+    base_errors = (
+        _compute_base_app_errors(
+            core_snapshot, staging_dir, profile, channel_caps
         )
+        if has_app_layers and core_snapshot is not None
+        else None
+    )
+    raise BuildError(
+        _format_app_validation_error(
+            errors, core_dir / app_cfg_path.name, source_label, base_errors
+        )
+    )
 
 
-def _validate_merged_app_config(staging_dir: Path, source_label: str) -> None:
+def _validate_final_app_configs(
+    core_dir: Path,
+    staging_dir: Path,
+    source_label: str,
+    *,
+    has_app_layers: bool,
+    core_app_snapshots: Mapping[str, ConfigMap],
+    profile: ProfileIdentity,
+    channel_caps: ChannelCapabilities,
+) -> None:
     app_cfg_paths = [
         candidate
         for fname in APP_CONFIG_FILENAMES
         if (candidate := staging_dir / fname).is_file()
     ]
     if not app_cfg_paths:
-        names = ", ".join(APP_CONFIG_FILENAMES)
-        raise BuildError(
-            f"{source_label}: '{FIELD_ENV_APP}:' overrides configured, but "
-            f"no app config ({names}) found in core directory."
-        )
+        if has_app_layers:
+            names = ", ".join(APP_CONFIG_FILENAMES)
+            raise BuildError(
+                f"{source_label}: '{FIELD_ENV_APP}:' overrides configured, "
+                f"but no app config ({names}) found in core directory."
+            )
+        return
     for app_cfg_path in app_cfg_paths:
-        _validate_single_app_config(app_cfg_path, staging_dir, source_label)
+        _validate_single_app_config(
+            app_cfg_path,
+            core_dir,
+            staging_dir,
+            source_label,
+            has_app_layers=has_app_layers,
+            core_snapshot=core_app_snapshots.get(app_cfg_path.name),
+            profile=profile,
+            channel_caps=channel_caps,
+        )
 
 
 def _write_deployment_manifest(
@@ -1700,6 +2118,7 @@ def _build_in_staging(
         if env_manifest.app is not None
         else ()
     )
+    core_app_snapshots: dict[str, ConfigMap] = {}
     warnings = _render_staged_tree(
         staging_dir,
         manifests,
@@ -1707,10 +2126,19 @@ def _build_in_staging(
         profile,
         channel_caps,
         env_manifest.overrides,
+        surviving_agents,
         app_layers,
+        core_app_snapshots,
     )
-    if app_layers:
-        _validate_merged_app_config(staging_dir, env_source_label)
+    _validate_final_app_configs(
+        core_dir,
+        staging_dir,
+        env_source_label,
+        has_app_layers=bool(app_layers),
+        core_app_snapshots=core_app_snapshots,
+        profile=profile,
+        channel_caps=channel_caps,
+    )
     slug = _write_deployment_manifest(
         staging_dir, profile, policy, channel, environment, channel_caps
     )

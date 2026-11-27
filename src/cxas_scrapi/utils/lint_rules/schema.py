@@ -26,7 +26,7 @@ import json
 import re
 import typing
 from collections.abc import Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import proto
 import yaml
@@ -78,10 +78,59 @@ _NON_PATH_KEYS: frozenset[str] = frozenset(
 )
 
 
+def _has_symlink_component(base: Path, raw_rel: str) -> bool:
+    cur = base
+    for part in PurePosixPath(raw_rel.replace("\\", "/")).parts:
+        if part in ("", "."):
+            continue
+        cur = cur / part
+        if cur.is_symlink():
+            return True
+    return False
+
+
+def _resolve_confined_file(base_path: str | Path, data: str) -> Path:
+    base_dir = Path(base_path)
+    base_resolved = base_dir.resolve()
+    normalized = data.replace("\\", "/")
+    posix = PurePosixPath(normalized)
+    if (
+        Path(data).is_absolute()
+        or normalized.startswith("/")
+        or ".." in posix.parts
+        or _has_symlink_component(base_dir, data)
+    ):
+        raise ValueError(f"Referenced path '{data}' escapes app directory.")
+    candidate = (base_dir / data).resolve()
+    if not candidate.is_relative_to(base_resolved):
+        raise ValueError(f"Referenced path '{data}' escapes app directory.")
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Referenced file not found: {data}")
+    return candidate
+
+
+def _resolve_unconfined_file(
+    data: str, extra_prefixes: typing.Any, base_path: typing.Any
+) -> Path:
+    if base_path and (alt := Path(base_path) / data).exists():
+        return alt
+    for prefix in extra_prefixes or ():
+        if data.startswith(prefix) and base_path and prefix in base_path:
+            parts = base_path.rsplit(prefix, 1)
+            if parts and (alt := Path(parts[0]) / data).exists():
+                return alt
+    candidate = Path(data)
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(f"Referenced file not found: {data}")
+
+
 def _resolve_paths(
     data: typing.Any,
     extra_prefixes: typing.Any = (),
     base_path: typing.Any = None,
+    *,
+    confine_to_base: bool = False,
 ) -> typing.Any:
     """Recursively replace file-path strings with their contents."""
     if isinstance(data, dict):
@@ -89,49 +138,37 @@ def _resolve_paths(
             k: (
                 v
                 if k in _NON_PATH_KEYS
-                else _resolve_paths(v, extra_prefixes, base_path)
+                else _resolve_paths(
+                    v,
+                    extra_prefixes,
+                    base_path,
+                    confine_to_base=confine_to_base,
+                )
             )
             for k, v in data.items()
         }
-    elif isinstance(data, list):
+    if isinstance(data, list):
         return [
-            _resolve_paths(item, extra_prefixes, base_path) for item in data
+            _resolve_paths(
+                item,
+                extra_prefixes,
+                base_path,
+                confine_to_base=confine_to_base,
+            )
+            for item in data
         ]
-    elif (
+    if (
         isinstance(data, str)
         and "://" not in data
         and not any(c.isspace() for c in data)
         and data.endswith((".txt", ".py", ".yaml", ".json"))
     ):
-        path_to_check = Path(data)
-        resolved = False
-
-        if base_path:
-            alt = Path(base_path) / data
-            if alt.exists():
-                path_to_check = alt
-                resolved = True
-
-        if not resolved and extra_prefixes:
-            for prefix in extra_prefixes:
-                if (
-                    data.startswith(prefix)
-                    and base_path
-                    and prefix in base_path
-                ):
-                    parts = base_path.rsplit(prefix, 1)
-                    if parts:
-                        alt = Path(parts[0]) / data
-                        if alt.exists():
-                            path_to_check = alt
-                            resolved = True
-                            break
-
-        if resolved or path_to_check.exists():
-            with open(path_to_check) as f:
-                return f.read()
-        else:
-            raise FileNotFoundError(f"Referenced file not found: {data}")
+        target = (
+            _resolve_confined_file(base_path, data)
+            if confine_to_base and base_path is not None
+            else _resolve_unconfined_file(data, extra_prefixes, base_path)
+        )
+        return target.read_text(encoding="utf-8")
     return data
 
 
@@ -448,6 +485,15 @@ def _check_path_string(
         or not value.endswith(_RESOLVED_FILE_SUFFIXES)
     ):
         return []
+    normalized = value.replace("\\", "/")
+    posix = PurePosixPath(normalized)
+    if (
+        Path(value).is_absolute()
+        or normalized.startswith("/")
+        or ".." in posix.parts
+        or _has_symlink_component(app_root_resolved, value)
+    ):
+        return [f"Referenced path '{value}' at '{path}' escapes app directory."]
     resolved = (app_root_resolved / value).resolve()
     if not resolved.is_relative_to(app_root_resolved):
         return [f"Referenced path '{value}' at '{path}' escapes app directory."]
@@ -517,9 +563,13 @@ def validate_app_config_data(
         return confinement_errors
 
     try:
-        payload = _resolve_paths(payload, (), str(app_root))
+        payload = _resolve_paths(
+            payload, (), str(app_root), confine_to_base=True
+        )
     except FileNotFoundError as exc:
         return [f"Missing referenced file: {exc}"]
+    except ValueError as exc:
+        return [str(exc)]
 
     tool_err = _pop_legacy_app_tools(payload)
     if tool_err is not None:

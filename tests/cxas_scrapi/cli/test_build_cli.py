@@ -49,7 +49,13 @@ def _setup_cli_workspace(tmp_path: Path) -> tuple[Path, Path]:
     core_dir = tmp_path / "core"
     core_dir.mkdir()
     (core_dir / "app.json").write_text(
-        json.dumps({"rootAgent": "root"}), encoding="utf-8"
+        json.dumps({"displayName": "CLI App", "rootAgent": "root"}),
+        encoding="utf-8",
+    )
+    root_agent_dir = core_dir / "agents" / "root"
+    root_agent_dir.mkdir(parents=True)
+    (root_agent_dir / "root.json").write_text(
+        json.dumps({"displayName": "root"}), encoding="utf-8"
     )
     (core_dir / "global_instruction.txt").write_text(
         "Hello @@profile.display_name@@\n", encoding="utf-8"
