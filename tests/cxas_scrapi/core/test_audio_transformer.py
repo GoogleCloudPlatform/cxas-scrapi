@@ -668,13 +668,26 @@ class TestAudioTransformer:
         tmp_path: typing.Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        import pathlib as pl  # noqa: PLC0415
-
         import cxas_scrapi.core.audio_transformer as audio_mod  # noqa: PLC0415
 
         # Simulate the inverse layout where __file__ is a standalone symlink
-        # pointing back to the real module inside the source tree.
-        real_module_file = pl.Path(audio_mod.__file__).resolve()
+        # pointing back to a real package tree containing ../resources/noise/cafe.wav.
+        real_core_dir = tmp_path / "real_pkg" / "cxas_scrapi" / "core"
+        real_noise_dir = (
+            tmp_path / "real_pkg" / "cxas_scrapi" / "resources" / "noise"
+        )
+        real_core_dir.mkdir(parents=True)
+        real_noise_dir.mkdir(parents=True)
+        real_module_file = real_core_dir / "audio_transformer.py"
+        real_module_file.write_text("# stub\n", encoding="utf-8")
+
+        wav_path = real_noise_dir / "cafe.wav"
+        with wave.open(str(wav_path), "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(16000)
+            wav_file.writeframes(b"\x01\x00" * 4000)
+
         isolated_dir = tmp_path / "isolated" / "core"
         isolated_dir.mkdir(parents=True)
         symlinked_module_file = isolated_dir / "audio_transformer.py"
