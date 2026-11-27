@@ -74,11 +74,8 @@ def _find_entry_function(content: str, expected_fn: str) -> re.Match | None:
 
 def _get_args(content: str, fn_name: str) -> list[str] | None:
     """Return argument names of fn_name using AST, or None if not found."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(content)
-    except SyntaxError:
+    tree = safe_ast_parse(content)
+    if tree is None:
         return None
     for node in ast.walk(tree):
         if (
@@ -244,10 +241,8 @@ class ReturnsDictNotLlmResponse(Rule):
             return []
 
         returns_dict = False
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                tree = ast.parse(content)
+        tree = safe_ast_parse(content)
+        if tree is not None:
             expected_fn, _ = CALLBACK_SIGNATURES.get(cb_type, (None, None))
             top_fns = [
                 n
@@ -258,7 +253,7 @@ class ReturnsDictNotLlmResponse(Rule):
             if not target_fns:
                 target_fns = [n for n in top_fns if not n.name.startswith("_")]
             returns_dict = any(_function_returns_dict(fn) for fn in target_fns)
-        except SyntaxError:
+        else:
             returns_dict = (
                 "return {" in content and "LlmResponse" not in content
             )
@@ -399,11 +394,8 @@ _PYTHON_COLLECTION_METHODS: frozenset[str] = frozenset(
 
 def _extract_tools_calls(content: str) -> list[str]:
     """Extract tool names invoked via ``tools`` or ``async_tools``."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(content)
-    except SyntaxError:
+    tree = safe_ast_parse(content)
+    if tree is None:
         matches = re.findall(r"\b(?:async_)?tools\.(\w+)\s*\(", content)
         return list(dict.fromkeys(matches))
 
@@ -484,12 +476,12 @@ class InvalidPythonSyntax(Rule):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 compile(content, rel, "exec")
-        except SyntaxError as e:
+        except (SyntaxError, ValueError) as e:
             return [
                 self.make_result(
                     file=rel,
-                    line=e.lineno,
-                    message=(f"Invalid Python syntax: {e.msg}"),
+                    line=getattr(e, "lineno", None),
+                    message=(f"Invalid Python syntax: {getattr(e, 'msg', e)}"),
                     fix=(
                         "Fix the syntax error"
                         " — invalid Python causes"

@@ -42,6 +42,7 @@ from cxas_scrapi.utils.linter import (
     LintResult,
     Rule,
     Severity,
+    _find_dir_config,
     _load_config_dict,
     collect_attached_guardrails,
     discover_local_resources,
@@ -54,6 +55,7 @@ from cxas_scrapi.utils.linter import (
     rel_to_project,
     resolve_agent_graph,
     resolve_app_root,
+    resolve_safe_app_file,
     rule,
     safe_ast_parse,
 )
@@ -82,11 +84,8 @@ def _find_tool_ast_function(
     content: str, expected_name: str | None = None
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     """Find the entry tool AST function node, skipping private helpers."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(content)
-    except SyntaxError:
+    tree = safe_ast_parse(content)
+    if tree is None:
         return None
     fns = [
         node
@@ -105,25 +104,23 @@ def _find_tool_ast_function(
     return fns[0]
 
 
+def _resolve_tool_config_path(file_path: Path) -> Path | None:
+    """Resolve the tool config (.json/.yaml/.yml) path for a tool file."""
+    if file_path.suffix.lower() in CONFIG_EXTENSIONS:
+        return file_path
+    return _find_dir_config(file_path.parent.parent)
+
+
 def _load_tool_config(file_path: Path) -> tuple[dict | None, Path | None]:
-    """Load the tool JSON config from the tool directory.
+    """Load the tool JSON/YAML config from the tool directory.
 
     Tool layout: tools/<name>/python_function/python_code.py
-    JSON config: tools/<name>/<name>.json
+    Tool config: tools/<name>/<name>.{json,yaml,yml}
     """
-    if file_path.suffix == ".json":
-        json_path = file_path
-    else:
-        tool_dir = file_path.parent.parent
-        json_path = tool_dir / f"{tool_dir.name}.json"
-
-    if not json_path.exists():
-        return None, json_path
-    try:
-        data = json.loads(json_path.read_text())
-        return data if isinstance(data, dict) else None, json_path
-    except (json.JSONDecodeError, OSError):
-        return None, json_path
+    cfg_path = _resolve_tool_config_path(file_path)
+    if cfg_path is None:
+        return None, None
+    return _load_config_dict(cfg_path), cfg_path
 
 
 @rule("tools")
@@ -801,12 +798,12 @@ class ToolInvalidPythonSyntax(Rule):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 compile(content, rel, "exec")
-        except SyntaxError as e:
+        except (SyntaxError, ValueError) as e:
             return [
                 self.make_result(
                     file=rel,
-                    line=e.lineno,
-                    message=(f"Invalid Python syntax: {e.msg}"),
+                    line=getattr(e, "lineno", None),
+                    message=(f"Invalid Python syntax: {getattr(e, 'msg', e)}"),
                     fix=(
                         "Fix the syntax error"
                         " — invalid Python causes"
@@ -911,6 +908,31 @@ class NoneDefaultValue(Rule):
         ]
 
 
+def _resolve_tool_python_path(
+    app_root: Path, cfg_path: Path, py_func_cfg: typing.Any
+) -> Path | None:
+    """Resolve a tool's Python source path safely inside ``app_root``."""
+    code_ref = (
+        py_func_cfg.get("pythonCode") if isinstance(py_func_cfg, dict) else None
+    )
+    if isinstance(code_ref, str) and code_ref.strip():
+        safe = resolve_safe_app_file(app_root, code_ref)
+        if safe is not None:
+            return safe
+    default_rel = f"tools/{cfg_path.parent.name}/python_function/python_code.py"
+    safe_default = resolve_safe_app_file(app_root, default_rel)
+    if safe_default is not None:
+        return safe_default
+    fallback = cfg_path.parent / "python_function" / "python_code.py"
+    if (
+        fallback.is_file()
+        and not fallback.is_symlink()
+        and not fallback.parent.is_symlink()
+    ):
+        return fallback
+    return None
+
+
 @rule("tools")
 class MissingToolDescriptionInJSON(Rule):
     id = "T012"
@@ -977,22 +999,10 @@ class MissingToolDescriptionInJSON(Rule):
             and json_path is not None
         ):
             app_root = json_path.parent.parent.parent
-            py_func_cfg = tool_config.get("pythonFunction")
-            code_ref = (
-                py_func_cfg.get("pythonCode")
-                if isinstance(py_func_cfg, dict)
-                else None
+            py_path = _resolve_tool_python_path(
+                app_root, json_path, tool_config.get("pythonFunction")
             )
-            py_path = (
-                (app_root / code_ref)
-                if isinstance(code_ref, str) and code_ref.strip()
-                else (json_path.parent / "python_function" / "python_code.py")
-            )
-            if not py_path.is_file():
-                py_path = (
-                    json_path.parent / "python_function" / "python_code.py"
-                )
-            if py_path.is_file():
+            if py_path is not None:
                 try:
                     py_text = py_path.read_text(
                         encoding="utf-8", errors="replace"
@@ -1037,46 +1047,56 @@ class ToolConfigInvalid(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.suffix == ".json":
-            json_path = file_path
-        else:
-            tool_dir = file_path.parent.parent
-            json_path = tool_dir / f"{tool_dir.name}.json"
-
-        if not json_path.exists():
+        cfg_path = _resolve_tool_config_path(file_path)
+        if cfg_path is None or cfg_path.is_symlink() or not cfg_path.is_file():
             return []
 
-        rel = str(json_path.relative_to(context.project_root))
+        rel = str(cfg_path.relative_to(context.project_root))
+        is_yaml = cfg_path.suffix.lower() in (".yaml", ".yml")
+        fmt_label = "YAML" if is_yaml else "JSON"
 
         try:
-            data = json.loads(json_path.read_text())
-        except json.JSONDecodeError as e:
-            return [
-                self.make_result(
-                    file=rel,
-                    message=f"Tool JSON configuration has invalid syntax: {e}",
-                )
-            ]
-        except OSError as e:
-            return [
-                self.make_result(
-                    file=rel,
-                    message=f"Failed to read tool JSON configuration: {e}",
-                )
-            ]
-
-        if not isinstance(data, dict):
+            raw = cfg_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as e:
             return [
                 self.make_result(
                     file=rel,
                     message=(
-                        "Tool JSON configuration must be a JSON "
+                        f"Failed to read tool {fmt_label} configuration: {e}"
+                    ),
+                )
+            ]
+
+        try:
+            data = yaml.safe_load(raw) if is_yaml else json.loads(raw)
+        except (ValueError, yaml.YAMLError) as e:
+            return [
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"Tool {fmt_label} configuration has invalid "
+                        f"syntax: {e}"
+                    ),
+                )
+            ]
+
+        if not isinstance(data, dict):
+            fix_hint = (
+                "Ensure the YAML tool configuration is a key-value mapping"
+                if is_yaml
+                else (
+                    "Ensure the configuration file starts with '{' "
+                    "and ends with '}'"
+                )
+            )
+            return [
+                self.make_result(
+                    file=rel,
+                    message=(
+                        f"Tool {fmt_label} configuration must be a {fmt_label} "
                         f"dictionary/object, got {type(data).__name__}"
                     ),
-                    fix=(
-                        "Ensure the configuration file starts with '{' "
-                        "and ends with '}'"
-                    ),
+                    fix=fix_hint,
                 )
             ]
 
@@ -1140,12 +1160,9 @@ class CompositeToolConversationalPacing(Rule):
                 return m.group(1), line
             return None, 1
 
-        if file_path.suffix == ".json":
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError:
-                return None, 1
-            if not isinstance(data, dict):
+        if file_path.suffix.lower() in CONFIG_EXTENSIONS:
+            data = parse_config_content(file_path, content)
+            if data is None:
                 return None, 1
 
             desc = data.get("description")
@@ -1166,10 +1183,10 @@ class CompositeToolConversationalPacing(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        # Determine tool name from directory layout (Python or JSON tool)
+        # Determine tool name from directory layout (Python or JSON/YAML tool)
         if file_path.suffix == ".py":
             tool_name = file_path.parent.parent.name
-        elif file_path.suffix == ".json":
+        elif file_path.suffix.lower() in CONFIG_EXTENSIONS:
             tool_name = file_path.parent.name
         else:
             return []
@@ -1728,7 +1745,7 @@ class OpenApiSchemaValidity(Rule):
             ]
         try:
             doc = yaml.safe_load(raw)
-        except yaml.YAMLError as e:
+        except (yaml.YAMLError, ValueError) as e:
             return [
                 self.make_result(
                     file=rel,

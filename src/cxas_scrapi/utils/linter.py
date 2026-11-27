@@ -370,10 +370,32 @@ class LintContext:
     agent_to_parents: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set)
     )
+    _agent_ref_resolver_cache: dict[
+        Path, typing.Callable[[typing.Any], str | None]
+    ] = field(default_factory=dict, repr=False)
 
     @property
     def all_known_tools(self) -> set:
         return self.all_tool_names | self.platform_tools
+
+    def get_agent_ref_resolver(
+        self, app_root: Path
+    ) -> typing.Callable[[typing.Any], str | None]:
+        """Return a cached resolver mapping agent references to dir names."""
+        try:
+            cache_key = app_root.resolve()
+        except OSError:
+            cache_key = app_root
+        cached = self._agent_ref_resolver_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        agent_dirs, agent_configs, _, _ = _discover_agent_entries(app_root)
+        resolver = _build_agent_ref_resolver(
+            set(self.all_agent_names) | set(agent_dirs.keys()),
+            agent_configs,
+        )
+        self._agent_ref_resolver_cache[cache_key] = resolver
+        return resolver
 
     def get_model_for_agent(self, agent_name: str) -> str | None:
         """Get agent-configured model (or fallback to app-level model)."""
@@ -1655,11 +1677,16 @@ class Discovery:
         return result
 
     def discover_evals(self) -> dict[str, Path]:
-        """Return ``{filename: path}`` for all eval YAMLs."""
+        """Return ``{filename: path}`` for all eval ``.yaml``/``.yml`` files."""
         result = {}
         if not self.evals_dir.exists():
             return result
-        for yaml_path in sorted(self.evals_dir.rglob("*.yaml")):
+        for yaml_path in sorted(
+            p
+            for pat in ("*.yaml", "*.yml")
+            for p in self.evals_dir.rglob(pat)
+            if not p.is_symlink()
+        ):
             rel = str(yaml_path.relative_to(self.evals_dir))
             result[rel] = yaml_path
         return result
@@ -1767,6 +1794,38 @@ def build_registry() -> RuleRegistry:
     return registry
 
 
+_OPENAPI_HTTP_METHODS = frozenset(
+    {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
+)
+
+
+def _extract_openapi_toolset_tools(
+    schema: dict[str, typing.Any],
+    toolset_name: str,
+    allowed_tool_ids: list[str] | None,
+) -> list[str]:
+    """Extract prefixed operation tool IDs from a parsed OpenAPI schema."""
+    paths = schema.get("paths")
+    if not isinstance(paths, dict):
+        return []
+    tools: list[str] = []
+    for path_str, methods in paths.items():
+        if not isinstance(methods, dict):
+            continue
+        for method_name, details in methods.items():
+            if not isinstance(details, dict):
+                continue
+            op_id = details.get("operationId")
+            if not op_id and str(method_name).lower() in _OPENAPI_HTTP_METHODS:
+                sanitized = re.sub(
+                    r"[^A-Za-z0-9_]", "_", str(path_str).strip("/")
+                )
+                op_id = f"{str(method_name).upper()}_{sanitized}"
+            if op_id and (not allowed_tool_ids or op_id in allowed_tool_ids):
+                tools.append(f"{toolset_name}_{op_id}")
+    return tools
+
+
 def get_toolset_tools(
     app_root: Path,
     toolset_name: str,
@@ -1776,68 +1835,32 @@ def get_toolset_tools(
 
     Returns a ToolsetResolution object.
     """
-    # If allowed_tool_ids is explicitly empty, it means NO tools are assigned.
-    # We enforce STRICT validation with an empty tools list (no tools allowed).
     if allowed_tool_ids is not None and not allowed_tool_ids:
         return ToolsetResolution(behavior=ToolsetValidationBehavior.STRICT)
 
     toolset_dir = app_root / "toolsets" / toolset_name
-    json_file = toolset_dir / f"{toolset_name}.json"
-    if not json_file.exists():
+    cfg_file = _find_dir_config(toolset_dir)
+    config = _load_config_dict(cfg_file) if cfg_file is not None else None
+    if config is None:
         return ToolsetResolution(behavior=ToolsetValidationBehavior.STRICT)
 
-    try:
-        config = json.loads(json_file.read_text())
-    except Exception:
-        return ToolsetResolution(behavior=ToolsetValidationBehavior.STRICT)
-
-    # Handle OpenAPI toolset strictly
-    if "openApiToolset" in config or "open_api_toolset" in config:
-        schema_file = toolset_dir / "open_api_toolset" / "open_api_schema.yaml"
-        if not schema_file.exists():
-            return ToolsetResolution(behavior=ToolsetValidationBehavior.STRICT)
-
-        http_methods = {
-            "get",
-            "post",
-            "put",
-            "delete",
-            "patch",
-            "options",
-            "head",
-            "trace",
-        }
-        tools = []
-        try:
-            schema = yaml.safe_load(schema_file.read_text()) or {}
-            for path_str, methods in (schema.get("paths") or {}).items():
-                if not isinstance(methods, dict):
-                    continue
-                for method_name, details in methods.items():
-                    if not isinstance(details, dict):
-                        continue
-                    op_id = details.get("operationId")
-                    if not op_id and str(method_name).lower() in http_methods:
-                        sanitized = re.sub(
-                            r"[^A-Za-z0-9_]",
-                            "_",
-                            str(path_str).strip("/"),
-                        )
-                        op_id = f"{str(method_name).upper()}_{sanitized}"
-                    if op_id:
-                        if allowed_tool_ids and op_id not in allowed_tool_ids:
-                            continue
-                        tools.append(f"{toolset_name}_{op_id}")
-        except Exception:
-            pass
+    if any(k in config for k in FIELD_OPEN_API_TOOLSET):
+        schema_dir = toolset_dir / "open_api_toolset"
+        schema_file = _find_dir_config(schema_dir, "open_api_schema")
+        schema = (
+            _load_config_dict(schema_file) if schema_file is not None else None
+        )
+        tools = (
+            _extract_openapi_toolset_tools(
+                schema, toolset_name, allowed_tool_ids
+            )
+            if schema is not None
+            else []
+        )
         return ToolsetResolution(
             behavior=ToolsetValidationBehavior.STRICT, tools=tools
         )
 
-    # Default for all other toolsets (MCP, Connector, etc.)
-    # where tools cannot be resolved offline.
-    # We return BYPASS to signal that this prefix should bypass
-    # strict operation checks.
     return ToolsetResolution(behavior=ToolsetValidationBehavior.BYPASS)
 
 

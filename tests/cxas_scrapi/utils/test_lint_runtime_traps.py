@@ -451,3 +451,17 @@ def test_sample_support_agent_passes_all_runtime_trap_rules() -> None:
     }
     run_rules(reg, cfg, ctx, discovery, report, specific_rules=pr3_rules)
     assert report.results == [], [str(r) for r in report.results]
+
+
+def test_a015_supports_app_yml_config(tmp_path: Path) -> None:
+    app_yml = tmp_path / "app.yml"
+    decls = "\n".join(f"  - name: var_{i}" for i in range(96))
+    app_yml.write_text(
+        f"displayName: Demo\nvariableDeclarations:\n{decls}\n",
+        encoding="utf-8",
+    )
+    res = VariableCountLimit().check(
+        app_yml, app_yml.read_text(encoding="utf-8"), _ctx(tmp_path)
+    )
+    assert len(res) == 1
+    assert res[0].rule_id == "A015"

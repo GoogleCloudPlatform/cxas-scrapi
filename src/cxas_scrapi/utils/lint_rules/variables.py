@@ -21,21 +21,25 @@ mistyped nested children, or wrong parent objects after a flat→nested
 """
 
 import ast
-import json
 import re
 import typing
-import warnings
 from pathlib import Path
 
 import yaml
 
 from cxas_scrapi.utils.linter import (
+    APP_CONFIG_NAMES,
     LintContext,
     LintResult,
     Rule,
     Severity,
+    _load_config_dict,
+    get_field,
     rule,
+    safe_ast_parse,
 )
+
+_TOOL_EXECUTION_MODE_KEYS = ("toolExecutionMode", "tool_execution_mode")
 
 # ── Schema loading & caching ─────────────────────────────────────────────
 
@@ -74,7 +78,7 @@ EVAL_VAR_KEYS = (
 
 
 def _resolve_app_root(context: LintContext) -> Path | None:
-    """Locate the app root (dir containing app.json/app.yaml).
+    """Locate the app root (dir containing app.json/app.yaml/app.yml).
 
     Prefers ``context.app_root`` when set, otherwise probes
     ``context.app_dir`` directly and its immediate subdirectories
@@ -85,28 +89,24 @@ def _resolve_app_root(context: LintContext) -> Path | None:
     app_dir = context.app_dir
     if app_dir is None or not app_dir.exists():
         return None
-    for name in ("app.json", "app.yaml"):
-        if (app_dir / name).exists():
-            return app_dir
-    for d in app_dir.iterdir():
-        if d.is_dir() and not d.name.startswith("."):  # noqa: SIM102
-            if (d / "app.json").exists() or (d / "app.yaml").exists():
-                return d
+    if any((app_dir / name).exists() for name in APP_CONFIG_NAMES):
+        return app_dir
+    for d in sorted(app_dir.iterdir()):
+        if (
+            not d.is_symlink()
+            and d.is_dir()
+            and not d.name.startswith(".")
+            and any((d / name).exists() for name in APP_CONFIG_NAMES)
+        ):
+            return d
     return None
 
 
 def _load_app_config(app_root: Path) -> dict:
-    for name in ("app.json", "app.yaml"):
+    for name in APP_CONFIG_NAMES:
         p = app_root / name
-        if not p.exists():
-            continue
-        try:
-            text = p.read_text()
-            if name.endswith(".yaml"):
-                return yaml.safe_load(text) or {}
-            return json.loads(text)
-        except (json.JSONDecodeError, yaml.YAMLError, OSError):
-            return {}
+        if p.is_file() and not p.is_symlink():
+            return _load_config_dict(p) or {}
     return {}
 
 
@@ -463,11 +463,8 @@ class _StateAccessVisitor(ast.NodeVisitor):
 def _collect_state_accesses(
     content: str,
 ) -> list[tuple[str, str, int, str | None]]:
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(content)
-    except SyntaxError:
+    tree = safe_ast_parse(content)
+    if tree is None:
         return []
     visitor = _StateAccessVisitor()
     visitor.visit(tree)
@@ -487,7 +484,7 @@ def _collect_eval_var_refs(content: str) -> list[tuple[str, int]]:
     """
     try:
         data = yaml.safe_load(content)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError):
         return []
     if not data:
         return []
@@ -589,10 +586,10 @@ def _agent_callback_substitutes_ref(file_path: Path, ref: str) -> bool:
             continue
         try:
             text = py_file.read_text(errors="ignore")
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", SyntaxWarning)
-                tree = ast.parse(text)
-        except (OSError, SyntaxError):
+        except OSError:
+            continue
+        tree = safe_ast_parse(text)
+        if tree is None:
             continue
         if _tree_replaces_placeholder(tree, placeholder):
             return True
@@ -1140,8 +1137,8 @@ def _tool_writes(app_root: Path) -> dict[str, dict[str, int]]:
         ]
     for name, code in sources:
         try:
-            content = code.read_text()
-        except OSError:
+            content = code.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
             continue
         found = writes.setdefault(name, {})
         for kind, var_key, line, _rhs in _collect_state_accesses(content):
@@ -1160,11 +1157,8 @@ def _other_state_writes(content: str) -> dict[str, int]:
     state["x"]`` and ``state.pop("x")``. Each one changes the variable, so it
     counts as a writer for V105 and V106.
     """
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(content)
-    except SyntaxError:
+    tree = safe_ast_parse(content)
+    if tree is None:
         return {}
 
     def is_state(node: ast.AST) -> bool:
@@ -1220,7 +1214,10 @@ def _tools_run_in_parallel(context: LintContext) -> bool:
     app_root = _resolve_app_root(context)
     if app_root is None:
         return False
-    mode = _load_app_config(app_root).get("toolExecutionMode") or "PARALLEL"
+    mode = (
+        get_field(_load_app_config(app_root), _TOOL_EXECUTION_MODE_KEYS)
+        or "PARALLEL"
+    )
     return str(mode).upper() != "SEQUENTIAL"
 
 

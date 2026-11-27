@@ -32,6 +32,7 @@ from google.cloud.ces_v1beta import types
 from google.protobuf import json_format
 
 from cxas_scrapi.utils.linter import (
+    CONFIG_EXTENSIONS,
     LintContext,
     LintResult,
     Rule,
@@ -43,20 +44,33 @@ from cxas_scrapi.utils.linter import (
 
 
 def _load_json_or_yaml(directory: Path, file_name: str) -> typing.Any:
-    """Load config from ``<file_name>.yaml`` or ``<file_name>.json``."""
-    yaml_path = directory / f"{file_name}.yaml"
-    json_path = directory / f"{file_name}.json"
+    """Load config from ``<file_name>.json``, ``.yaml``, or ``.yml``."""
+    for ext in CONFIG_EXTENSIONS:
+        path = directory / f"{file_name}{ext}"
+        if path.is_file() and not path.is_symlink():
+            raw = path.read_text(encoding="utf-8")
+            return json.loads(raw) if ext == ".json" else yaml.safe_load(raw)
+    raise FileNotFoundError(
+        f"Missing {file_name}.json, {file_name}.yaml, or {file_name}.yml "
+        f"in {directory}"
+    )
 
-    if yaml_path.exists():
-        with open(yaml_path) as f:
-            return yaml.safe_load(f)
-    elif json_path.exists():
-        with open(json_path) as f:
-            return json.load(f)
-    else:
-        raise FileNotFoundError(
-            f"Missing {file_name}.yaml or {file_name}.json in {directory}"
-        )
+
+def _load_schema_config(
+    rule_obj: Rule, resource_dir: Path, config_name: str, rel: str
+) -> tuple[typing.Any, list[LintResult]]:
+    """Load config data or return a structured LintResult error."""
+    try:
+        return _load_json_or_yaml(resource_dir, config_name), []
+    except FileNotFoundError as e:
+        return None, [rule_obj.make_result(rel, f"Missing config: {e}")]
+    except (
+        yaml.YAMLError,
+        ValueError,
+        UnicodeDecodeError,
+        OSError,
+    ) as e:
+        return None, [rule_obj.make_result(rel, f"Invalid config file: {e}")]
 
 
 _NON_PATH_KEYS: frozenset[str] = frozenset(
@@ -99,7 +113,7 @@ def _resolve_paths(
         isinstance(data, str)
         and "://" not in data
         and not any(c.isspace() for c in data)
-        and data.endswith((".txt", ".py", ".yaml", ".json"))
+        and data.endswith((".txt", ".py", ".yaml", ".yml", ".json"))
     ):
         path_to_check = Path(data)
         resolved = False
@@ -126,7 +140,7 @@ def _resolve_paths(
                             break
 
         if resolved or path_to_check.exists():
-            with open(path_to_check) as f:
+            with open(path_to_check, encoding="utf-8") as f:
                 return f.read()
         else:
             raise FileNotFoundError(f"Referenced file not found: {data}")
@@ -285,6 +299,44 @@ def _validate_legacy_remote_agent_tool(tool_data: dict) -> str | None:
     return None
 
 
+def _strip_tool_config_v1main_fields(data: dict[str, typing.Any]) -> None:
+    """Strip v1main-only fields inside a tool_config payload."""
+    ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
+    if isinstance(ds_tool, dict):
+        mod_configs = ds_tool.get("modalityConfigs") or ds_tool.get(
+            "modality_configs"
+        )
+        if isinstance(mod_configs, list):
+            for mc in mod_configs:
+                _pop_missing_descriptor_fields(
+                    mc,
+                    types.DataStoreTool.ModalityConfig,
+                    ("snippetsConfig", "snippets_config"),
+                )
+    if getattr(types, "RemoteAgentTool", None) is None:
+        if _validate_legacy_remote_agent_tool(data) is None:
+            data.pop("remoteAgentTool", None)
+            data.pop("remote_agent_tool", None)
+    else:
+        remote_tool = data.get("remoteAgentTool") or data.get(
+            "remote_agent_tool"
+        )
+        _pop_missing_descriptor_fields(
+            remote_tool,
+            types.RemoteAgentTool,
+            (
+                "apiAuthentication",
+                "api_authentication",
+                "statefulAgent",
+                "stateful_agent",
+                "inputVariableMapping",
+                "input_variable_mapping",
+                "outputVariableMapping",
+                "output_variable_mapping",
+            ),
+        )
+
+
 def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
     """Strip CES v1main fields that lag in the google-cloud-ces v1beta wheel."""
     if not isinstance(data, dict):
@@ -296,41 +348,14 @@ def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
             types.ModelSettings,
             ("thinkingLevel", "thinking_level"),
         )
-    elif target == "tool_config":
-        ds_tool = data.get("dataStoreTool") or data.get("data_store_tool")
-        if isinstance(ds_tool, dict):
-            mod_configs = ds_tool.get("modalityConfigs") or ds_tool.get(
-                "modality_configs"
-            )
-            if isinstance(mod_configs, list):
-                for mc in mod_configs:
-                    _pop_missing_descriptor_fields(
-                        mc,
-                        types.DataStoreTool.ModalityConfig,
-                        ("snippetsConfig", "snippets_config"),
-                    )
-        if getattr(types, "RemoteAgentTool", None) is None:
-            if _validate_legacy_remote_agent_tool(data) is None:
-                data.pop("remoteAgentTool", None)
-                data.pop("remote_agent_tool", None)
-        else:
-            remote_tool = data.get("remoteAgentTool") or data.get(
-                "remote_agent_tool"
-            )
+        if target == "agent_config":
             _pop_missing_descriptor_fields(
-                remote_tool,
-                types.RemoteAgentTool,
-                (
-                    "apiAuthentication",
-                    "api_authentication",
-                    "statefulAgent",
-                    "stateful_agent",
-                    "inputVariableMapping",
-                    "input_variable_mapping",
-                    "outputVariableMapping",
-                    "output_variable_mapping",
-                ),
+                data,
+                types.Agent,
+                ("guidedAgent", "guided_agent"),
             )
+    elif target == "tool_config":
+        _strip_tool_config_v1main_fields(data)
     elif target == "guardrail_config":
         action = data.get("action")
         _pop_missing_descriptor_fields(
@@ -467,10 +492,11 @@ class SchemaValid(Rule):
         config_name = self._config_name or resource_dir.name
         rel = str(resource_dir)
 
-        try:
-            data = _load_json_or_yaml(resource_dir, config_name)
-        except FileNotFoundError as e:
-            return [self.make_result(rel, f"Missing config: {e}")]
+        data, load_errors = _load_schema_config(
+            self, resource_dir, config_name, rel
+        )
+        if load_errors:
+            return load_errors
 
         if not isinstance(data, dict):
             return [
@@ -487,6 +513,12 @@ class SchemaValid(Rule):
                 )
             except FileNotFoundError as e:
                 return [self.make_result(rel, f"Missing referenced file: {e}")]
+            except (UnicodeDecodeError, OSError) as e:
+                return [
+                    self.make_result(
+                        rel, f"Could not read referenced file: {e}"
+                    )
+                ]
 
         # Pop custom tools field from app_config to avoid proto validation
         # failure, while validating embedded remoteAgentTool shapes if needed.
@@ -503,11 +535,11 @@ class SchemaValid(Rule):
 
         # Pop any custom _comment_ fields used for inline documentation
         for key in list(data.keys()):
-            if key.startswith("_comment_"):
+            if isinstance(key, str) and key.startswith("_comment_"):
                 data.pop(key)
 
         if self.target == "evaluation_config":
-            lower_keys = {k.lower() for k in data}
+            lower_keys = {k.lower() for k in data if isinstance(k, str)}
             if "turns" in lower_keys or "expectations" in lower_keys:
                 # TODO: Deprecate this block of logic if the backend no longer
                 # supports these legacy root-level keys (turns/expectations).

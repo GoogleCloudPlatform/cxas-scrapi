@@ -33,18 +33,22 @@ Catches silent CES platform traps documented in Chapters 3-7 and Appendix A:
 import ast
 import json
 import re
-import warnings
 from pathlib import Path
 
 import yaml
 
 from cxas_scrapi.utils.lint_rules.callbacks import _resolve_cb_type
 from cxas_scrapi.utils.linter import (
+    APP_CONFIG_NAMES,
     LintContext,
     LintResult,
     Rule,
     Severity,
+    _find_dir_config,
+    _iter_subdirs,
+    _load_config_dict,
     rule,
+    safe_ast_parse,
 )
 
 VARIABLE_COUNT_WARNING_LIMIT = 95
@@ -110,12 +114,7 @@ _RE2_SPACED_QUANTIFIER_RE = re.compile(r"(?<!\\)\{(\d+),\s+(\d*)\}")
 
 
 def _parse_ast(content: str) -> ast.Module | None:
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            return ast.parse(content)
-    except SyntaxError:
-        return None
+    return safe_ast_parse(content)
 
 
 def _line_of(text: str, offset: int) -> int:
@@ -1040,6 +1039,22 @@ def _load_structured(file_path: Path, content: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _collect_async_tools(tools_root: Path) -> list[str]:
+    """Return sorted tool dir names declaring executionType ASYNCHRONOUS."""
+    async_tools: list[str] = []
+    for tool_dir in _iter_subdirs(tools_root):
+        cfg_path = _find_dir_config(tool_dir)
+        cfg = _load_config_dict(cfg_path) if cfg_path is not None else None
+        if not cfg:
+            continue
+        exec_type = str(
+            cfg.get("executionType") or cfg.get("execution_type") or ""
+        ).upper()
+        if exec_type == "ASYNCHRONOUS":
+            async_tools.append(tool_dir.name)
+    return async_tools
+
+
 @rule("config")
 class AsyncToolMissingInactivityTimeout(Rule):
     id = "A014"
@@ -1053,34 +1068,13 @@ class AsyncToolMissingInactivityTimeout(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         data = _load_structured(file_path, content)
         if data is None:
             return []
 
-        tools_root = file_path.parent / "tools"
-        if not tools_root.is_dir():
-            return []
-
-        async_tools: list[str] = []
-        for tool_dir in sorted(tools_root.iterdir()):
-            if not tool_dir.is_dir():
-                continue
-            for suffix in (".json", ".yaml"):
-                cfg_path = tool_dir / f"{tool_dir.name}{suffix}"
-                if not cfg_path.is_file():
-                    continue
-                cfg = _load_structured(cfg_path, cfg_path.read_text())
-                if not cfg:
-                    continue
-                exec_type = str(
-                    cfg.get("executionType") or cfg.get("execution_type") or ""
-                ).upper()
-                if exec_type == "ASYNCHRONOUS":
-                    async_tools.append(tool_dir.name)
-                    break
-
+        async_tools = _collect_async_tools(file_path.parent / "tools")
         if not async_tools:
             return []
 
@@ -1129,7 +1123,7 @@ class VariableCountLimit(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         data = _load_structured(file_path, content)
         if data is None:
@@ -1162,6 +1156,26 @@ class VariableCountLimit(Rule):
         ]
 
 
+def _collect_enabled_llm_policy_guardrails(
+    guardrails_dir: Path, attached_set: set[str] | None
+) -> list[str]:
+    """Return names of enabled attached llmPolicy guardrails."""
+    names: list[str] = []
+    for gdir in _iter_subdirs(guardrails_dir):
+        gfile = _find_dir_config(gdir)
+        gcfg = _load_config_dict(gfile) if gfile is not None else None
+        if not gcfg or gcfg.get("enabled") is False:
+            continue
+        disp = str(gcfg.get("displayName") or gdir.name)
+        if attached_set is not None and not (
+            gdir.name in attached_set or disp in attached_set
+        ):
+            continue
+        if "llmPolicy" in gcfg or "llm_policy" in gcfg:
+            names.append(gdir.name)
+    return names
+
+
 @rule("config")
 class LlmPolicyGuardrailLimit(Rule):
     id = "A016"
@@ -1172,14 +1186,10 @@ class LlmPolicyGuardrailLimit(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         data = _load_structured(file_path, content)
         if data is None:
-            return []
-
-        guardrails_dir = file_path.parent / "guardrails"
-        if not guardrails_dir.is_dir():
             return []
 
         attached_refs = data.get("guardrails")
@@ -1188,27 +1198,9 @@ class LlmPolicyGuardrailLimit(Rule):
             if isinstance(attached_refs, list)
             else None
         )
-
-        llm_policy_names: list[str] = []
-        for gdir in sorted(guardrails_dir.iterdir()):
-            if not gdir.is_dir():
-                continue
-            for suffix in (".json", ".yaml"):
-                gfile = gdir / f"{gdir.name}{suffix}"
-                if not gfile.is_file():
-                    continue
-                gcfg = _load_structured(gfile, gfile.read_text())
-                if not gcfg or gcfg.get("enabled") is False:
-                    continue
-                disp = str(gcfg.get("displayName") or gdir.name)
-                if attached_set is not None and not (
-                    gdir.name in attached_set or disp in attached_set
-                ):
-                    continue
-                if "llmPolicy" in gcfg or "llm_policy" in gcfg:
-                    llm_policy_names.append(gdir.name)
-                break
-
+        llm_policy_names = _collect_enabled_llm_policy_guardrails(
+            file_path.parent / "guardrails", attached_set
+        )
         if len(llm_policy_names) <= LLM_POLICY_GUARDRAIL_LIMIT:
             return []
 
@@ -1260,14 +1252,10 @@ class GuardrailRe2QuantifierSpacing(Rule):
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
         guardrail_dir = file_path if file_path.is_dir() else file_path.parent
-        target_file: Path | None = None
-        gcfg: dict | None = None
-        for suffix in (".json", ".yaml"):
-            candidate = guardrail_dir / f"{guardrail_dir.name}{suffix}"
-            if candidate.is_file():
-                target_file = candidate
-                gcfg = _load_structured(candidate, candidate.read_text())
-                break
+        target_file = _find_dir_config(guardrail_dir)
+        gcfg = (
+            _load_config_dict(target_file) if target_file is not None else None
+        )
         if gcfg is None or target_file is None:
             return []
 
