@@ -25,6 +25,10 @@ from typing import Any
 
 import yaml
 
+from cxas_scrapi.utils.env_vars import (
+    collect_tool_and_toolset_env_var_placeholders,
+    resolve_tool_and_toolset_env_vars_in_dir,
+)
 from cxas_scrapi.utils.lint_rules.config import VoiceLanguageTtsParity
 from cxas_scrapi.utils.lint_rules.structure import AgentRefSelfOrOrphan
 from cxas_scrapi.utils.lint_rules.tools import (
@@ -347,6 +351,104 @@ def test_a018_discovers_default_location_openapi_schema_placeholder(
     assert len(rep.results) == 1
     assert rep.results[0].rule_id == "A018"
     assert rep.results[0].severity == Severity.ERROR
+
+
+def test_env_vars_keeps_and_resolves_both_manifest_url_and_schema_placeholders(
+    tmp_path: Path,
+) -> None:
+    """When both a.json openApiTool.url and open_api_schema.yaml use $env_var,
+    both placeholders are kept and rewritten without leaving $env_var behind.
+    """
+    _write_json(
+        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
+    )
+    tool_json = _write_json(
+        tmp_path / "tools" / "a" / "a.json",
+        {
+            "displayName": "a",
+            "openApiTool": {
+                "openApiSchema": "tools/a/open_api_tool/open_api_schema.yaml",
+                "url": "$env_var",
+            },
+        },
+    )
+    schema_yaml = _write_yaml(
+        tmp_path / "tools" / "a" / "open_api_tool" / "open_api_schema.yaml",
+        {
+            "openapi": "3.0.0",
+            "servers": [{"url": "$env_var"}],
+            "paths": {
+                "/health": {
+                    "get": {"responses": {"200": {"description": "ok"}}}
+                }
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "environment.json",
+        {"tools": {"a": {"openApiTool": {"url": "https://prod.example.com"}}}},
+    )
+
+    placeholders = collect_tool_and_toolset_env_var_placeholders(tmp_path)
+    assert len(placeholders) == 2
+    assert any(p.openapi_schema_path is None for p in placeholders)
+    assert any(p.openapi_schema_path == schema_yaml for p in placeholders)
+
+    resolved = resolve_tool_and_toolset_env_vars_in_dir(tmp_path)
+    assert resolved == ["a.openApiTool.url"]
+    assert "$env_var" not in tool_json.read_text(encoding="utf-8")
+    assert "$env_var" not in schema_yaml.read_text(encoding="utf-8")
+    assert "https://prod.example.com" in tool_json.read_text(encoding="utf-8")
+    assert "https://prod.example.com" in schema_yaml.read_text(encoding="utf-8")
+
+
+def test_env_vars_explicit_schema_blocks_stale_default_schema_fallback(
+    tmp_path: Path,
+) -> None:
+    """When openApiSchema is explicitly set without $env_var, stale default
+    open_api_schema.yaml with $env_var must be ignored and left untouched.
+    """
+    _write_json(
+        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
+    )
+    _write_json(
+        tmp_path / "tools" / "a" / "a.json",
+        {
+            "displayName": "a",
+            "openApiTool": {
+                "openApiSchema": "tools/a/open_api_tool/current.yaml",
+            },
+        },
+    )
+    _write_yaml(
+        tmp_path / "tools" / "a" / "open_api_tool" / "current.yaml",
+        {
+            "openapi": "3.0.0",
+            "servers": [{"url": "https://fixed.example.com"}],
+            "paths": {
+                "/health": {
+                    "get": {"responses": {"200": {"description": "ok"}}}
+                }
+            },
+        },
+    )
+    stale_schema = _write_yaml(
+        tmp_path / "tools" / "a" / "open_api_tool" / "open_api_schema.yaml",
+        {
+            "openapi": "3.0.0",
+            "servers": [{"url": "$env_var"}],
+            "paths": {
+                "/old": {"get": {"responses": {"200": {"description": "ok"}}}}
+            },
+        },
+    )
+    stale_before = stale_schema.read_text(encoding="utf-8")
+    _write_json(tmp_path / "environment.json", {})
+
+    assert collect_tool_and_toolset_env_var_placeholders(tmp_path) == []
+    assert _run_specific(tmp_path, {"A018"}).results == []
+    assert resolve_tool_and_toolset_env_vars_in_dir(tmp_path) == []
+    assert stale_schema.read_text(encoding="utf-8") == stale_before
 
 
 def test_t020_missing_default_env_warns_once_and_missing_env_file_no_duplicate(
