@@ -24,21 +24,20 @@ CXAS Best Practices Guide (§1.2, §2.5, Appendix A Traps #24-#26):
 """
 
 import ast
-import json
 import re
-import warnings
 from pathlib import Path
 
-import yaml
-
 from cxas_scrapi.utils.linter import (
+    APP_CONFIG_NAMES,
     COMPOSITE_V2_MODELS,
     LIVE_AUDIO_MODELS,
     LintContext,
     LintResult,
     Rule,
     Severity,
+    parse_config_content,
     rule,
+    safe_ast_parse,
 )
 
 SPEAKING_STYLE_WORD_LIMIT = 25
@@ -184,11 +183,8 @@ def _line_at(text: str, offset: int) -> str:
 
 def _extract_callback_tts_strings(content: str) -> list[tuple[int, str]]:
     """Extract string literals passed to Part.from_text/customized_response."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(content)
-    except SyntaxError:
+    tree = safe_ast_parse(content)
+    if tree is None:
         return []
 
     spans: list[tuple[int, str]] = []
@@ -229,18 +225,11 @@ class CompositeV2SpeechInstruction(Rule):
     def check(
         self, file_path: Path, content: str, context: LintContext
     ) -> list[LintResult]:
-        if file_path.name not in ("app.json", "app.yaml"):
+        if file_path.name not in APP_CONFIG_NAMES:
             return []
         rel = str(file_path.relative_to(context.project_root))
-        try:
-            data = (
-                json.loads(content)
-                if file_path.suffix == ".json"
-                else (yaml.safe_load(content) or {})
-            )
-        except Exception:
-            return []
-        if not isinstance(data, dict):
+        data = parse_config_content(file_path, content)
+        if data is None:
             return []
 
         audio = data.get("audioProcessingConfig")

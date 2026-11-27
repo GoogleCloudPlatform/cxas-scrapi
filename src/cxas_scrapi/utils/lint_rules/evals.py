@@ -50,7 +50,7 @@ def _parse_yaml(content: str) -> dict | None:
     """Parse YAML, returning None on error or empty content."""
     try:
         data = yaml.safe_load(content)
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError):
         return None
     return data if data else None
 
@@ -77,7 +77,7 @@ class InvalidYaml(Rule):
         rel = str(file_path.relative_to(context.project_root))
         try:
             yaml.safe_load(content)
-        except yaml.YAMLError as e:
+        except (yaml.YAMLError, ValueError) as e:
             return [self.make_result(file=rel, message=f"Invalid YAML: {e}")]
         return []
 

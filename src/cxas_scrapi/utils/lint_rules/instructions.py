@@ -19,9 +19,7 @@ Validates agent instruction files against CXAS design guide best practices.
 
 import ast
 import contextlib
-import json
 import re
-import warnings
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (
@@ -29,22 +27,21 @@ from cxas_scrapi.utils.linter import (
     LintResult,
     Rule,
     Severity,
+    _find_dir_config,
+    _load_config_dict,
     rule,
+    safe_ast_parse,
 )
 
 TOOL_REF_PATTERN = re.compile(r"\{@TOOL:\s*([^}]+)\}")
 
 
 def _load_agent_config(file_path: Path) -> dict | None:
-    """Load the agent JSON config adjacent to an instruction file."""
-    agent_dir = file_path.parent
-    agent_json = agent_dir / f"{agent_dir.name}.json"
-    if not agent_json.exists():
+    """Load the agent JSON/YAML config adjacent to an instruction file."""
+    cfg_path = _find_dir_config(file_path.parent)
+    if cfg_path is None:
         return None
-    try:
-        return json.loads(agent_json.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
+    return _load_config_dict(cfg_path)
 
 
 def _extract_tool_refs(content: str) -> set[str]:
@@ -361,11 +358,8 @@ def _extract_py_tool_refs_and_dags(
     """Extract candidate tool references and ``*_dag`` calls from Python AST."""
     matched: set[str] = set()
     dags: set[str] = set()
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", SyntaxWarning)
-            tree = ast.parse(text)
-    except SyntaxError:
+    tree = safe_ast_parse(text)
+    if tree is None:
         for tool in candidate_tools:
             if re.search(rf"\btools\.{re.escape(tool)}\b", text):
                 matched.add(tool)
@@ -483,13 +477,20 @@ class UnusedToolInConfig(Rule):
         if not config:
             return []
 
-        config_tools = set(config.get("tools", []))
+        raw_tools = config.get("tools")
+        config_tools = (
+            {t for t in raw_tools if isinstance(t, str)}
+            if isinstance(raw_tools, list)
+            else set()
+        )
         instruction_refs = _extract_tool_refs(content)
         app_root = context.app_root or file_path.parent.parent.parent
         global_inst = app_root / "global_instruction.txt"
         if global_inst.exists():
-            with contextlib.suppress(OSError):
-                instruction_refs |= _extract_tool_refs(global_inst.read_text())
+            with contextlib.suppress(OSError, UnicodeDecodeError):
+                instruction_refs |= _extract_tool_refs(
+                    global_inst.read_text(encoding="utf-8")
+                )
 
         unused = config_tools - instruction_refs - {"end_session"}
         if unused:
@@ -497,11 +498,10 @@ class UnusedToolInConfig(Rule):
                 file_path.parent, app_root, unused
             )
 
-        agent_json_rel = str(
-            (file_path.parent / f"{file_path.parent.name}.json").relative_to(
-                context.project_root
-            )
+        agent_cfg_path = _find_dir_config(file_path.parent) or (
+            file_path.parent / f"{file_path.parent.name}.json"
         )
+        agent_json_rel = str(agent_cfg_path.relative_to(context.project_root))
         return [
             self.make_result(
                 file=agent_json_rel,
@@ -539,7 +539,11 @@ class MissingCurrentDate(Rule):
         """Check if global_instruction.txt already references current_date."""
         global_inst = context.app_dir / "global_instruction.txt"
         if global_inst.exists():
-            return bool(self.VALID_PATTERNS.search(global_inst.read_text()))
+            try:
+                text = global_inst.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                return False
+            return bool(self.VALID_PATTERNS.search(text))
         return False
 
     def _all_agent_instructions_have_date(self, context: LintContext) -> bool:
@@ -551,10 +555,13 @@ class MissingCurrentDate(Rule):
             if not agent_dir.is_dir():
                 continue
             inst = agent_dir / "instruction.txt"
-            if inst.exists() and not self.VALID_PATTERNS.search(
-                inst.read_text()
-            ):
-                return False
+            if inst.exists():
+                try:
+                    text = inst.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if not self.VALID_PATTERNS.search(text):
+                    return False
         return True
 
     def check(

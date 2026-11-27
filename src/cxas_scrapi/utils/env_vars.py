@@ -233,7 +233,7 @@ def extract_env_variable_defaults(
 
 
 def _find_app_config_file(app_dir: Path) -> Path | None:
-    for name in ("app.json", "app.yaml"):
+    for name in ("app.json", "app.yaml", "app.yml"):
         candidate = app_dir / name
         if candidate.is_file():
             return candidate
@@ -273,7 +273,7 @@ def collect_env_var_declaration_names(app_dir: str | Path) -> set[str]:
         return set()
     try:
         app_data = _load_config_file(app_cfg)
-    except (json.JSONDecodeError, yaml.YAMLError, OSError):
+    except (ValueError, yaml.YAMLError, OSError):
         return set()
     if not isinstance(app_data, dict):
         return set()
@@ -314,7 +314,7 @@ def resolve_app_env_variables_in_dir(app_dir: str | Path) -> list[str]:
     if app_cfg is not None:
         try:
             app_data = _load_config_file(app_cfg)
-        except (json.JSONDecodeError, yaml.YAMLError) as e:
+        except (ValueError, yaml.YAMLError) as e:
             raise ValueError(f"Invalid {app_cfg.name}: {e}") from e
         if isinstance(app_data, dict):
             decls = _get_variable_declarations_list(app_data)
@@ -336,7 +336,7 @@ def resolve_app_env_variables_in_dir(app_dir: str | Path) -> list[str]:
         if env_path.is_file():
             try:
                 raw_env = json.loads(env_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+            except (ValueError, OSError):
                 return []
             if isinstance(raw_env, dict) and (
                 "variableDeclarations" in raw_env
@@ -421,7 +421,7 @@ def preserve_env_var_placeholders_on_pull(
 
     try:
         app_data = _load_config_file(app_cfg)
-    except (json.JSONDecodeError, yaml.YAMLError, OSError):
+    except (ValueError, yaml.YAMLError, OSError):
         return []
     if not isinstance(app_data, dict):
         return []
@@ -470,7 +470,7 @@ def preserve_env_var_placeholders_on_pull(
                 loaded = json.loads(env_path.read_text(encoding="utf-8"))
                 if isinstance(loaded, dict):
                     env_data = loaded
-            except (json.JSONDecodeError, OSError):
+            except (ValueError, OSError):
                 env_data = {}
 
         app_section = env_data.get("app")
@@ -1331,7 +1331,7 @@ def preserve_tool_and_toolset_env_vars_on_pull(
             loaded = json.loads(env_path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 env_data = loaded
-        except (json.JSONDecodeError, OSError):
+        except (ValueError, OSError):
             env_data = {}
 
     # Group prior placeholders by category -> set of normalized keys
@@ -1359,7 +1359,7 @@ def preserve_tool_and_toolset_env_vars_on_pull(
         for entry, mpath in _iter_category_manifests(root, category):
             try:
                 data = _load_config_file(mpath)
-            except (json.JSONDecodeError, yaml.YAMLError, OSError):
+            except (ValueError, yaml.YAMLError, OSError):
                 continue
             if not isinstance(data, dict):
                 continue
