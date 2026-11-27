@@ -52,6 +52,7 @@ from cxas_scrapi.utils import (
     gcs_utils,
     report_components,
 )
+from cxas_scrapi.utils.gemini import resolve_gemini_location
 from cxas_scrapi.utils.latency_parser import LatencyParser
 from cxas_scrapi.utils.tracing import (
     audio_analysis,
@@ -7541,7 +7542,7 @@ def generate_combined_report_from_dir(
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
     report_format: str = "html",
-    vertex_location: str = "global",
+    vertex_location: str | None = None,
     naturalness: bool | dict[str, Any] | None = None,
     audio_analysis: bool | None = None,
     infra_retries: int = 2,
@@ -7567,6 +7568,7 @@ def generate_combined_report_from_dir(
     bq_dataset: str | None = None,
     bq_create_dataset: bool = False,
     bq_location: str | None = None,
+    gemini_location: str | None = None,
 ) -> str | tuple[str, dict[str, Any]]:
     """Load results from directory and generate a combined report.
 
@@ -7595,6 +7597,7 @@ def generate_combined_report_from_dir(
       deployment_id: Optional deployment ID to target for simulations.
       report_format: Output format for the combined report, 'html'
         (default) or 'json'.
+      vertex_location: Backwards-compatible alias for gemini_location.
       naturalness: Optional run-level override for the naturalness metric.
         True enables it with defaults, False disables it, and a dict is
         merged over each test case's own config. None (default) defers to
@@ -7608,6 +7611,8 @@ def generate_combined_report_from_dir(
         (requires ``bq_location``). The dataset is never created otherwise.
       bq_location: Location used to create the dataset, or checked against
         the existing dataset.
+      gemini_location: Google Cloud location for evaluation Gemini and TTS
+        models. Defaults to GOOGLE_CLOUD_LOCATION or 'global'.
 
     Returns:
       The resolved output path or URL where the report was saved.
@@ -7654,6 +7659,7 @@ def generate_combined_report_from_dir(
     eval_duration_s: float | None = None
     results_files: list[str] = []
     sim_file_timestamp: str | None = None
+    vertex_location = resolve_gemini_location(gemini_location, vertex_location)
 
     if run:
         extra_run_kwargs: dict[str, Any] = {}
@@ -8271,7 +8277,7 @@ def run_all_evals(
     single_bidi_stream: bool = False,
     progress_callback: Callable[[str, int, int], None] | None = None,
     capture_agent_audio: bool = False,
-    vertex_location: str = "global",
+    vertex_location: str | None = None,
     naturalness: bool | dict[str, Any] | None = None,
     audio_analysis: bool = False,
     infra_retries: int = 2,
@@ -8282,6 +8288,7 @@ def run_all_evals(
     exclude_files: list[str] | None = None,
     sim_user_voices: list[str] | None = None,
     sim_user_tts_model: str | None = None,
+    gemini_location: str | None = None,
 ) -> dict[str, Any]:
     """Runs all 4 types of evaluations and returns aggregated results.
 
@@ -8309,19 +8316,21 @@ def run_all_evals(
       use_tool_fakes: Use fake tools for the session if available.
       timestamp: Optional timestamp to append to result filenames.
       expectations_only: Run simulations checking expectations only.
-      vertex_location: Vertex AI location for evaluation LLM models.
-        Defaults to 'global'.
+      vertex_location: Backwards-compatible alias for gemini_location.
       naturalness: Optional run-level override for the naturalness metric.
         True enables it with defaults, False disables it, and a dict is
         merged over each test case's own config. None (default) defers to
         the test case.
       platform_sims: If True, executes platform-compatible simulation test
         cases as CXAS 2.0 Milestone evaluations on the CES platform.
+      gemini_location: Google Cloud location for evaluation Gemini and TTS
+        models. Defaults to GOOGLE_CLOUD_LOCATION or 'global'.
 
     Returns:
       A dict containing lists of results for 'simulation', 'golden', 'tool', and
       'callback'.
     """
+    vertex_location = resolve_gemini_location(gemini_location, vertex_location)
     extra_kwargs: dict[str, Any] = {}
     if infra_retries != 2:
         extra_kwargs["infra_retries"] = infra_retries

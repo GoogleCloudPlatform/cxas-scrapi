@@ -66,7 +66,7 @@ from cxas_scrapi.utils.eval_utils import (
     Turn,
     evaluate_expectations,
 )
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, resolve_gemini_location
 from cxas_scrapi.utils.rate_limiter import RateLimiter
 from cxas_scrapi.utils.tracing import trace_report
 from cxas_scrapi.utils.tracing.audio_analysis import ANALYSIS_REGISTRY
@@ -654,15 +654,24 @@ class SimulationEvals(Apps):
         rate_limiter: RateLimiter | None = None,
         expectations_only: bool = False,
         deployment_id: str | None = None,
-        vertex_location: str = "global",
+        vertex_location: str | None = None,
         naturalness: bool | dict[str, Any] | None = None,
         audio_analysis: bool = False,
         sim_user_voices: Sequence[str] | None = None,
         sim_user_tts_model: str | None = None,
+        gemini_location: str | None = None,
         **kwargs: typing.Any,
     ) -> None:
+        """Initializes SimulationEvals.
+
+        `gemini_location` (or legacy `vertex_location`) defaults to
+        `GOOGLE_CLOUD_LOCATION` or `'global'`.
+        """
         self.expectations_only = expectations_only
-        self.vertex_location = vertex_location
+        self.gemini_location = resolve_gemini_location(
+            gemini_location, vertex_location
+        )
+        self.vertex_location = self.gemini_location
         # Run-level override for the optional Naturalness Metric. `None`
         # defers entirely to each test case; True enables it everywhere with
         # defaults; a dict is merged over the test case's own block.
@@ -687,13 +696,14 @@ class SimulationEvals(Apps):
             app_name,
             deployment_id=deployment_id,
             rate_limiter=rate_limiter,
+            gemini_location=self.gemini_location,
             **kwargs,
         )
         self.tools_map = Tools(app_name=app_name, **kwargs).get_tools_map()
 
         self.genai_client = GeminiGenerate(
             project_id=self.project_id,
-            location=self.vertex_location,
+            location=self.gemini_location,
             credentials=self.creds,
         )
 
@@ -1373,7 +1383,11 @@ class SimulationEvals(Apps):
 
         # 1. Multimodal Gemini Audio Checks
         try:
-            traces = Traces(app_name=self.app_name, creds=self.creds)
+            traces = Traces(
+                app_name=self.app_name,
+                creds=self.creds,
+                gemini_location=self.gemini_location,
+            )
             res = traces.analyze_audio(session_id)
             if isinstance(res, dict) and not res.get("error"):
                 eval_conv.audio_analysis_result = res

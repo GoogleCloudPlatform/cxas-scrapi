@@ -110,6 +110,49 @@ def test_init_with_missing_app_dir_logs_and_continues(
     assert t.app_config is None
 
 
+@pytest.mark.parametrize(
+    ("env_loc", "arg_loc", "expected"),
+    [
+        (None, None, "europe-west1"),
+        ("us-central1", None, "us-central1"),
+        ("us-central1", "europe-west4", "europe-west4"),
+        ("us-central1", "   ", "us-central1"),
+        ("   ", "   ", "europe-west1"),
+    ],
+)
+@patch("cxas_scrapi.core.traces.GeminiGenerate")
+def test_traces_gemini_location_precedence(
+    mock_gemini_cls: typing.Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: typing.Any,
+    env_loc: str | None,
+    arg_loc: str | None,
+    expected: str,
+) -> None:
+    monkeypatch.setattr(
+        "cxas_scrapi.core.traces.ConversationHistory", MagicMock()
+    )
+    cfg_file = tmp_path / "trace.yaml"
+    cfg_file.write_text("gemini:\n  location: europe-west1\n", encoding="utf-8")
+
+    mock_gem = MagicMock()
+    mock_gem.generate.return_value = "ok"
+    mock_gemini_cls.return_value = mock_gem
+
+    if env_loc is not None:
+        monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", env_loc)
+
+    traces = Traces(
+        app_name="projects/p/locations/eu/apps/a",
+        app_dir=str(tmp_path),
+        trace_config_path=str(cfg_file),
+        gemini_location=arg_loc,
+    )
+    assert traces.gemini_location == expected
+    traces.triage("c1", normalized={"entries": []})
+    assert mock_gemini_cls.call_args.kwargs["location"] == expected
+
+
 def test_init_with_app_dir_loads_app_config(
     tmp_path: typing.Any, monkeypatch: typing.Any
 ) -> None:

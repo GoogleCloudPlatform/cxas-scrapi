@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import typing
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -104,3 +104,17 @@ def test_evaluate_scorecard_on_calibration_set(
 
     df = report.to_dataframe()
     assert len(df) == 2
+
+
+@patch("cxas_scrapi.utils.scorecard_eval_runner.GeminiGenerate")
+def test_scorecard_eval_runner_resolves_gemini_location(
+    mock_gemini_cls: typing.Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    runner = ScorecardEvalRunner(project_id="proj-1", location=None)
+    assert runner.location == "europe-west4"
+    mock_gemini_cls.assert_called_once_with(
+        project_id="proj-1",
+        location="europe-west4",
+        model_name="gemini-2.5-flash",
+    )

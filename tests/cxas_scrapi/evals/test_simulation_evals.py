@@ -1636,6 +1636,7 @@ def test_simulation_evals_init_with_rate_limiter_and_deployment_id(
         app_name,
         deployment_id=deployment_id,
         rate_limiter=mock_rate_limiter,
+        gemini_location="global",
     )
 
 
@@ -3954,3 +3955,47 @@ def test_inconclusive_reason_ignores_skipped_tool_expectations_without_llm_expec
         )
     }
     assert SimulationEvals._inconclusive_reason(res, declared) is None
+
+
+@pytest.mark.parametrize(
+    ("init_kwargs", "expected_loc"),
+    [
+        ({}, "europe-west4"),
+        ({"vertex_location": "europe-west1"}, "europe-west1"),
+        (
+            {
+                "vertex_location": "europe-west1",
+                "gemini_location": "us-central1",
+            },
+            "us-central1",
+        ),
+    ],
+)
+@patch("cxas_scrapi.evals.simulation_evals.Sessions")
+def test_simulation_evals_resolves_gemini_location_and_backwards_compat(
+    mock_sessions: typing.Any,
+    init_kwargs: dict[str, str],
+    expected_loc: str,
+    monkeypatch: typing.Any,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "europe-west4")
+    app_name = "projects/test/locations/eu/apps/123-abc"
+    with (
+        patch("cxas_scrapi.evals.simulation_evals.GeminiGenerate") as mock_gem,
+        patch("cxas_scrapi.core.apps.AgentServiceClient"),
+    ):
+        evals = SimulationEvals(app_name=app_name, **init_kwargs)
+
+    assert evals.gemini_location == expected_loc
+    assert evals.vertex_location == expected_loc
+    mock_gem.assert_called_once_with(
+        project_id="test",
+        location=expected_loc,
+        credentials=evals.creds,
+    )
+    mock_sessions.assert_called_once_with(
+        app_name,
+        deployment_id=None,
+        rate_limiter=None,
+        gemini_location=expected_loc,
+    )

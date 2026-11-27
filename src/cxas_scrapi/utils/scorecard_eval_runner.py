@@ -23,7 +23,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 import cxas_scrapi.utils.scorecard_template_manager as template_manager
-from cxas_scrapi.utils.gemini import GeminiGenerate
+from cxas_scrapi.utils.gemini import GeminiGenerate, resolve_gemini_location
 
 
 class QuestionEvalOutput(BaseModel):
@@ -98,17 +98,21 @@ class ScorecardEvalRunner:
     def __init__(
         self,
         project_id: str = "default-project",
-        location: str = "global",
+        location: str | None = None,
         model_name: str = "gemini-2.5-flash",
         gemini_client: GeminiGenerate | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initializes ScorecardEvalRunner.
+
+        `location` defaults to `GOOGLE_CLOUD_LOCATION` or `'global'`.
+        """
         self.project_id = project_id
-        self.location = location
+        self.location = resolve_gemini_location(location)
         self.model_name = model_name
         self.gemini_client = gemini_client or GeminiGenerate(
             project_id=project_id,
-            location=location,
+            location=self.location,
             model_name=model_name,
             **kwargs,
         )
