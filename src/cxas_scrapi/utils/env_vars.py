@@ -886,6 +886,21 @@ def _detect_default_openapi_schema_placeholder(
     return None
 
 
+def _read_schema_file_if_placeholder(
+    root: Path, schema_val: str
+) -> Path | None:
+    if "\n" in schema_val:
+        return None
+    candidate_path = root / schema_val
+    if candidate_path.is_symlink() or not candidate_path.is_file():
+        return None
+    try:
+        raw = candidate_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return candidate_path if ENV_VAR_PLACEHOLDER in raw else None
+
+
 def _detect_openapi_schema_placeholder(
     root: Path,
     category: str,
@@ -900,29 +915,25 @@ def _detect_openapi_schema_placeholder(
         if category == "toolsets"
         else ("openApiTool", "open_api_tool")
     )
+    has_explicit_schema = False
     for oa_key in oa_candidates:
         oa = data.get(oa_key)
         if not isinstance(oa, dict):
             continue
         schema_key = _find_dict_key(oa, "openApiSchema")
-        if schema_key is None:
-            continue
-        schema_val = oa.get(schema_key)
+        schema_val = oa.get(schema_key) if schema_key is not None else None
         if not isinstance(schema_val, str) or not schema_val.strip():
             continue
+        has_explicit_schema = True
         if schema_val == ENV_VAR_PLACEHOLDER:
             return None
         if ENV_VAR_PLACEHOLDER in schema_val:
             return (oa_key, "url"), None, True
-        if "\n" not in schema_val:
-            candidate_path = root / schema_val
-            if not candidate_path.is_symlink() and candidate_path.is_file():
-                try:
-                    raw = candidate_path.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError):
-                    return None
-                if ENV_VAR_PLACEHOLDER in raw:
-                    return (oa_key, "url"), candidate_path, False
+        hit_path = _read_schema_file_if_placeholder(root, schema_val)
+        if hit_path is not None:
+            return (oa_key, "url"), hit_path, False
+    if has_explicit_schema:
+        return None
     return _detect_default_openapi_schema_placeholder(root, category, entry)
 
 
@@ -951,9 +962,14 @@ def collect_tool_and_toolset_env_var_placeholders(
             )
             raw_paths: list[tuple[tuple[str | int, ...], bool]] = []
             _collect_placeholders_from_dict(data, cat_desc, (), raw_paths)
-            seen_paths: set[tuple[str | int, ...]] = set()
+            seen_targets: set[
+                tuple[tuple[str | int, ...], Path | None, bool]
+            ] = set()
             for field_path, is_list in raw_paths:
-                seen_paths.add(field_path)
+                target_key = (field_path, None, False)
+                if target_key in seen_targets:
+                    continue
+                seen_targets.add(target_key)
                 found.append(
                     ResourceEnvPlaceholder(
                         category=category,
@@ -971,7 +987,9 @@ def collect_tool_and_toolset_env_var_placeholders(
             )
             if oa_hit is not None:
                 oa_url_path, schema_path, is_inline = oa_hit
-                if oa_url_path not in seen_paths:
+                target_key = (oa_url_path, schema_path, is_inline)
+                if target_key not in seen_targets:
+                    seen_targets.add(target_key)
                     found.append(
                         ResourceEnvPlaceholder(
                             category=category,
@@ -1103,6 +1121,19 @@ def _validate_resolved_string(
                 ),
             )
     return None
+
+
+def _dedupe_env_issues(
+    issues: list[ResourceEnvIssue],
+) -> list[ResourceEnvIssue]:
+    seen: set[tuple[bool, Path | None, str]] = set()
+    unique: list[ResourceEnvIssue] = []
+    for issue in issues:
+        key = (issue.is_env_file_issue, issue.manifest_path, issue.message)
+        if key not in seen:
+            seen.add(key)
+            unique.append(issue)
+    return unique
 
 
 def validate_tool_and_toolset_env_vars(
@@ -1241,7 +1272,11 @@ def validate_tool_and_toolset_env_vars(
         resolutions.append((ph, raw_val))
         resolved_labels.append(f"{ph.label}.{field_dotted}")
 
-    return resolutions, resolved_labels, issues
+    return (
+        resolutions,
+        list(dict.fromkeys(resolved_labels)),
+        _dedupe_env_issues(issues),
+    )
 
 
 def resolve_tool_and_toolset_env_vars_in_dir(
