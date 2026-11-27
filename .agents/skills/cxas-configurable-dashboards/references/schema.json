@@ -44,10 +44,11 @@
         },
         "filter": {
           "type": "string",
-          "description": "Optional conversation filter expression"
+          "description": "Optional conversation filter expression, inherited by top-level tab containers that omit filter"
         },
         "date_range": {
-          "$ref": "#/$defs/date_range"
+          "$ref": "#/$defs/date_range",
+          "description": "Default date range for the dashboard, inherited by top-level tab containers that omit date_range"
         },
         "root_container": {
           "$ref": "#/$defs/root_container"
@@ -155,7 +156,7 @@
                 "sql_query": { "type": "string" },
                 "chart_spec": { "type": "object" }
               },
-              "required": ["sql_query", "chart_spec"]
+              "required": ["sql_query"]
             },
             "query_metrics": { "type": "object" }
           }

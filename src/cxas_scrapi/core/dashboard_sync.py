@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import copy
 import difflib
 import json
 import logging
@@ -293,6 +294,23 @@ def _normalize_date_range(dr: dict[str, Any]) -> dict[str, Any]:
     return dr
 
 
+def _api_date_range_to_yaml(dr: dict[str, Any]) -> dict[str, Any]:
+    """Converts API camelCase dateRangeConfig dictionary to YAML snake_case."""
+    rel = dr.get("relativeDateRange") or dr.get("relative")
+    abs_range = dr.get("absoluteDateRange") or dr.get("absolute")
+
+    if rel and isinstance(rel, dict):
+        return {
+            "relative": {
+                "quantity": int(rel.get("quantity", 7)),
+                "unit": str(rel.get("unit", "DAY")).upper(),
+            }
+        }
+    if abs_range and isinstance(abs_range, dict):
+        return {"absolute": copy.deepcopy(abs_range)}
+    return copy.deepcopy(dr)
+
+
 def _normalize_chart(chart_dict: dict[str, Any]) -> dict[str, Any]:
     """Normalizes chart dictionary to API camelCase."""
     vis_type = (
@@ -340,26 +358,27 @@ def _normalize_chart(chart_dict: dict[str, Any]) -> dict[str, Any]:
                 dict(raw_spec) if isinstance(raw_spec, dict) else {}
             )
 
-            # Ensure valid Vega-Lite specification
-            if "$schema" not in spec:
-                spec["$schema"] = (
-                    "https://vega.github.io/schema/vega-lite/v5.json"
-                )
-            if "data" not in spec:
-                spec["data"] = {"values": []}
+            # Ensure valid Vega-Lite specification when a chart spec is present
+            if spec:
+                if "$schema" not in spec:
+                    spec["$schema"] = (
+                        "https://vega.github.io/schema/vega-lite/v5.json"
+                    )
+                if "data" not in spec:
+                    spec["data"] = {"values": []}
 
-            # Enhance default score card text styling if basic
-            if str(vis_type).upper() == "SCORE_CARD":
-                mark = spec.get("mark")
-                if mark == "text":
-                    spec["mark"] = {
-                        "type": "text",
-                        "fontSize": 28,
-                        "fontWeight": 400,
-                        "align": "center",
-                        "baseline": "middle",
-                        "font": "Google Sans",
-                    }
+                # Enhance default score card text styling if basic
+                if str(vis_type).upper() == "SCORE_CARD":
+                    mark = spec.get("mark")
+                    if mark == "text":
+                        spec["mark"] = {
+                            "type": "text",
+                            "fontSize": 28,
+                            "fontWeight": 400,
+                            "align": "center",
+                            "baseline": "middle",
+                            "font": "Google Sans",
+                        }
 
             req_type = (
                 "type.googleapis.com/google.cloud.contactcenterinsights.v1."
@@ -477,9 +496,8 @@ def yaml_dashboard_to_api_payload(
         "displayName": display_name,
     }
 
-    desc = dashboard_dict.get("description")
-    if desc:
-        payload["description"] = desc
+    if dashboard_dict.get("description") is not None:
+        payload["description"] = dashboard_dict["description"]
 
     filt = dashboard_dict.get("filter")
     if filt:
@@ -496,6 +514,21 @@ def yaml_dashboard_to_api_payload(
     )
     if root_c and isinstance(root_c, dict):
         payload["rootContainer"] = _normalize_container(root_c)
+        # Propagate default dateRangeConfig and filter to top-level tab
+        # containers that do not specify an override. CCAI Insights drops
+        # top-level Dashboard.filter and Dashboard.dateRangeConfig on storage
+        # and reads each tab container's own settings (defaulting unset tab
+        # date ranges to 1 WEEK).
+        inherited_dr = payload.get("dateRangeConfig")
+        inherited_filter = payload.get("filter")
+        for widget in payload["rootContainer"].get("widgets", []):
+            tab_container = widget.get("container")
+            if not isinstance(tab_container, dict):
+                continue
+            if inherited_dr and "dateRangeConfig" not in tab_container:
+                tab_container["dateRangeConfig"] = copy.deepcopy(inherited_dr)
+            if inherited_filter and "filter" not in tab_container:
+                tab_container["filter"] = inherited_filter
 
     return str(dash_id), payload
 
@@ -527,11 +560,53 @@ def api_dashboard_to_yaml_dashboard(api_dash: dict[str, Any]) -> dict[str, Any]:
     if "filter" in api_dash:
         yaml_dash["filter"] = api_dash["filter"]
 
-    if "dateRangeConfig" in api_dash:
+    if isinstance(api_dash.get("dateRangeConfig"), dict):
+        yaml_dash["date_range"] = _api_date_range_to_yaml(
+            api_dash["dateRangeConfig"]
+        )
+    elif "dateRangeConfig" in api_dash:
         yaml_dash["date_range"] = api_dash["dateRangeConfig"]
 
     if "rootContainer" in api_dash:
-        yaml_dash["root_container"] = api_dash["rootContainer"]
+        root_copy = copy.deepcopy(api_dash["rootContainer"])
+        if isinstance(root_copy, dict):
+            tabs = [
+                w.get("container")
+                for w in root_copy.get("widgets", [])
+                if isinstance(w, dict) and isinstance(w.get("container"), dict)
+            ]
+            for t in tabs:
+                if "dateRangeConfig" in t:
+                    raw_tab_dr = t.pop("dateRangeConfig")
+                    if isinstance(raw_tab_dr, dict) and raw_tab_dr:
+                        t["date_range"] = _api_date_range_to_yaml(raw_tab_dr)
+                elif isinstance(t.get("date_range"), dict) and t["date_range"]:
+                    t["date_range"] = _api_date_range_to_yaml(t["date_range"])
+
+            if tabs:
+                first_filter = tabs[0].get("filter")
+                if (
+                    "filter" not in yaml_dash
+                    and isinstance(first_filter, str)
+                    and first_filter
+                    and all(t.get("filter") == first_filter for t in tabs)
+                ):
+                    yaml_dash["filter"] = first_filter
+                    for t in tabs:
+                        t.pop("filter", None)
+
+                first_dr = tabs[0].get("date_range")
+                if (
+                    "date_range" not in yaml_dash
+                    and isinstance(first_dr, dict)
+                    and first_dr
+                    and all(t.get("date_range") == first_dr for t in tabs)
+                ):
+                    yaml_dash["date_range"] = first_dr
+                    for t in tabs:
+                        t.pop("date_range", None)
+
+        yaml_dash["root_container"] = root_copy
 
     return yaml_dash
 
@@ -695,11 +770,16 @@ def diff_dashboards(
 
             if payload.get("displayName") != remote.get("displayName"):
                 changed_fields.append("displayName")
-            if payload.get("description") and payload.get(
-                "description"
-            ) != remote.get("description"):
+            if (payload.get("description") or "") != (
+                remote.get("description") or ""
+            ):
+                # Send "" explicitly so UpdateDashboard clears remote text.
+                payload.setdefault("description", "")
                 changed_fields.append("description")
 
+            # CCAI Insights UpdateDashboard only accepts displayName,
+            # description, and rootContainer in updateMask, and persists
+            # filter and dateRangeConfig on tab containers inside rootContainer.
             norm_local_root = _strip_container_server_fields(
                 payload.get("rootContainer")
             )

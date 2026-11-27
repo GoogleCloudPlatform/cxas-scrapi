@@ -362,7 +362,9 @@ def test_api_dashboard_to_yaml_dashboard() -> None:
     assert yaml_dash["display_name"] == "My Dashboard"
     assert yaml_dash["description"] == "A test dashboard"
     assert yaml_dash["filter"] == "agent_id != ''"
-    assert "date_range" in yaml_dash
+    assert yaml_dash["date_range"] == {
+        "relative": {"quantity": 7, "unit": "DAY"}
+    }
     assert "root_container" in yaml_dash
     assert "createTime" not in yaml_dash
 
@@ -828,3 +830,331 @@ def test_validation_deep_edge_cases() -> None:
     )
     assert any("Container must be a dictionary" in e for e in errors)
     assert any("Chart must be a dictionary" in e for e in errors)
+
+
+def test_yaml_dashboard_propagates_root_date_range_and_filter_to_tabs() -> None:
+    """Top-level tabs inherit dashboard date_range and filter by default."""
+    yaml_dict = {
+        "dashboard_id": "exec_kpis",
+        "display_name": "Executive KPIs",
+        "filter": 'medium="PHONE_CALL"',
+        "date_range": {"relative": {"quantity": 30, "unit": "day"}},
+        "root_container": {
+            "display_name": "Root",
+            "widgets": [
+                {
+                    "container": {
+                        "display_name": "Inherited Tab",
+                        "widgets": [
+                            {
+                                "container": {
+                                    "display_name": "Nested Group",
+                                    "widgets": [],
+                                }
+                            }
+                        ],
+                    }
+                },
+                {
+                    "container": {
+                        "display_name": "Override Tab",
+                        "filter": 'medium="CHAT"',
+                        "date_range": {
+                            "relative": {"quantity": 7, "unit": "day"}
+                        },
+                        "widgets": [],
+                    }
+                },
+            ],
+        },
+    }
+
+    _, payload = yaml_dashboard_to_api_payload(yaml_dict)
+    expected_root_dr = {
+        "relativeDateRange": {"quantity": 30, "unit": "DAY"},
+    }
+    assert payload["dateRangeConfig"] == expected_root_dr
+    assert payload["filter"] == 'medium="PHONE_CALL"'
+
+    tabs = payload["rootContainer"]["widgets"]
+    inherited_tab = tabs[0]["container"]
+    override_tab = tabs[1]["container"]
+
+    assert inherited_tab["dateRangeConfig"] == expected_root_dr
+    assert inherited_tab["dateRangeConfig"] is not payload["dateRangeConfig"]
+    assert inherited_tab["filter"] == 'medium="PHONE_CALL"'
+    # Nested containers inside a tab must not receive redundant root settings
+    nested_group = inherited_tab["widgets"][0]["container"]
+    assert "dateRangeConfig" not in nested_group
+    assert "filter" not in nested_group
+
+    # Explicit per-tab settings override the dashboard-level defaults
+    assert override_tab["dateRangeConfig"] == {
+        "relativeDateRange": {"quantity": 7, "unit": "DAY"},
+    }
+    assert override_tab["filter"] == 'medium="CHAT"'
+
+
+def test_diff_dashboards_root_date_range_roundtrip_and_change() -> None:
+    """Inherited tab settings stay in sync and update via rootContainer."""
+    local_sync = {
+        "dashboards": [
+            {
+                "dashboard_id": "exec_kpis",
+                "display_name": "Executive KPIs",
+                "filter": 'medium="PHONE_CALL"',
+                "date_range": {"relative": {"quantity": 30, "unit": "DAY"}},
+                "root_container": {
+                    "widgets": [
+                        {
+                            "container": {
+                                "display_name": "Overview",
+                                "widgets": [],
+                            }
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+    # Simulate real CCAI Insights GET/LIST response where top-level filter and
+    # dateRangeConfig are omitted on read and stored on tab containers.
+    remote = [
+        {
+            "name": "projects/p/locations/l/dashboards/exec_kpis",
+            "displayName": "Executive KPIs",
+            "rootContainer": {
+                "widgets": [
+                    {
+                        "container": {
+                            "containerId": "tab-0",
+                            "displayName": "Overview",
+                            "filter": 'medium="PHONE_CALL"',
+                            "dateRangeConfig": {
+                                "relativeDateRange": {
+                                    "quantity": "30",
+                                    "unit": "DAY",
+                                }
+                            },
+                            "widgets": [],
+                        }
+                    }
+                ]
+            },
+        }
+    ]
+
+    diff_same = diff_dashboards(local_sync, remote)
+    assert diff_same["to_update"] == []
+    assert diff_same["unchanged"] == ["exec_kpis"]
+
+    local_changed = {
+        "dashboards": [
+            {
+                **local_sync["dashboards"][0],
+                "date_range": {"relative": {"quantity": 14, "unit": "DAY"}},
+            }
+        ]
+    }
+    diff_changed = diff_dashboards(local_changed, remote)
+    assert len(diff_changed["to_update"]) == 1
+    changed_fields = diff_changed["to_update"][0][2]
+    assert changed_fields == ["rootContainer"]
+
+
+def test_diff_dashboards_clears_description_and_preserves_empty_chart_spec() -> (
+    None
+):
+    """Clearing description updates remote and omitted chart_spec stays empty."""
+    local_data = {
+        "dashboards": [
+            {
+                "dashboard_id": "exec_kpis",
+                "display_name": "Executive KPIs",
+                "description": "",
+                "root_container": {
+                    "widgets": [
+                        {
+                            "container": {
+                                "display_name": "Overview",
+                                "widgets": [
+                                    {
+                                        "chart": {
+                                            "display_name": "SQL Only",
+                                            "chart_visualization_type": "TABLE",
+                                            "data_source": {
+                                                "generative_insights": {
+                                                    "sql_query": "SELECT 1 FROM {INSIGHT_DASH_VIEW}",
+                                                }
+                                            },
+                                        }
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+    remote = [
+        {
+            "name": "projects/p/locations/l/dashboards/exec_kpis",
+            "displayName": "Executive KPIs",
+            "description": "Stale description",
+            "rootContainer": {
+                "widgets": [
+                    {
+                        "container": {
+                            "displayName": "Overview",
+                            "widgets": [
+                                {
+                                    "chart": {
+                                        "displayName": "SQL Only",
+                                        "chartVisualizationType": "TABLE",
+                                        "dataSource": {
+                                            "generativeInsights": {
+                                                "sqlQuery": "SELECT 1 FROM {INSIGHT_DASH_VIEW}",
+                                                "chartSpec": {},
+                                                "request": {
+                                                    "@type": "type.googleapis.com/google.cloud.contactcenterinsights.v1.GenerativeInsightsRequest"
+                                                },
+                                            }
+                                        },
+                                    }
+                                }
+                            ],
+                        }
+                    }
+                ]
+            },
+        }
+    ]
+
+    diff = diff_dashboards(local_data, remote)
+    assert len(diff["to_update"]) == 1
+    _, updated_payload, changed_fields, _ = diff["to_update"][0]
+    assert changed_fields == ["description"]
+    assert updated_payload["description"] == ""
+    chart_spec = updated_payload["rootContainer"]["widgets"][0]["container"][
+        "widgets"
+    ][0]["chart"]["dataSource"]["generativeInsights"]["chartSpec"]
+    assert chart_spec == {}
+
+
+def test_api_dashboard_to_yaml_hoists_uniform_tab_settings() -> None:
+    """Pulling a dashboard hoists uniform tab filter and date_range to root."""
+    api_dash = {
+        "name": "projects/p/locations/l/dashboards/pulled",
+        "displayName": "Pulled Dash",
+        "rootContainer": {
+            "widgets": [
+                {
+                    "container": {
+                        "displayName": "Tab 1",
+                        "filter": 'medium="PHONE_CALL"',
+                        "dateRangeConfig": {
+                            "relativeDateRange": {
+                                "quantity": "14",
+                                "unit": "DAY",
+                            }
+                        },
+                        "widgets": [],
+                    }
+                },
+                {
+                    "container": {
+                        "displayName": "Tab 2",
+                        "filter": 'medium="PHONE_CALL"',
+                        "dateRangeConfig": {
+                            "relativeDateRange": {
+                                "quantity": 14,
+                                "unit": "DAY",
+                            }
+                        },
+                        "widgets": [],
+                    }
+                },
+            ]
+        },
+    }
+    pulled = api_dashboard_to_yaml_dashboard(api_dash)
+    assert pulled["filter"] == 'medium="PHONE_CALL"'
+    assert pulled["date_range"] == {"relative": {"quantity": 14, "unit": "DAY"}}
+    for tab_widget in pulled["root_container"]["widgets"]:
+        assert "filter" not in tab_widget["container"]
+        assert "date_range" not in tab_widget["container"]
+        assert "dateRangeConfig" not in tab_widget["container"]
+    assert validate_dashboards_dict({"dashboards": [pulled]}) == []
+    # Original input dict must remain untouched
+    assert (
+        "dateRangeConfig"
+        in api_dash["rootContainer"]["widgets"][0]["container"]
+    )
+
+
+def test_api_dashboard_to_yaml_preserves_non_uniform_tab_settings() -> None:
+    """Mismatched or missing tab settings stay on tabs in YAML snake_case."""
+    api_dash = {
+        "name": "projects/p/locations/l/dashboards/mixed",
+        "displayName": "Mixed Tabs Dash",
+        "rootContainer": {
+            "widgets": [
+                {
+                    "container": {
+                        "displayName": "Tab 1",
+                        "filter": 'medium="PHONE_CALL"',
+                        "dateRangeConfig": {
+                            "relativeDateRange": {
+                                "quantity": "14",
+                                "unit": "DAY",
+                            }
+                        },
+                        "widgets": [],
+                    }
+                },
+                {
+                    "container": {
+                        "displayName": "Tab 2",
+                        "filter": 'medium="CHAT"',
+                        "dateRangeConfig": {
+                            "absoluteDateRange": {
+                                "startTime": "2026-01-01T00:00:00Z",
+                                "endTime": "2026-01-31T23:59:59Z",
+                            }
+                        },
+                        "widgets": [],
+                    }
+                },
+                {
+                    "container": {
+                        "displayName": "Tab 3",
+                        "widgets": [],
+                    }
+                },
+            ]
+        },
+    }
+    pulled = api_dashboard_to_yaml_dashboard(api_dash)
+    assert "filter" not in pulled
+    assert "date_range" not in pulled
+
+    pulled_tabs = [w["container"] for w in pulled["root_container"]["widgets"]]
+    assert pulled_tabs[0]["filter"] == 'medium="PHONE_CALL"'
+    assert pulled_tabs[0]["date_range"] == {
+        "relative": {"quantity": 14, "unit": "DAY"}
+    }
+    assert "dateRangeConfig" not in pulled_tabs[0]
+
+    assert pulled_tabs[1]["filter"] == 'medium="CHAT"'
+    assert pulled_tabs[1]["date_range"] == {
+        "absolute": {
+            "startTime": "2026-01-01T00:00:00Z",
+            "endTime": "2026-01-31T23:59:59Z",
+        }
+    }
+    assert "dateRangeConfig" not in pulled_tabs[1]
+
+    assert "filter" not in pulled_tabs[2]
+    assert "date_range" not in pulled_tabs[2]
+    assert validate_dashboards_dict({"dashboards": [pulled]}) == []
