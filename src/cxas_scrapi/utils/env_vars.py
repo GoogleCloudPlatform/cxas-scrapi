@@ -859,9 +859,59 @@ def _collect_placeholders_from_dict(
                         )
 
 
+def _detect_default_openapi_schema_placeholder(
+    root: Path,
+    category: str,
+    entry: str,
+    data: dict[str, Any],
+) -> tuple[tuple[str, str], Path | None, bool] | None:
+    """Check default CES export OpenAPI schema files for ``$env_var``."""
+    default_folder = (
+        "open_api_toolset" if category == "toolsets" else "open_api_tool"
+    )
+    oa_candidates = (
+        ("openApiToolset", "open_api_toolset")
+        if category == "toolsets"
+        else ("openApiTool", "open_api_tool")
+    )
+    default_oa_key = next(
+        (k for k in oa_candidates if isinstance(data.get(k), dict)),
+        oa_candidates[0],
+    )
+    for ext in (".yaml", ".yml"):
+        candidate_path = (
+            root / category / entry / default_folder / f"open_api_schema{ext}"
+        )
+        if candidate_path.is_symlink() or not candidate_path.is_file():
+            continue
+        try:
+            raw = candidate_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if ENV_VAR_PLACEHOLDER in raw:
+            return (default_oa_key, "url"), candidate_path, False
+    return None
+
+
+def _read_schema_file_if_placeholder(
+    root: Path, schema_val: str
+) -> Path | None:
+    if "\n" in schema_val:
+        return None
+    candidate_path = root / schema_val
+    if candidate_path.is_symlink() or not candidate_path.is_file():
+        return None
+    try:
+        raw = candidate_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return candidate_path if ENV_VAR_PLACEHOLDER in raw else None
+
+
 def _detect_openapi_schema_placeholder(
     root: Path,
     category: str,
+    entry: str,
     data: dict[str, Any],
 ) -> tuple[tuple[str, str], Path | None, bool] | None:
     """Return ``((oa_key, 'url'), schema_path, is_inline)`` if OpenAPI schema
@@ -872,30 +922,28 @@ def _detect_openapi_schema_placeholder(
         if category == "toolsets"
         else ("openApiTool", "open_api_tool")
     )
+    has_explicit_schema = False
     for oa_key in oa_candidates:
         oa = data.get(oa_key)
         if not isinstance(oa, dict):
             continue
         schema_key = _find_dict_key(oa, "openApiSchema")
-        if schema_key is None:
-            continue
-        schema_val = oa.get(schema_key)
+        schema_val = oa.get(schema_key) if schema_key is not None else None
         if not isinstance(schema_val, str) or not schema_val.strip():
             continue
+        has_explicit_schema = True
         if schema_val == ENV_VAR_PLACEHOLDER:
             return None
         if ENV_VAR_PLACEHOLDER in schema_val:
             return (oa_key, "url"), None, True
-        if "\n" not in schema_val:
-            candidate_path = root / schema_val
-            if candidate_path.is_file():
-                try:
-                    raw = candidate_path.read_text(encoding="utf-8")
-                except OSError:
-                    return None
-                if ENV_VAR_PLACEHOLDER in raw:
-                    return (oa_key, "url"), candidate_path, False
-    return None
+        hit_path = _read_schema_file_if_placeholder(root, schema_val)
+        if hit_path is not None:
+            return (oa_key, "url"), hit_path, False
+    if has_explicit_schema:
+        return None
+    return _detect_default_openapi_schema_placeholder(
+        root, category, entry, data
+    )
 
 
 def collect_tool_and_toolset_env_var_placeholders(
@@ -913,7 +961,7 @@ def collect_tool_and_toolset_env_var_placeholders(
         for entry, mpath in _iter_category_manifests(root, category):
             try:
                 data = _load_config_file(mpath)
-            except (json.JSONDecodeError, yaml.YAMLError, OSError):
+            except (ValueError, yaml.YAMLError, OSError):
                 continue
             if not isinstance(data, dict):
                 continue
@@ -923,9 +971,14 @@ def collect_tool_and_toolset_env_var_placeholders(
             )
             raw_paths: list[tuple[tuple[str | int, ...], bool]] = []
             _collect_placeholders_from_dict(data, cat_desc, (), raw_paths)
-            seen_paths: set[tuple[str | int, ...]] = set()
+            seen_targets: set[
+                tuple[tuple[str | int, ...], Path | None, bool]
+            ] = set()
             for field_path, is_list in raw_paths:
-                seen_paths.add(field_path)
+                target_key = (field_path, None, False)
+                if target_key in seen_targets:
+                    continue
+                seen_targets.add(target_key)
                 found.append(
                     ResourceEnvPlaceholder(
                         category=category,
@@ -938,10 +991,14 @@ def collect_tool_and_toolset_env_var_placeholders(
                     )
                 )
 
-            oa_hit = _detect_openapi_schema_placeholder(root, category, data)
+            oa_hit = _detect_openapi_schema_placeholder(
+                root, category, entry, data
+            )
             if oa_hit is not None:
                 oa_url_path, schema_path, is_inline = oa_hit
-                if oa_url_path not in seen_paths:
+                target_key = (oa_url_path, schema_path, is_inline)
+                if target_key not in seen_targets:
+                    seen_targets.add(target_key)
                     found.append(
                         ResourceEnvPlaceholder(
                             category=category,
@@ -1073,6 +1130,68 @@ def _validate_resolved_string(
                 ),
             )
     return None
+
+
+def _dedupe_env_issues(
+    issues: list[ResourceEnvIssue],
+) -> list[ResourceEnvIssue]:
+    seen: set[tuple[bool, Path | None, str]] = set()
+    unique: list[ResourceEnvIssue] = []
+    for issue in issues:
+        key = (issue.is_env_file_issue, issue.manifest_path, issue.message)
+        if key not in seen:
+            seen.add(key)
+            unique.append(issue)
+    return unique
+
+
+def _check_shared_openapi_schema_conflicts(
+    resolutions: list[tuple[ResourceEnvPlaceholder, Any]],
+    env_label: str,
+) -> tuple[list[tuple[ResourceEnvPlaceholder, Any]], list[ResourceEnvIssue]]:
+    """Reject shared OpenAPI schema files resolving to distinct URLs."""
+    by_schema: dict[Path, list[tuple[ResourceEnvPlaceholder, str]]] = {}
+    for ph, val in resolutions:
+        if ph.openapi_schema_path is not None:
+            by_schema.setdefault(ph.openapi_schema_path.resolve(), []).append(
+                (ph, str(val))
+            )
+
+    conflict_paths: set[Path] = set()
+    conflict_issues: list[ResourceEnvIssue] = []
+    for resolved_path, entries in by_schema.items():
+        distinct_vals = list(dict.fromkeys(v for _, v in entries))
+        if len(distinct_vals) <= 1:
+            continue
+        conflict_paths.add(resolved_path)
+        labels = ", ".join(sorted({ph.label for ph, _ in entries}))
+        schema_path = entries[0][0].openapi_schema_path
+        assert schema_path is not None
+        conflict_issues.append(
+            ResourceEnvIssue(
+                is_env_file_issue=False,
+                manifest_path=schema_path,
+                message=(
+                    f"Shared OpenAPI schema '{schema_path.name}' is referenced "
+                    f"by [{labels}] with conflicting URLs in {env_label}: "
+                    f"{distinct_vals}"
+                ),
+                fix=(
+                    "Give each tool/toolset its own OpenAPI schema file or "
+                    f"set the same URL in {env_label}"
+                ),
+            )
+        )
+
+    if not conflict_paths:
+        return resolutions, []
+    filtered = [
+        (ph, val)
+        for ph, val in resolutions
+        if ph.openapi_schema_path is None
+        or ph.openapi_schema_path.resolve() not in conflict_paths
+    ]
+    return filtered, conflict_issues
 
 
 def validate_tool_and_toolset_env_vars(
@@ -1211,7 +1330,16 @@ def validate_tool_and_toolset_env_vars(
         resolutions.append((ph, raw_val))
         resolved_labels.append(f"{ph.label}.{field_dotted}")
 
-    return resolutions, resolved_labels, issues
+    resolutions, conflict_issues = _check_shared_openapi_schema_conflicts(
+        resolutions, env_label
+    )
+    issues.extend(conflict_issues)
+
+    return (
+        resolutions,
+        list(dict.fromkeys(resolved_labels)),
+        _dedupe_env_issues(issues),
+    )
 
 
 def resolve_tool_and_toolset_env_vars_in_dir(
@@ -1253,12 +1381,17 @@ def resolve_tool_and_toolset_env_vars_in_dir(
         raise ValueError("; ".join(i.message for i in issues))
 
     by_manifest: dict[Path, list[tuple[ResourceEnvPlaceholder, Any]]] = {}
+    written_schemas: set[Path] = set()
     for ph, val in resolutions:
         if ph.openapi_schema_path is not None:
-            raw = ph.openapi_schema_path.read_text(encoding="utf-8")
-            ph.openapi_schema_path.write_text(
-                raw.replace(ENV_VAR_PLACEHOLDER, str(val)), encoding="utf-8"
-            )
+            resolved_schema = ph.openapi_schema_path.resolve()
+            if resolved_schema not in written_schemas:
+                written_schemas.add(resolved_schema)
+                raw = ph.openapi_schema_path.read_text(encoding="utf-8")
+                ph.openapi_schema_path.write_text(
+                    raw.replace(ENV_VAR_PLACEHOLDER, str(val)),
+                    encoding="utf-8",
+                )
         else:
             by_manifest.setdefault(ph.manifest_path, []).append((ph, val))
 

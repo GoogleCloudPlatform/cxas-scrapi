@@ -32,11 +32,29 @@ from cxas_scrapi.utils.env_vars import (
     validate_value_for_schema,
 )
 from cxas_scrapi.utils.linter import (
+    APP_CONFIG_NAMES,
     LintContext,
     LintResult,
     Rule,
     Severity,
+    get_field,
+    is_voice_app,
+    parse_config_content,
+    rel_to_project,
     rule,
+)
+
+_AUDIO_CONFIG_KEYS = ("audioProcessingConfig", "audio_processing_config")
+_SYNTHESIZE_SPEECH_KEYS = (
+    "synthesizeSpeechConfigs",
+    "synthesize_speech_configs",
+)
+_LANGUAGE_SETTINGS_KEYS = ("languageSettings", "language_settings")
+_DEFAULT_LANG_KEYS = ("defaultLanguageCode", "default_language_code")
+_SUPPORTED_LANG_KEYS = ("supportedLanguageCodes", "supported_language_codes")
+_MULTILINGUAL_KEYS = (
+    "enableMultilingualSupport",
+    "enable_multilingual_support",
 )
 
 
@@ -1228,4 +1246,132 @@ class ToolAndToolsetEnvVars(Rule):
                     fix=issue.fix,
                 )
             )
+        return results
+
+
+def _extract_supported_languages(ls: dict[str, Any]) -> list[str]:
+    """Return deduplicated non-empty supportedLanguageCodes in order."""
+    raw = get_field(ls, _SUPPORTED_LANG_KEYS)
+    if not isinstance(raw, list):
+        return []
+    codes = [
+        item.strip() for item in raw if isinstance(item, str) and item.strip()
+    ]
+    return list(dict.fromkeys(codes))
+
+
+def _missing_voice_tts_languages(
+    data: dict[str, Any], supported: list[str]
+) -> list[str]:
+    """Return supported languages lacking a non-empty TTS config entry."""
+    audio_cfg = get_field(data, _AUDIO_CONFIG_KEYS)
+    if not isinstance(audio_cfg, dict):
+        return []
+    tts_cfgs = get_field(audio_cfg, _SYNTHESIZE_SPEECH_KEYS)
+    valid_keys = (
+        {
+            k.strip().lower()
+            for k, v in tts_cfgs.items()
+            if isinstance(k, str) and k.strip() and isinstance(v, dict) and v
+        }
+        if isinstance(tts_cfgs, dict)
+        else set()
+    )
+    return [lang for lang in supported if lang.lower() not in valid_keys]
+
+
+@rule("config")
+class VoiceLanguageTtsParity(Rule):
+    """Validates languageSettings parity and voice TTS coverage."""
+
+    id = "A019"
+    name = "voice-language-tts-parity"
+    description = (
+        "Validates languageSettings default/supported/multilingual parity "
+        "and voice synthesizeSpeechConfigs coverage"
+    )
+    default_severity = Severity.ERROR
+    target = "app_config"
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if file_path.name not in APP_CONFIG_NAMES:
+            return []
+
+        data = parse_config_content(file_path, content)
+        if data is None:
+            return []
+
+        ls = get_field(data, _LANGUAGE_SETTINGS_KEYS)
+        if not isinstance(ls, dict):
+            return []
+
+        rel = rel_to_project(file_path, context)
+        raw_default = get_field(ls, _DEFAULT_LANG_KEYS)
+        default_lang = (
+            raw_default.strip()
+            if isinstance(raw_default, str) and raw_default.strip()
+            else None
+        )
+        supported = _extract_supported_languages(ls)
+        supported_lower = {code.lower() for code in supported}
+        multilingual = get_field(ls, _MULTILINGUAL_KEYS)
+
+        results: list[LintResult] = []
+        if (
+            default_lang
+            and supported
+            and default_lang.lower() not in supported_lower
+        ):
+            results.append(
+                self.make_result(
+                    file=rel,
+                    severity=Severity.ERROR,
+                    message=(
+                        f"defaultLanguageCode '{default_lang}' is not in "
+                        f"supportedLanguageCodes {supported}."
+                    ),
+                    fix=(
+                        f"Add '{default_lang}' to supportedLanguageCodes or "
+                        "align defaultLanguageCode."
+                    ),
+                )
+            )
+
+        if len(supported) > 1 and multilingual is False:
+            results.append(
+                self.make_result(
+                    file=rel,
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Multiple supportedLanguageCodes ({supported}) "
+                        "declared while enableMultilingualSupport is false."
+                    ),
+                    fix=(
+                        "Set enableMultilingualSupport to true or reduce "
+                        "supportedLanguageCodes to a single language."
+                    ),
+                )
+            )
+
+        if supported and is_voice_app(context):
+            results.extend(
+                self.make_result(
+                    file=rel,
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Voice app language '{lang}' is missing "
+                        "a valid entry in audioProcessingConfig."
+                        "synthesizeSpeechConfigs."
+                    ),
+                    fix=(
+                        f"Add a '{lang}' voice config under "
+                        "audioProcessingConfig."
+                        "synthesizeSpeechConfigs."
+                    ),
+                )
+                for lang in _missing_voice_tts_languages(data, supported)
+            )
+
         return results

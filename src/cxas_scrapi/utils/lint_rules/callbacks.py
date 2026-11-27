@@ -23,11 +23,13 @@ import warnings
 from pathlib import Path
 
 from cxas_scrapi.utils.linter import (
+    LIVE_AUDIO_MODELS,
     LintContext,
     LintResult,
     Rule,
     Severity,
     rule,
+    safe_ast_parse,
 )
 
 CALLBACK_SIGNATURES = {
@@ -497,3 +499,150 @@ class InvalidPythonSyntax(Rule):
                 )
             ]
         return []
+
+
+_VOICE_MUTATING_METHODS = frozenset(
+    {
+        "hide_tool",
+        "append",
+        "extend",
+        "insert",
+        "pop",
+        "remove",
+        "clear",
+        "update",
+        "setdefault",
+    }
+)
+
+
+class _VoiceRequestMutationVisitor(ast.NodeVisitor):
+    """AST visitor detecting mutations to ``before_model_callback`` request."""
+
+    def __init__(self) -> None:
+        self.mutations: list[ast.AST] = []
+        self.llm_req_name = "llm_request"
+        self.alias_names: set[str] = set()
+
+    def _visit_fn(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        prev_name = self.llm_req_name
+        prev_aliases = set(self.alias_names)
+        all_pos = list(node.args.posonlyargs) + list(node.args.args)
+        if node.name == "before_model_callback" and len(all_pos) >= 2:  # noqa: PLR2004
+            self.llm_req_name = all_pos[1].arg
+            self.alias_names = set()
+        self.generic_visit(node)
+        self.llm_req_name = prev_name
+        self.alias_names = prev_aliases
+
+    visit_FunctionDef = _visit_fn
+    visit_AsyncFunctionDef = _visit_fn
+
+    def _is_request_expr(
+        self, expr: ast.AST, *, include_aliases: bool = False
+    ) -> bool:
+        while isinstance(expr, (ast.Attribute, ast.Subscript)):
+            expr = expr.value
+        return isinstance(expr, ast.Name) and (
+            expr.id == self.llm_req_name
+            or (include_aliases and expr.id in self.alias_names)
+        )
+
+    def _is_mutation_target(self, target: ast.AST) -> bool:
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return any(self._is_mutation_target(elt) for elt in target.elts)
+        if isinstance(target, ast.Starred):
+            return self._is_mutation_target(target.value)
+        if isinstance(target, (ast.Attribute, ast.Subscript)):
+            return self._is_request_expr(target.value, include_aliases=True)
+        return False
+
+    def _track_alias(self, alias: str, value: ast.AST) -> None:
+        if self._is_request_expr(value, include_aliases=True):
+            self.alias_names.add(alias)
+        else:
+            self.alias_names.discard(alias)
+
+    def _is_mutating_call(self, node: ast.Call) -> bool:
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr in _VOICE_MUTATING_METHODS and (
+                self._is_request_expr(node.func.value, include_aliases=True)
+            )
+        return (
+            isinstance(node.func, ast.Name)
+            and node.func.id in {"setattr", "delattr"}
+            and bool(node.args)
+            and self._is_request_expr(node.args[0], include_aliases=True)
+        )
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if any(self._is_mutation_target(t) for t in node.targets):
+            self.mutations.append(node)
+        elif len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            self._track_alias(node.targets[0].id, node.value)
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        if self._is_mutation_target(node.target):
+            self.mutations.append(node)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            if self._is_mutation_target(node.target):
+                self.mutations.append(node)
+            elif isinstance(node.target, ast.Name):
+                self._track_alias(node.target.id, node.value)
+        self.generic_visit(node)
+
+    def visit_Delete(self, node: ast.Delete) -> None:
+        if any(self._is_mutation_target(t) for t in node.targets):
+            self.mutations.append(node)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if self._is_mutating_call(node):
+            self.mutations.append(node)
+        self.generic_visit(node)
+
+
+@rule("callbacks", models=LIVE_AUDIO_MODELS)
+class VoiceBeforeModelToolMutation(Rule):
+    id = "C024"
+    name = "voice-before-model-request-mutation"
+    description = (
+        "Live native-audio voice models ignore before_model llm_request "
+        "mutations"
+    )
+    default_severity = Severity.WARNING
+
+    _MUTATING_METHODS = _VOICE_MUTATING_METHODS
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if _resolve_cb_type(file_path) != "before_model_callbacks":
+            return []
+        tree = safe_ast_parse(content)
+        if tree is None:
+            return []
+
+        visitor = _VoiceRequestMutationVisitor()
+        visitor.visit(tree)
+
+        rel = str(file_path.relative_to(context.project_root))
+        return [
+            self.make_result(
+                file=rel,
+                line=getattr(mutation, "lineno", None),
+                message=(
+                    "Live native-audio voice streaming ignores before_model "
+                    "llm_request mutations"
+                ),
+                fix=(
+                    "Configure channel-specific tools/prompts statically or"
+                    " move dynamic gating into before_tool_callback."
+                ),
+            )
+            for mutation in visitor.mutations
+        ]
