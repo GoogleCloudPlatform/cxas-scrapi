@@ -142,7 +142,7 @@ dashboards:
   - dashboard_id: "agent_performance_kpi"
     display_name: "Agent Performance & Quality KPIs"
     description: "Key operational and quality metrics across human and automated agents."
-    filter: "agent_id != ''"
+    filter: 'medium="PHONE_CALL"'
     date_range:
       relative:
         quantity: 7
@@ -166,9 +166,9 @@ dashboards:
                     generative_insights:
                       sql_query: >-
                         SELECT COUNT(DISTINCT conversation_id) AS total_conversations
-                        FROM conversations
-                        WHERE TRUE
+                        FROM {INSIGHT_DASH_VIEW}
                       chart_spec:
+                        data: {values: []}
                         mark: "text"
                         encoding:
                           text: {field: "total_conversations", type: "quantitative"}
@@ -185,12 +185,15 @@ dashboards:
                       sql_query: >-
                         SELECT
                           ROUND(SAFE_DIVIDE(
-                            COUNTIF(turn_count > 1 AND NOT REGEXP_CONTAINS(labels, 'Escalated')),
-                            COUNT(1)
+                            COUNTIF(
+                              EXISTS(SELECT 1 FROM UNNEST(agent_dimension_metadata) WHERE agent_type = 'AUTOMATED_AGENT')
+                              AND NOT COALESCE(dialogflow_interaction_aggregated_metadata.contains_live_agent_handoff, FALSE)
+                            ),
+                            COUNTIF(EXISTS(SELECT 1 FROM UNNEST(agent_dimension_metadata) WHERE agent_type = 'AUTOMATED_AGENT'))
                           ) * 100, 1) AS containment_percentage
-                        FROM conversations
-                        WHERE TRUE
+                        FROM {INSIGHT_DASH_VIEW}
                       chart_spec:
+                        data: {values: []}
                         mark: "text"
                         encoding:
                           text: {field: "containment_percentage", type: "quantitative"}
@@ -206,14 +209,16 @@ dashboards:
                     generative_insights:
                       sql_query: >-
                         SELECT
-                          issue_category,
+                          issue.issue_display_name AS issue_category,
                           COUNT(1) AS conversation_count
-                        FROM conversations
-                        WHERE issue_category IS NOT NULL
+                        FROM {INSIGHT_DASH_VIEW}
+                        CROSS JOIN UNNEST(issue_dimension_metadata) AS issue
+                        WHERE issue.issue_display_name IS NOT NULL
                         GROUP BY 1
                         ORDER BY conversation_count DESC
                         LIMIT 10
                       chart_spec:
+                        data: {values: []}
                         mark: "bar"
                         encoding:
                           x: {field: "conversation_count", type: "quantitative", title: "Conversations"}
@@ -232,13 +237,15 @@ dashboards:
                     generative_insights:
                       sql_query: >-
                         SELECT
-                          DATE(start_timestamp) AS date,
-                          AVG(qa_score) AS average_score
-                        FROM conversations
-                        WHERE qa_score IS NOT NULL
+                          DATE(conversation_start_time) AS date,
+                          AVG(qa.normalized_score) AS average_score
+                        FROM {INSIGHT_DASH_VIEW}
+                        CROSS JOIN UNNEST(qa_scorecard_results) AS qa
+                        WHERE qa.normalized_score IS NOT NULL
                         GROUP BY 1
                         ORDER BY date ASC
                       chart_spec:
+                        data: {values: []}
                         mark: "line"
                         encoding:
                           x: {field: "date", type: "temporal", title: "Date"}
