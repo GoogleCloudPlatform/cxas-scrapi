@@ -379,6 +379,7 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     fmt = getattr(args, "format", "table")
+    out_path = getattr(args, "out", None)
     out_text = ""
 
     if fmt == "json":
@@ -498,21 +499,16 @@ def trace_transcribe_audio(args: argparse.Namespace) -> None:
             f"[bold]Avg Turn WER:[/bold] {avg_wer_pct}"
         )
         console.print(table)
-        if getattr(args, "out", None):
-            buf = io.StringIO()
-            c_file = Console(file=buf, no_color=True)
-            c_file.print(table)
-            out_text = buf.getvalue()
-        if getattr(args, "out", None):
+        if out_path:
             buf = io.StringIO()
             c_file = Console(file=buf, no_color=True)
             c_file.print(table)
             out_text = buf.getvalue()
 
-    if getattr(args, "out", None) and out_text:
-        with open(args.out, "w") as f:
+    if out_path:
+        with open(out_path, "w", encoding="utf-8") as f:
             f.write(out_text)
-        print(f"Wrote report to {args.out}")
+        print(f"Wrote report to {out_path}")
     elif fmt in ("json", "csv", "md", "markdown"):
         print(out_text)
 
