@@ -1177,7 +1177,22 @@ class ToolAndToolsetEnvVars(Rule):
             return []
 
         app_root = file_path.parent
-        if not collect_tool_and_toolset_env_var_placeholders(app_root):
+        try:
+            placeholders = collect_tool_and_toolset_env_var_placeholders(
+                app_root, strict_schema_paths=True
+            )
+        except ValueError as e:
+            return [
+                self.make_result(
+                    file=_rel_or_str(file_path, context.project_root),
+                    message=str(e),
+                    fix=(
+                        "Use a relative OpenAPI schema path inside the app "
+                        "directory without symlinks"
+                    ),
+                )
+            ]
+        if not placeholders:
             return []
 
         env_path: Path | None = None

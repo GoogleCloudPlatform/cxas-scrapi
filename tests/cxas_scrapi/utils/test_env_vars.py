@@ -31,6 +31,7 @@ from cxas_scrapi.utils.env_vars import (
     preserve_tool_and_toolset_env_vars_on_pull,
     resolve_app_env_variables_in_dir,
     resolve_tool_and_toolset_env_vars_in_dir,
+    validate_tool_and_toolset_env_vars,
     validate_value_for_schema,
 )
 
@@ -867,4 +868,230 @@ def test_preserve_tool_and_toolset_env_vars_on_pull(tmp_path: Path) -> None:
             "supportedInterfaces"
         ][0]["url"]
         == exported_a2a
+    )
+
+
+def test_openapi_schema_path_traversal_and_symlink_rejected_without_touching_external_file(
+    tmp_path: Path,
+) -> None:
+    from cxas_scrapi.utils.lint_rules.config import (  # noqa: PLC0415
+        ToolAndToolsetEnvVars,
+    )
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
+        Discovery,
+        LintConfig,
+        build_context,
+    )
+
+    external_schema = tmp_path / "shared_schema.yaml"
+    original_content = "openapi: 3.0.0\nservers:\n  - url: $env_var\n"
+    external_schema.write_text(original_content, encoding="utf-8")
+
+    env_payload = {
+        "tools": {
+            "api_tool": {"openApiTool": {"url": "https://prod.example.com"}}
+        }
+    }
+
+    cases = [
+        ("relative_parent", "../shared_schema.yaml"),
+        ("nested_parent", "tools/api_tool/../../../shared_schema.yaml"),
+        ("absolute", str(external_schema)),
+        ("symlink_file", "tools/api_tool/schema_link.yaml"),
+        ("symlink_dir", "tools/api_tool/linked_dir/shared_schema.yaml"),
+    ]
+    for case_name, schema_ref in cases:
+        app_dir = tmp_path / f"app_{case_name}"
+        tool_dir = app_dir / "tools" / "api_tool"
+        tool_dir.mkdir(parents=True)
+        (app_dir / "app.json").write_text(
+            json.dumps({"displayName": "Test App"}), encoding="utf-8"
+        )
+        (app_dir / "environment.json").write_text(
+            json.dumps(env_payload), encoding="utf-8"
+        )
+        if case_name == "symlink_file":
+            (tool_dir / "schema_link.yaml").symlink_to(external_schema)
+        elif case_name == "symlink_dir":
+            (tool_dir / "linked_dir").symlink_to(tmp_path)
+
+        (tool_dir / "api_tool.json").write_text(
+            json.dumps(
+                {
+                    "displayName": "api_tool",
+                    "openApiTool": {"openApiSchema": schema_ref},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        # Default passive collection (used by cxas pull) does not crash.
+        assert collect_tool_and_toolset_env_var_placeholders(app_dir) == []
+
+        with pytest.raises(ValueError, match=r"escapes app|Symlinks"):
+            collect_tool_and_toolset_env_var_placeholders(
+                app_dir, strict_schema_paths=True
+            )
+
+        with pytest.raises(ValueError, match=r"escapes app|Symlinks"):
+            resolve_tool_and_toolset_env_vars_in_dir(app_dir)
+
+        _, _, issues = validate_tool_and_toolset_env_vars(app_dir, env_payload)
+        assert len(issues) == 1
+        assert (
+            "escapes app" in issues[0].message
+            or "Symlinks" in issues[0].message
+        )
+
+        rule = ToolAndToolsetEnvVars()
+        discovery = Discovery(app_dir, app_dir / "evals")
+        ctx = build_context(app_dir, LintConfig(), discovery)
+        lint_results = rule.check(
+            app_dir / "app.json", (app_dir / "app.json").read_text("utf-8"), ctx
+        )
+        assert len(lint_results) == 1
+        assert external_schema.read_text(encoding="utf-8") == original_content
+
+
+def test_external_openapi_schema_without_env_var_does_not_break_push_pull_or_package(
+    tmp_path: Path,
+) -> None:
+    from cxas_scrapi.core.packaging import package_app_archive  # noqa: PLC0415
+
+    external_schema = tmp_path / "shared.yaml"
+    plain_content = (
+        "openapi: 3.0.0\nservers:\n  - url: https://shared.example.com\n"
+    )
+    external_schema.write_text(plain_content, encoding="utf-8")
+
+    app_dir = tmp_path / "app"
+    tool_dir = app_dir / "tools" / "plain_api"
+    tool_dir.mkdir(parents=True)
+    (app_dir / "app.json").write_text(
+        json.dumps({"displayName": "Plain App"}), encoding="utf-8"
+    )
+    (tool_dir / "plain_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "plain_api",
+                "openApiTool": {"openApiSchema": "../shared.yaml"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert collect_tool_and_toolset_env_var_placeholders(app_dir) == []
+    assert (
+        collect_tool_and_toolset_env_var_placeholders(
+            app_dir, strict_schema_paths=True
+        )
+        == []
+    )
+    assert validate_tool_and_toolset_env_vars(app_dir, {}) == ([], [], [])
+    assert resolve_tool_and_toolset_env_vars_in_dir(app_dir) == []
+    assert preserve_tool_and_toolset_env_vars_on_pull(app_dir, []) == []
+    zip_path = package_app_archive(app_dir, tmp_path / "plain.zip")
+    assert zip_path.is_file()
+    assert external_schema.read_text(encoding="utf-8") == plain_content
+
+
+def test_openapi_url_and_schema_both_resolved_when_both_use_env_var(
+    tmp_path: Path,
+) -> None:
+    # 1. File-backed openApiSchema + openApiTool.url both using $env_var
+    app_file = tmp_path / "app_file"
+    tool_dir = app_file / "tools" / "orders_api"
+    tool_dir.mkdir(parents=True)
+    schema_rel = "tools/orders_api/schema.yaml"
+    (app_file / schema_rel).write_text(
+        "openapi: 3.0.0\nservers:\n  - url: $env_var\n", encoding="utf-8"
+    )
+    (tool_dir / "orders_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "orders_api",
+                "openApiTool": {
+                    "url": ENV_VAR_PLACEHOLDER,
+                    "openApiSchema": schema_rel,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Missing URL in environment.json must produce 1 deduplicated issue.
+    _, _, missing_issues = validate_tool_and_toolset_env_vars(app_file, {})
+    assert len(missing_issues) == 1
+
+    (app_file / "environment.json").write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "orders_api": {
+                        "openApiTool": {
+                            "url": "https://orders.prod.example.com"
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    resolved = resolve_tool_and_toolset_env_vars_in_dir(app_file)
+    assert resolved == ["orders_api.openApiTool.url"]
+    manifest_after = json.loads(
+        (tool_dir / "orders_api.json").read_text("utf-8")
+    )
+    assert (
+        manifest_after["openApiTool"]["url"]
+        == "https://orders.prod.example.com"
+    )
+    schema_after = (app_file / schema_rel).read_text("utf-8")
+    assert "https://orders.prod.example.com" in schema_after
+    assert ENV_VAR_PLACEHOLDER not in schema_after
+
+    # 2. Inline openApiSchema + openApiTool.url both using $env_var
+    app_inline = tmp_path / "app_inline"
+    inline_dir = app_inline / "tools" / "inline_api"
+    inline_dir.mkdir(parents=True)
+    (inline_dir / "inline_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "inline_api",
+                "openApiTool": {
+                    "url": ENV_VAR_PLACEHOLDER,
+                    "openApiSchema": "openapi: 3.0.0\nservers:\n  - url: $env_var\n",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (app_inline / "environment.json").write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "inline_api": {
+                        "openApiTool": {
+                            "url": "https://inline.prod.example.com"
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    resolved_inline = resolve_tool_and_toolset_env_vars_in_dir(app_inline)
+    assert resolved_inline == ["inline_api.openApiTool.url"]
+    inline_after = json.loads(
+        (inline_dir / "inline_api.json").read_text("utf-8")
+    )
+    assert (
+        inline_after["openApiTool"]["url"] == "https://inline.prod.example.com"
+    )
+    assert (
+        "https://inline.prod.example.com"
+        in inline_after["openApiTool"]["openApiSchema"]
+    )
+    assert (
+        ENV_VAR_PLACEHOLDER not in inline_after["openApiTool"]["openApiSchema"]
     )

@@ -38,6 +38,8 @@ class Deployments(Apps):
         CONTACT_CENTER_AS_A_SERVICE = "CONTACT_CENTER_AS_A_SERVICE"
         FIVE9 = "FIVE9"
         AUDIOCODES = "CONTACT_CENTER_INTEGRATION"
+        WHATSAPP = "WHATSAPP"
+        INSTAGRAM = "INSTAGRAM"
 
     class Modality(Enum):
         CHAT_AND_VOICE = "CHAT_AND_VOICE"
@@ -59,6 +61,23 @@ class Deployments(Apps):
         "high",
         "very_high",
     )
+
+    @classmethod
+    def _resolve_proto_channel_type(cls, channel_type: ChannelType) -> Any:
+        """Map SDK ChannelType to CES protobuf ChannelProfile.ChannelType."""
+        proto_enum = types.common.ChannelProfile.ChannelType
+        resolved = getattr(proto_enum, channel_type.value, None)
+        if resolved is None:
+            supported = sorted(
+                member.name for member in proto_enum if member.name != "UNKNOWN"
+            )
+            raise ValueError(
+                f"ChannelType '{channel_type.value}' is not supported by the "
+                "installed CES protobuf ChannelProfile.ChannelType enum "
+                f"(supported: {supported}). Pass ChannelType.API explicitly "
+                "for API-backed messaging channels."
+            )
+        return resolved
 
     def __init__(
         self,
@@ -257,8 +276,8 @@ class Deployments(Apps):
 
         channel_profile = types.ChannelProfile()
 
-        channel_profile.channel_type = getattr(
-            types.common.ChannelProfile.ChannelType, channel_type.value
+        channel_profile.channel_type = self._resolve_proto_channel_type(
+            channel_type
         )
 
         channel_profile.disable_dtmf = disable_dtmf
@@ -385,8 +404,8 @@ class Deployments(Apps):
                 channel_type = kwargs.pop("channel_type")
                 if isinstance(channel_type, str):
                     channel_type = self.ChannelType[channel_type.upper()]
-                channel_profile.channel_type = getattr(
-                    types.common.ChannelProfile.ChannelType, channel_type.value
+                channel_profile.channel_type = self._resolve_proto_channel_type(
+                    channel_type
                 )
                 mask_paths.append("channel_profile.channel_type")
 

@@ -21,10 +21,12 @@ Ported from ``utils/validator.py`` — the linter is now the single
 validation tool.
 """
 
+import copy
 import json
 import re
 import typing
-from pathlib import Path
+from collections.abc import Mapping
+from pathlib import Path, PurePosixPath
 
 import proto
 import yaml
@@ -76,10 +78,59 @@ _NON_PATH_KEYS: frozenset[str] = frozenset(
 )
 
 
+def _has_symlink_component(base: Path, raw_rel: str) -> bool:
+    cur = base
+    for part in PurePosixPath(raw_rel.replace("\\", "/")).parts:
+        if part in ("", "."):
+            continue
+        cur = cur / part
+        if cur.is_symlink():
+            return True
+    return False
+
+
+def _resolve_confined_file(base_path: str | Path, data: str) -> Path:
+    base_dir = Path(base_path)
+    base_resolved = base_dir.resolve()
+    normalized = data.replace("\\", "/")
+    posix = PurePosixPath(normalized)
+    if (
+        Path(data).is_absolute()
+        or normalized.startswith("/")
+        or ".." in posix.parts
+        or _has_symlink_component(base_dir, data)
+    ):
+        raise ValueError(f"Referenced path '{data}' escapes app directory.")
+    candidate = (base_dir / data).resolve()
+    if not candidate.is_relative_to(base_resolved):
+        raise ValueError(f"Referenced path '{data}' escapes app directory.")
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Referenced file not found: {data}")
+    return candidate
+
+
+def _resolve_unconfined_file(
+    data: str, extra_prefixes: typing.Any, base_path: typing.Any
+) -> Path:
+    if base_path and (alt := Path(base_path) / data).exists():
+        return alt
+    for prefix in extra_prefixes or ():
+        if data.startswith(prefix) and base_path and prefix in base_path:
+            parts = base_path.rsplit(prefix, 1)
+            if parts and (alt := Path(parts[0]) / data).exists():
+                return alt
+    candidate = Path(data)
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(f"Referenced file not found: {data}")
+
+
 def _resolve_paths(
     data: typing.Any,
     extra_prefixes: typing.Any = (),
     base_path: typing.Any = None,
+    *,
+    confine_to_base: bool = False,
 ) -> typing.Any:
     """Recursively replace file-path strings with their contents."""
     if isinstance(data, dict):
@@ -87,49 +138,37 @@ def _resolve_paths(
             k: (
                 v
                 if k in _NON_PATH_KEYS
-                else _resolve_paths(v, extra_prefixes, base_path)
+                else _resolve_paths(
+                    v,
+                    extra_prefixes,
+                    base_path,
+                    confine_to_base=confine_to_base,
+                )
             )
             for k, v in data.items()
         }
-    elif isinstance(data, list):
+    if isinstance(data, list):
         return [
-            _resolve_paths(item, extra_prefixes, base_path) for item in data
+            _resolve_paths(
+                item,
+                extra_prefixes,
+                base_path,
+                confine_to_base=confine_to_base,
+            )
+            for item in data
         ]
-    elif (
+    if (
         isinstance(data, str)
         and "://" not in data
         and not any(c.isspace() for c in data)
         and data.endswith((".txt", ".py", ".yaml", ".json"))
     ):
-        path_to_check = Path(data)
-        resolved = False
-
-        if base_path:
-            alt = Path(base_path) / data
-            if alt.exists():
-                path_to_check = alt
-                resolved = True
-
-        if not resolved and extra_prefixes:
-            for prefix in extra_prefixes:
-                if (
-                    data.startswith(prefix)
-                    and base_path
-                    and prefix in base_path
-                ):
-                    parts = base_path.rsplit(prefix, 1)
-                    if parts:
-                        alt = Path(parts[0]) / data
-                        if alt.exists():
-                            path_to_check = alt
-                            resolved = True
-                            break
-
-        if resolved or path_to_check.exists():
-            with open(path_to_check) as f:
-                return f.read()
-        else:
-            raise FileNotFoundError(f"Referenced file not found: {data}")
+        target = (
+            _resolve_confined_file(base_path, data)
+            if confine_to_base and base_path is not None
+            else _resolve_unconfined_file(data, extra_prefixes, base_path)
+        )
+        return target.read_text(encoding="utf-8")
     return data
 
 
@@ -351,6 +390,216 @@ def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
             types.Evaluation.Scenario,
             ("milestones", "initialEvent", "initial_event"),
         )
+
+
+_PROTO_STRUCT_TYPES: frozenset[str] = frozenset(
+    {"google.protobuf.Struct", "google.protobuf.Value"}
+)
+_RESOLVED_FILE_SUFFIXES: tuple[str, ...] = (".txt", ".py", ".yaml", ".json")
+
+
+def _walk_map_proto_field(
+    val: typing.Any, msg_type: typing.Any, sub_path: str
+) -> list[str]:
+    val_field = msg_type.fields_by_name.get("value")
+    if (
+        val_field is None
+        or val_field.message_type is None
+        or not isinstance(val, Mapping)
+    ):
+        return []
+    errors: list[str] = []
+    for map_k, map_v in val.items():
+        if isinstance(map_v, Mapping):
+            errors.extend(
+                _find_snake_case_proto_keys(
+                    map_v, val_field.message_type, f"{sub_path}.{map_k}"
+                )
+            )
+    return errors
+
+
+def _walk_nested_proto_field(
+    val: typing.Any, field: typing.Any, sub_path: str
+) -> list[str]:
+    msg_type = field.message_type
+    if msg_type is None or msg_type.full_name in _PROTO_STRUCT_TYPES:
+        return []
+    if msg_type.GetOptions().map_entry:
+        return _walk_map_proto_field(val, msg_type, sub_path)
+    is_repeated = getattr(
+        field,
+        "is_repeated",
+        getattr(field, "label", None) == field.LABEL_REPEATED,
+    )
+    if is_repeated and isinstance(val, list):
+        errors: list[str] = []
+        for idx, item in enumerate(val):
+            if isinstance(item, Mapping):
+                errors.extend(
+                    _find_snake_case_proto_keys(
+                        item, msg_type, f"{sub_path}[{idx}]"
+                    )
+                )
+        return errors
+    if isinstance(val, Mapping):
+        return _find_snake_case_proto_keys(val, msg_type, sub_path)
+    return []
+
+
+def _find_snake_case_proto_keys(
+    data: Mapping[str, typing.Any],
+    descriptor: typing.Any,
+    path: str = "app",
+) -> list[str]:
+    """Reject snake_case protobuf field names in CES App configs."""
+    if descriptor is None or descriptor.full_name in _PROTO_STRUCT_TYPES:
+        return []
+    errors: list[str] = []
+    for field in descriptor.fields:
+        if field.name != field.json_name and field.name in data:
+            errors.append(
+                f"Field '{path}.{field.name}' uses snake_case; "
+                f"CES App configs require camelCase '{field.json_name}'."
+            )
+        val = (
+            data[field.json_name]
+            if field.json_name in data
+            else data.get(field.name)
+        )
+        if val is not None:
+            errors.extend(
+                _walk_nested_proto_field(
+                    val, field, f"{path}.{field.json_name}"
+                )
+            )
+    return errors
+
+
+def _check_path_string(
+    value: str, app_root_resolved: Path, path: str
+) -> list[str]:
+    if (
+        "://" in value
+        or any(c.isspace() for c in value)
+        or not value.endswith(_RESOLVED_FILE_SUFFIXES)
+    ):
+        return []
+    normalized = value.replace("\\", "/")
+    posix = PurePosixPath(normalized)
+    if (
+        Path(value).is_absolute()
+        or normalized.startswith("/")
+        or ".." in posix.parts
+        or _has_symlink_component(app_root_resolved, value)
+    ):
+        return [f"Referenced path '{value}' at '{path}' escapes app directory."]
+    resolved = (app_root_resolved / value).resolve()
+    if not resolved.is_relative_to(app_root_resolved):
+        return [f"Referenced path '{value}' at '{path}' escapes app directory."]
+    return []
+
+
+def _check_path_confinement(
+    value: typing.Any, app_root_resolved: Path, path: str = "app"
+) -> list[str]:
+    """Ensure file references in App configs stay within ``app_root``."""
+    if isinstance(value, str):
+        return _check_path_string(value, app_root_resolved, path)
+    if isinstance(value, Mapping):
+        return [
+            err
+            for k, v in value.items()
+            if k not in _NON_PATH_KEYS
+            for err in _check_path_confinement(
+                v, app_root_resolved, f"{path}.{k}"
+            )
+        ]
+    if isinstance(value, list):
+        return [
+            err
+            for idx, item in enumerate(value)
+            for err in _check_path_confinement(
+                item, app_root_resolved, f"{path}[{idx}]"
+            )
+        ]
+    return []
+
+
+def _pop_legacy_app_tools(payload: dict[str, typing.Any]) -> str | None:
+    """Remove app-level custom ``tools`` and validate legacy remote tools."""
+    if "tools" not in payload:
+        return None
+    embedded_tools = payload.pop("tools")
+    if getattr(types, "RemoteAgentTool", None) is not None or not isinstance(
+        embedded_tools, list
+    ):
+        return None
+    for item in embedded_tools:
+        if isinstance(item, dict):
+            err = _validate_legacy_remote_agent_tool(item)
+            if err is not None:
+                return err
+    return None
+
+
+def validate_app_config_data(
+    data: Mapping[str, typing.Any],
+    app_root: Path,
+    *,
+    env_file: Path | None = None,
+) -> list[str]:
+    """Validate an in-memory App config dict against ``types.App`` (V001).
+
+    Returns a list of error strings (empty if valid). Does not mutate ``data``.
+    """
+    from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
+        resolve_env_booleans_for_lint,
+    )
+
+    payload: dict[str, typing.Any] = copy.deepcopy(dict(data))
+    confinement_errors = _check_path_confinement(payload, app_root.resolve())
+    if confinement_errors:
+        return confinement_errors
+
+    try:
+        payload = _resolve_paths(
+            payload, (), str(app_root), confine_to_base=True
+        )
+    except FileNotFoundError as exc:
+        return [f"Missing referenced file: {exc}"]
+    except ValueError as exc:
+        return [str(exc)]
+
+    tool_err = _pop_legacy_app_tools(payload)
+    if tool_err is not None:
+        return [tool_err]
+
+    for key in [k for k in payload if k.startswith("_comment_")]:
+        payload.pop(key)
+
+    snake_errors = _find_snake_case_proto_keys(
+        payload, types.App.pb().DESCRIPTOR
+    )
+    if snake_errors:
+        return snake_errors
+
+    try:
+        _validate_fields(payload, types.App, path="app")
+    except ValueError as exc:
+        return [str(exc)]
+
+    _strip_v1main_only_fields(payload, "app_config")
+    resolve_env_booleans_for_lint(
+        payload, "app", app_root.name, app_root, env_file=env_file
+    )
+
+    try:
+        obj = types.App()
+        json_format.ParseDict(payload, obj._pb, ignore_unknown_fields=False)
+    except (json_format.ParseError, ValueError, TypeError) as exc:
+        return [f"Proto schema validation failed: {exc}"]
+    return []
 
 
 # ── Schema validation rule ───────────────────────────────────────────────

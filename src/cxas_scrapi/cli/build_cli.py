@@ -1,0 +1,152 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""CLI subcommands for Profile-Based Build (`cxas build`) and `cxas package`."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from cxas_scrapi.build.builder import (
+    BuildError,
+    BuildReport,
+    build_all,
+    build_app,
+)
+from cxas_scrapi.build.manifests import ManifestError
+from cxas_scrapi.core.packaging import package_app_archive
+
+if TYPE_CHECKING:
+    import argparse
+
+
+def _print_build_report(report: BuildReport) -> None:
+    print(f"Built {report.profile_id} {report.channel} to {report.out_dir}")
+    for warning in report.warnings:
+        print(f"  Warning: {warning}")
+
+
+def _run_all_builds(args: argparse.Namespace) -> None:
+    reports = build_all(
+        core_dir=args.core_dir,
+        manifests_dir=args.manifests_dir,
+        out_root=args.out,
+        environment=args.env,
+        package_zip=args.zip,
+    )
+    if args.json:
+        print(json.dumps([r.model_dump(mode="json") for r in reports]))
+        return
+    for report in reports:
+        _print_build_report(report)
+
+
+def _run_single_build(args: argparse.Namespace) -> None:
+    if not args.profile or not args.channel:
+        print(
+            "Error: --profile and --channel are required unless "
+            "--all is specified.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    report = build_app(
+        core_dir=args.core_dir,
+        manifests_dir=args.manifests_dir,
+        profile_id=args.profile,
+        channel=args.channel,
+        environment=args.env,
+        out_dir=args.out,
+        package_zip=args.zip,
+    )
+    if args.json:
+        print(report.model_dump_json())
+    else:
+        _print_build_report(report)
+
+
+def app_build(args: argparse.Namespace) -> None:
+    """Build one target or the full profile/channel matrix and emit reports."""
+    try:
+        if args.all:
+            _run_all_builds(args)
+        else:
+            _run_single_build(args)
+    except (BuildError, ManifestError) as exc:
+        print(f"Build Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def app_package(args: argparse.Namespace) -> None:
+    """Package a CES app directory into a deterministic ZIP archive."""
+    raw_app_dir = Path(args.app_dir)
+    raw_env_file = Path(args.env_file) if args.env_file else None
+    abs_app_dir = raw_app_dir.absolute()
+    zip_path = (
+        Path(args.zip)
+        if args.zip
+        else abs_app_dir.parent.resolve() / f"{abs_app_dir.name}.zip"
+    )
+
+    try:
+        out = package_app_archive(raw_app_dir, zip_path, raw_env_file)
+        print(f"Packaged app to {out}")
+    except (OSError, ValueError) as exc:
+        print(f"Package Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def register(subparsers: argparse._SubParsersAction) -> None:
+    """Register `build` and `package` subcommands on the root CLI parser."""
+    parser_build = subparsers.add_parser(
+        "build",
+        help="Build profile/channel CES apps from a core app and manifests.",
+    )
+    parser_build.add_argument(
+        "--core-dir", required=True, help="Core app directory."
+    )
+    parser_build.add_argument(
+        "--manifests-dir", required=True, help="Manifests directory."
+    )
+    parser_build.add_argument("--profile", help="Build profile ID.")
+    parser_build.add_argument("--channel", help="Channel name.")
+    parser_build.add_argument("--env", required=True, help="Environment name.")
+    parser_build.add_argument(
+        "--out", required=True, help="Output directory or root."
+    )
+    parser_build.add_argument(
+        "--all", action="store_true", help="Build all profile/channel pairs."
+    )
+    parser_build.add_argument(
+        "--zip", action="store_true", help="Package each built app to a ZIP."
+    )
+    parser_build.add_argument(
+        "--json", action="store_true", help="Emit JSON build report(s)."
+    )
+    parser_build.set_defaults(func=app_build)
+
+    parser_package = subparsers.add_parser(
+        "package", help="Package an app directory into a deterministic ZIP."
+    )
+    parser_package.add_argument(
+        "--app-dir", required=True, help="App directory."
+    )
+    parser_package.add_argument("--zip", help="Output ZIP file path.")
+    parser_package.add_argument(
+        "--env-file", help="Custom environment.json file."
+    )
+    parser_package.set_defaults(func=app_package)

@@ -17,10 +17,12 @@
 import json
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
+
+from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
 
 ENV_VAR_PLACEHOLDER = "$env_var"
 CONNECTION_NAME_RE = re.compile(
@@ -233,7 +235,7 @@ def extract_env_variable_defaults(
 
 
 def _find_app_config_file(app_dir: Path) -> Path | None:
-    for name in ("app.json", "app.yaml"):
+    for name in ("app.json", "app.yaml", "app.yml"):
         candidate = app_dir / name
         if candidate.is_file():
             return candidate
@@ -243,13 +245,16 @@ def _find_app_config_file(app_dir: Path) -> Path | None:
 def _load_config_file(path: Path) -> Any:
     text = path.read_text(encoding="utf-8")
     if path.suffix in (".yaml", ".yml"):
-        return yaml.safe_load(text)
+        return yaml.load(text, Loader=Yaml12SafeLoader)
     return json.loads(text)
 
 
 def _write_config_file(path: Path, data: dict[str, Any]) -> None:
     if path.suffix in (".yaml", ".yml"):
-        path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+        path.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
     else:
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -859,10 +864,103 @@ def _collect_placeholders_from_dict(
                         )
 
 
+def _classify_schema_path(
+    root: Path, schema_val: str, label: str
+) -> tuple[Path | None, str | None]:
+    """Return ``(confined_path, escape_error)`` for an ``openApiSchema``."""
+    stripped = schema_val.strip()
+    if not stripped or "\n" in schema_val or stripped.startswith(("{", "[")):
+        return None, None
+    normalized = stripped.replace("\\", "/")
+    posix = PurePosixPath(normalized)
+    if (
+        Path(stripped).is_absolute()
+        or normalized.startswith("/")
+        or ".." in posix.parts
+    ):
+        return (
+            None,
+            f"OpenAPI schema path '{schema_val}' in '{label}' escapes app "
+            "directory.",
+        )
+    root_resolved = root.resolve()
+    cur = root
+    for part in posix.parts:
+        if part in ("", "."):
+            continue
+        cur = cur / part
+        if cur.is_symlink():
+            return (
+                None,
+                f"Symlinks are not permitted in OpenAPI schema path "
+                f"'{schema_val}' for '{label}'.",
+            )
+    resolved = cur.resolve()
+    if not resolved.is_relative_to(root_resolved):
+        return (
+            None,
+            f"OpenAPI schema path '{schema_val}' in '{label}' escapes app "
+            "directory.",
+        )
+    return resolved, None
+
+
+def _external_file_has_placeholder(
+    root: Path, schema_val: str, source_root: Path | None = None
+) -> bool:
+    stripped = schema_val.strip()
+    roots = (root, source_root) if source_root is not None else (root,)
+    for base in roots:
+        try:
+            candidate = base / stripped
+            if candidate.is_file() and ENV_VAR_PLACEHOLDER in (
+                candidate.read_text(encoding="utf-8")
+            ):
+                return True
+        except (OSError, UnicodeDecodeError):
+            continue
+    return False
+
+
+def _inspect_openapi_schema_value(
+    root: Path,
+    oa_key: str,
+    schema_val: str,
+    label: str,
+    *,
+    strict_schema_paths: bool = False,
+    source_root: Path | None = None,
+) -> tuple[tuple[str, str], Path | None, bool] | None:
+    if schema_val == ENV_VAR_PLACEHOLDER:
+        return None
+    if ENV_VAR_PLACEHOLDER in schema_val:
+        return (oa_key, "url"), None, True
+    candidate_path, escape_err = _classify_schema_path(root, schema_val, label)
+    if escape_err is not None:
+        if strict_schema_paths and _external_file_has_placeholder(
+            root, schema_val, source_root
+        ):
+            raise ValueError(escape_err)
+        return None
+    if candidate_path is None or not candidate_path.is_file():
+        return None
+    try:
+        raw = candidate_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if ENV_VAR_PLACEHOLDER in raw:
+        return (oa_key, "url"), candidate_path, False
+    return None
+
+
 def _detect_openapi_schema_placeholder(
     root: Path,
     category: str,
     data: dict[str, Any],
+    *,
+    label: str = "",
+    strict_schema_paths: bool = False,
+    source_root: Path | None = None,
 ) -> tuple[tuple[str, str], Path | None, bool] | None:
     """Return ``((oa_key, 'url'), schema_path, is_inline)`` if OpenAPI schema
     contains ``$env_var``.
@@ -877,34 +975,31 @@ def _detect_openapi_schema_placeholder(
         if not isinstance(oa, dict):
             continue
         schema_key = _find_dict_key(oa, "openApiSchema")
-        if schema_key is None:
-            continue
-        schema_val = oa.get(schema_key)
+        schema_val = oa.get(schema_key) if schema_key is not None else None
         if not isinstance(schema_val, str) or not schema_val.strip():
             continue
-        if schema_val == ENV_VAR_PLACEHOLDER:
-            return None
-        if ENV_VAR_PLACEHOLDER in schema_val:
-            return (oa_key, "url"), None, True
-        if "\n" not in schema_val:
-            candidate_path = root / schema_val
-            if candidate_path.is_file():
-                try:
-                    raw = candidate_path.read_text(encoding="utf-8")
-                except OSError:
-                    return None
-                if ENV_VAR_PLACEHOLDER in raw:
-                    return (oa_key, "url"), candidate_path, False
+        return _inspect_openapi_schema_value(
+            root,
+            oa_key,
+            schema_val,
+            label or category,
+            strict_schema_paths=strict_schema_paths,
+            source_root=source_root,
+        )
     return None
 
 
 def collect_tool_and_toolset_env_var_placeholders(
     app_dir: str | Path,
+    *,
+    strict_schema_paths: bool = False,
+    source_app_dir: str | Path | None = None,
 ) -> list[ResourceEnvPlaceholder]:
     """Return all non-boolean ``"$env_var"`` placeholders across ``tools/``
     and ``toolsets/`` manifests (including OpenAPI schemas with ``$env_var``).
     """
     root = Path(app_dir)
+    source_root = Path(source_app_dir) if source_app_dir is not None else None
     descriptors = _get_proto_descriptors()
     found: list[ResourceEnvPlaceholder] = []
 
@@ -923,9 +1018,7 @@ def collect_tool_and_toolset_env_var_placeholders(
             )
             raw_paths: list[tuple[tuple[str | int, ...], bool]] = []
             _collect_placeholders_from_dict(data, cat_desc, (), raw_paths)
-            seen_paths: set[tuple[str | int, ...]] = set()
             for field_path, is_list in raw_paths:
-                seen_paths.add(field_path)
                 found.append(
                     ResourceEnvPlaceholder(
                         category=category,
@@ -938,23 +1031,29 @@ def collect_tool_and_toolset_env_var_placeholders(
                     )
                 )
 
-            oa_hit = _detect_openapi_schema_placeholder(root, category, data)
+            oa_hit = _detect_openapi_schema_placeholder(
+                root,
+                category,
+                data,
+                label=label,
+                strict_schema_paths=strict_schema_paths,
+                source_root=source_root,
+            )
             if oa_hit is not None:
                 oa_url_path, schema_path, is_inline = oa_hit
-                if oa_url_path not in seen_paths:
-                    found.append(
-                        ResourceEnvPlaceholder(
-                            category=category,
-                            entry=entry,
-                            label=label,
-                            candidate_keys=cand_keys,
-                            manifest_path=mpath,
-                            field_path=oa_url_path,
-                            is_list_placeholder=False,
-                            openapi_schema_path=schema_path,
-                            openapi_schema_inline=is_inline,
-                        )
+                found.append(
+                    ResourceEnvPlaceholder(
+                        category=category,
+                        entry=entry,
+                        label=label,
+                        candidate_keys=cand_keys,
+                        manifest_path=mpath,
+                        field_path=oa_url_path,
+                        is_list_placeholder=False,
+                        openapi_schema_path=schema_path,
+                        openapi_schema_inline=is_inline,
                     )
+                )
 
     return found
 
@@ -1075,6 +1174,32 @@ def _validate_resolved_string(
     return None
 
 
+def _dedupe_resource_issues(
+    issues: list[ResourceEnvIssue],
+) -> list[ResourceEnvIssue]:
+    seen: set[tuple[bool, Path | None, str]] = set()
+    unique: list[ResourceEnvIssue] = []
+    for issue in issues:
+        key = (issue.is_env_file_issue, issue.manifest_path, issue.message)
+        if key not in seen:
+            seen.add(key)
+            unique.append(issue)
+    return unique
+
+
+def _assert_confined_schema_file(
+    root: Path, schema_path: Path, label: str
+) -> None:
+    root_resolved = root.resolve()
+    if schema_path.is_symlink() or not schema_path.resolve().is_relative_to(
+        root_resolved
+    ):
+        raise ValueError(
+            f"OpenAPI schema path '{schema_path}' in '{label}' escapes app "
+            "directory or uses a symlink."
+        )
+
+
 def validate_tool_and_toolset_env_vars(
     app_dir: str | Path,
     env_data: Any,
@@ -1089,7 +1214,26 @@ def validate_tool_and_toolset_env_vars(
 
     Returns ``(resolutions, resolved_labels, issues)``.
     """
-    placeholders = collect_tool_and_toolset_env_var_placeholders(app_dir)
+    try:
+        placeholders = collect_tool_and_toolset_env_var_placeholders(
+            app_dir, strict_schema_paths=True
+        )
+    except ValueError as exc:
+        return (
+            [],
+            [],
+            [
+                ResourceEnvIssue(
+                    is_env_file_issue=False,
+                    manifest_path=None,
+                    message=str(exc),
+                    fix=(
+                        "Use a relative OpenAPI schema path inside the app "
+                        "directory without symlinks"
+                    ),
+                )
+            ],
+        )
     if not placeholders:
         return [], [], []
 
@@ -1211,17 +1355,25 @@ def validate_tool_and_toolset_env_vars(
         resolutions.append((ph, raw_val))
         resolved_labels.append(f"{ph.label}.{field_dotted}")
 
-    return resolutions, resolved_labels, issues
+    return (
+        resolutions,
+        list(dict.fromkeys(resolved_labels)),
+        _dedupe_resource_issues(issues),
+    )
 
 
 def resolve_tool_and_toolset_env_vars_in_dir(
     app_dir: str | Path,
+    *,
+    source_app_dir: str | Path | None = None,
 ) -> list[str]:
     """Resolve ``"$env_var"`` placeholders across staged ``tools/`` and
     ``toolsets/`` manifests (and OpenAPI schemas) from ``environment.json``.
     """
     root = Path(app_dir)
-    placeholders = collect_tool_and_toolset_env_var_placeholders(root)
+    placeholders = collect_tool_and_toolset_env_var_placeholders(
+        root, strict_schema_paths=True, source_app_dir=source_app_dir
+    )
     if not placeholders:
         return []
 
@@ -1255,6 +1407,7 @@ def resolve_tool_and_toolset_env_vars_in_dir(
     by_manifest: dict[Path, list[tuple[ResourceEnvPlaceholder, Any]]] = {}
     for ph, val in resolutions:
         if ph.openapi_schema_path is not None:
+            _assert_confined_schema_file(root, ph.openapi_schema_path, ph.label)
             raw = ph.openapi_schema_path.read_text(encoding="utf-8")
             ph.openapi_schema_path.write_text(
                 raw.replace(ENV_VAR_PLACEHOLDER, str(val)), encoding="utf-8"

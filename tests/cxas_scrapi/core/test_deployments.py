@@ -653,3 +653,27 @@ def test_qa_004_create_deployment_empty_traffic_split_raises_value_error(
         deps.create_deployment(
             "dep_id", "my_dep", app_version="v1", traffic_split={}
         )
+
+
+@pytest.mark.parametrize(
+    "channel_type",
+    [
+        Deployments.ChannelType.WHATSAPP,
+        Deployments.ChannelType.INSTAGRAM,
+    ],
+)
+@patch("cxas_scrapi.core.apps.AgentServiceClient")
+def test_unmapped_messaging_channel_types_raise_value_error(
+    mock_client_cls: typing.Any,
+    channel_type: Deployments.ChannelType,
+) -> None:
+    deps = Deployments("projects/p/locations/l/apps/A")
+    pattern = (
+        rf"{channel_type.value}.*not supported.*ChannelType\.API explicitly"
+    )
+    with pytest.raises(ValueError, match=pattern):
+        deps.create_deployment(
+            "dep_id", "msg_dep", "v1", channel_type=channel_type
+        )
+    with pytest.raises(ValueError, match=pattern):
+        deps.update_deployment("dep_id", channel_type=channel_type)
