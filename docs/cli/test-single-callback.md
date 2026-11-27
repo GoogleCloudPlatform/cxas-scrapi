@@ -1,11 +1,11 @@
 # cxas test-single-callback
 
-`cxas test-single-callback` runs the tests in a specific test file against one callback in a deployed app — useful when you've just edited a single callback and want fast, targeted feedback without running the full suite.
+`cxas test-single-callback` runs the tests in a specific test file against one callback in a local app directory (`--app-dir`) or a deployed app (`--app-name`) — useful when you've just edited a single callback and want fast, targeted feedback without running the full suite.
 
 ## Usage
 
 ```
-cxas test-single-callback --app-name APP
+cxas test-single-callback [--app-name APP | --app-dir DIR]
                            --agent-name NAME
                            --callback-type TYPE
                            --test-file-path PATH
@@ -17,9 +17,10 @@ cxas test-single-callback --app-name APP
 
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
-| `--app-name APP` | Yes | — | Full resource name of the app that owns the callback (e.g., `projects/{project}/locations/{location}/apps/{app}`). |
-| `--agent-name NAME` | Yes | — | Name of the agent that owns the callback (e.g., `pilot`). |
-| `--callback-type TYPE` | Yes | — | Type of the callback to test (e.g., `before_call`, `after_call`, `webhook`). |
+| `--app-name APP` | One of `--app-name` or `--app-dir` | — | Full resource name of the deployed app that owns the callback (e.g., `projects/{project}/locations/{location}/apps/{app}`). |
+| `--app-dir DIR` | One of `--app-name` or `--app-dir` | — | Path to the local app directory for offline callback execution (no GCP credentials or network required). |
+| `--agent-name NAME` | Yes | — | Name or display name of the agent that owns the callback (e.g., `pilot`). |
+| `--callback-type TYPE` | Yes | — | Type of the callback to test (e.g., `before_model`, `after_model`, `before_tool`, `after_tool`, `before_agent`, `after_agent`). |
 | `--test-file-path PATH` | Yes | — | Absolute or relative path to the Python pytest test file to execute. |
 | `--log-file PATH` | No | — | Path to a file where pytest output will be written. |
 | `--pytest-args ARGS` | No | — | Comma-separated extra arguments forwarded to pytest (e.g., `"-v,-s"`). |
@@ -29,7 +30,8 @@ cxas test-single-callback --app-name APP
 | Scenario | Command |
 |----------|---------|
 | You want to run tests for every callback in the app | [`cxas test-callbacks`](test-callbacks.md) |
-| You changed one callback and want targeted feedback | `cxas test-single-callback` |
+| You changed one callback locally and want instant offline feedback | `cxas test-single-callback --app-dir ...` |
+| You want to test against a callback fetched from a deployed app | `cxas test-single-callback --app-name ...` |
 | You're in CI and want comprehensive coverage | [`cxas ci-test`](ci-test.md) |
 
 ## Exit Codes
@@ -41,39 +43,36 @@ cxas test-single-callback --app-name APP
 
 ## Examples
 
-**Run a specific callback test file:**
+**Run a single callback test completely offline against a local app directory:**
+
+```bash
+cxas test-single-callback \
+  --app-dir ./my-agent \
+  --agent-name pilot \
+  --callback-type before_model \
+  --test-file-path ./my-agent/agents/pilot/before_model_callbacks/cb1/test.py
+```
+
+**Run a specific callback test file against a deployed app:**
 
 ```bash
 cxas test-single-callback \
   --app-name projects/my-gcp-project/locations/us-central1/apps/abc123 \
   --agent-name pilot \
-  --callback-type before_call \
-  --test-file-path ./my-agent/agents/pilot/callbacks/before_call_test.py
+  --callback-type before_model_callback \
+  --test-file-path ./my-agent/agents/pilot/before_model_callbacks/cb1/test.py
 ```
 
 **Run with verbose pytest output and save logs:**
 
 ```bash
 cxas test-single-callback \
-  --app-name projects/my-gcp-project/locations/us-central1/apps/abc123 \
+  --app-dir ./my-agent \
   --agent-name pilot \
-  --callback-type after_call \
-  --test-file-path ./my-agent/agents/pilot/callbacks/after_call_test.py \
-  --log-file /tmp/after-call-test.log \
+  --callback-type after_model \
+  --test-file-path ./my-agent/agents/pilot/after_model_callbacks/cb1/test.py \
+  --log-file /tmp/after-model-test.log \
   --pytest-args=-v,-s
-```
-
-**Use in a pre-push hook or quick local check:**
-
-```bash
-APP="projects/my-gcp-project/locations/us-central1/apps/abc123"
-
-cxas test-single-callback \
-  --app-name "$APP" \
-  --agent-name pilot \
-  --callback-type webhook \
-  --test-file-path ./agents/pilot/callbacks/webhook_test.py \
-  --pytest-args=-v
 ```
 
 ## Related Commands
