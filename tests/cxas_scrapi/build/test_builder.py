@@ -32,6 +32,7 @@ from cxas_scrapi.build.builder import (
     build_all,
     build_app,
     deep_merge,
+    merge_app_config,
 )
 from cxas_scrapi.build.manifests import ManifestError
 
@@ -2341,3 +2342,495 @@ def test_nested_yaml_anchor_overrides_and_inline_merge_duplicate_rejection(
             "prod",
             tmp_path / "out_inline_merge_dup",
         )
+
+
+def test_merge_app_config_semantics_and_immutability() -> None:
+    base = {
+        "displayName": "Base App",
+        "description": "Will be deleted",
+        "guardrails": ["g1", "g2"],
+        "audioProcessingConfig": {
+            "inactivityTimeout": "120s",
+            "ambientSoundConfig": {"volumeGainDb": 1.0},
+        },
+        "timeZoneSettings": {"timeZone": "UTC"},
+    }
+    layer1 = {
+        "description": None,
+        "nonexistentKey": None,
+        "guardrails": ["g3"],
+        "audioProcessingConfig": {
+            "inactivityTimeout": "300s",
+            "ambientSoundConfig": None,
+        },
+        "freshSection": {"keep": True, "drop": None},
+    }
+    layer2 = {
+        "guardrails": [],
+        "timeZoneSettings": {"timeZone": "America/New_York"},
+    }
+
+    merged = merge_app_config(base, layer1, None, layer2)
+    assert merged == {
+        "displayName": "Base App",
+        "guardrails": [],
+        "audioProcessingConfig": {"inactivityTimeout": "300s"},
+        "timeZoneSettings": {"timeZone": "America/New_York"},
+        "freshSection": {"keep": True},
+    }
+
+    # Mutating merged output must not mutate inputs.
+    merged["guardrails"].append("mutated")
+    merged["audioProcessingConfig"]["inactivityTimeout"] = "999s"
+    merged["freshSection"]["keep"] = False
+    assert base["guardrails"] == ["g1", "g2"]
+    assert base["audioProcessingConfig"]["inactivityTimeout"] == "120s"
+    assert layer1["freshSection"] == {"keep": True, "drop": None}
+    assert layer2["guardrails"] == []
+
+
+def test_env_app_block_merge_order_tokens_and_profile_precedence(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "displayName": "Base App",
+                "description": "Remove me in prod",
+                "rootAgent": "default_agent",
+                "guardrails": ["core_guardrail"],
+                "audioProcessingConfig": {"inactivityTimeout": "120s"},
+                "timeZoneSettings": {"timeZone": "UTC"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        '  displayName: "@@profile.display_name@@ @@build.environment@@"\n'
+        "  description: null\n"
+        "  rootAgent: default_agent\n"
+        "  guardrails:\n"
+        '    - "{@startChannel_VOICE_TELEPHONY}voice_guardrail'
+        '{@endChannel_VOICE_TELEPHONY}"\n'
+        "  timeZoneSettings:\n"
+        "    timeZone: America/New_York\n"
+        "  audioProcessingConfig:\n"
+        "    inactivityTimeout: 300s\n"
+        "    synthesizeSpeechConfigs:\n"
+        "      en:\n"
+        "        voice: env-override-should-lose\n"
+        "  languageSettings:\n"
+        "    defaultLanguageCode: de\n"
+        "    supportedLanguageCodes: [de]\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_env_app_order"
+    build_app(
+        core_dir, manifests_dir, "profile_1", "VOICE_TELEPHONY", "prod", out_dir
+    )
+
+    app_cfg = json.loads((out_dir / "app.json").read_text("utf-8"))
+    assert app_cfg["displayName"] == "Profile One prod"
+    assert "description" not in app_cfg
+    assert app_cfg["guardrails"] == ["voice_guardrail"]
+    assert app_cfg["timeZoneSettings"] == {"timeZone": "America/New_York"}
+    assert app_cfg["audioProcessingConfig"]["inactivityTimeout"] == "300s"
+    # Profile-derived settings win over env app: where they overlap.
+    assert app_cfg["rootAgent"] == "custom_entry"
+    assert (
+        app_cfg["audioProcessingConfig"]["synthesizeSpeechConfigs"]["en"][
+            "voice"
+        ]
+        == "en-US-Standard-A"
+    )
+    assert app_cfg["languageSettings"] == {
+        "defaultLanguageCode": "en",
+        "supportedLanguageCodes": ["en", "es"],
+        "enableMultilingualSupport": True,
+    }
+
+    # Unresolved token inside app: fails fast naming the env file.
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        '  displayName: "@@profile.does_not_exist@@"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        BuildError, match=r"prod\.yaml:.*Unresolved placeholders"
+    ):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_env_app_bad_tok",
+        )
+
+    # Tokenized forbidden key rendered from routing fails fast naming env file.
+    pol_path = manifests_dir / "profiles" / "profile_1" / "channel_policy.yaml"
+    pol = yaml.safe_load(pol_path.read_text("utf-8"))
+    pol["api_routing"]["bad_key"] = "etag"
+    pol_path.write_text(yaml.safe_dump(pol, sort_keys=False), encoding="utf-8")
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        '  "@@routing.bad_key@@": "abc"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        BuildError, match=r"prod\.yaml:.*Forbidden key 'app\.etag'"
+    ):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_env_app_tok_forbidden",
+        )
+
+
+@pytest.mark.parametrize(
+    ("app_yaml_block", "expected_pattern"),
+    [
+        (
+            "  unknownTopField: 123\n",
+            r"prod\.yaml.*unknownTopField",
+        ),
+        (
+            "  timeZoneSettings:\n    badKey: UTC\n",
+            r"prod\.yaml.*badKey",
+        ),
+        (
+            "  audioProcessingConfig:\n    inactivityTimeout: not-a-duration\n",
+            r"prod\.yaml.*inactivityTimeout|duration",
+        ),
+        (
+            "  displayName: null\n",
+            r"prod\.yaml.*display_name",
+        ),
+    ],
+)
+def test_env_app_block_schema_validation_errors(
+    tmp_path: Path, app_yaml_block: str, expected_pattern: str
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").write_text(
+        json.dumps({"displayName": "Valid App", "rootAgent": "default_agent"}),
+        encoding="utf-8",
+    )
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        f"app:\n{app_yaml_block}",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BuildError, match=expected_pattern):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_schema_invalid",
+        )
+
+
+def test_env_app_block_missing_core_app_config_raises(tmp_path: Path) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").unlink()
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  displayName: Orphan App\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BuildError, match=r"prod\.yaml.*no app config"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_missing_app_cfg",
+        )
+
+
+@pytest.mark.parametrize("filename", ["app.json", "app.yaml", "app.yml"])
+def test_env_app_block_parity_across_json_yaml_yml_and_anchors(
+    tmp_path: Path, filename: str
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").unlink()
+
+    if filename == "app.json":
+        (core_dir / filename).write_text(
+            json.dumps(
+                {"displayName": "Core App", "rootAgent": "default_agent"}
+            ),
+            encoding="utf-8",
+        )
+    else:
+        (core_dir / filename).write_text(
+            "displayName: Core App\nrootAgent: default_agent\n",
+            encoding="utf-8",
+        )
+
+    # Profile 2 has no tts_voices, languages, or entry_agent — verifies tokenless
+    # app.yaml/app.yml still writes back when env app: is applied.
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "overrides:\n"
+        "  anchor_src: &audio_base\n"
+        "    inactivityTimeout: 120s\n"
+        "app:\n"
+        "  timeZoneSettings:\n"
+        "    timeZone: Europe/Oslo\n"
+        "  audioProcessingConfig:\n"
+        "    <<: *audio_base\n"
+        "    inactivityTimeout: 300s\n"
+        "  variableDeclarations:\n"
+        "    - name: country\n"
+        "      schema:\n"
+        "        type: STRING\n"
+        "        default: NO\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / f"out_{filename.replace('.', '_')}"
+    build_app(
+        core_dir, manifests_dir, "profile_2", "DIGITAL_APP", "prod", out_dir
+    )
+
+    out_path = out_dir / filename
+    merged = (
+        json.loads(out_path.read_text("utf-8"))
+        if filename.endswith(".json")
+        else yaml.safe_load(out_path.read_text("utf-8"))
+    )
+    assert merged["displayName"] == "Core App"
+    assert merged["timeZoneSettings"] == {"timeZone": "Europe/Oslo"}
+    assert merged["audioProcessingConfig"] == {"inactivityTimeout": "300s"}
+    assert merged["variableDeclarations"] == [
+        {"name": "country", "schema": {"type": "STRING", "default": "NO"}}
+    ]
+
+
+def test_env_app_block_on_comment_only_app_yaml(tmp_path: Path) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").unlink()
+    (core_dir / "app.yaml").write_text("# comment only\n", encoding="utf-8")
+    (manifests_dir / "envs" / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+        "app:\n"
+        "  displayName: From Env App\n"
+        "  timeZoneSettings:\n"
+        "    timeZone: UTC\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_empty_app_yaml"
+    build_app(
+        core_dir, manifests_dir, "profile_2", "DIGITAL_APP", "prod", out_dir
+    )
+    merged = yaml.safe_load((out_dir / "app.yaml").read_text("utf-8"))
+    assert merged == {
+        "displayName": "From Env App",
+        "timeZoneSettings": {"timeZone": "UTC"},
+    }
+
+
+def test_no_env_app_block_preserves_byte_identical_minimal_output(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    # Sample workspace app.json intentionally omits displayName and env has no
+    # app: block — must still build cleanly and byte-identically.
+    out1 = tmp_path / "out_no_app_1"
+    out2 = tmp_path / "out_no_app_2"
+    r1 = build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "DIGITAL_APP",
+        "prod",
+        out1,
+        package_zip=True,
+    )
+    r2 = build_app(
+        core_dir,
+        manifests_dir,
+        "profile_1",
+        "DIGITAL_APP",
+        "prod",
+        out2,
+        package_zip=True,
+    )
+    assert r1.zip_path is not None
+    assert r2.zip_path is not None
+    assert (out1 / "app.json").read_bytes() == (out2 / "app.json").read_bytes()
+    assert r1.zip_path.read_bytes() == r2.zip_path.read_bytes()
+
+
+def test_docs_build_guide_env_app_example_passes_cxas_lint(
+    tmp_path: Path,
+) -> None:
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
+        Discovery,
+        LintConfig,
+        LintReport,
+        Severity,
+        build_context,
+        build_registry,
+        run_rules,
+    )
+
+    core_dir = tmp_path / "core"
+    (core_dir / "agents" / "root_agent").mkdir(parents=True)
+    (core_dir / "tools" / "end_session").mkdir(parents=True)
+    (core_dir / "guardrails" / "profile_safety_guardrail").mkdir(parents=True)
+
+    (core_dir / "app.json").write_text(
+        json.dumps(
+            {
+                "name": "projects/example-prod/locations/us/apps/profile-one",
+                "displayName": "Profile One Prod App",
+                "rootAgent": "root_agent",
+                "globalInstruction": "global_instruction.txt",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (core_dir / "global_instruction.txt").write_text(
+        "Follow @@profile.display_name@@ policies.\n", encoding="utf-8"
+    )
+    (core_dir / "agents" / "root_agent" / "root_agent.json").write_text(
+        json.dumps(
+            {
+                "displayName": "root_agent",
+                "instruction": "agents/root_agent/instruction.txt",
+                "tools": ["end_session"],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (core_dir / "tools" / "end_session" / "end_session.json").write_text(
+        json.dumps(
+            {
+                "displayName": "end_session",
+                "systemTool": {
+                    "name": "end_session",
+                    "description": "Ends the current conversation session.",
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (core_dir / "agents" / "root_agent" / "instruction.txt").write_text(
+        "<role>You are a helpful assistant.</role>\n"
+        "<persona>Clear and concise.</persona>\n"
+        "<constraints>Stay on topic. Call {@TOOL: end_session} when done."
+        "</constraints>\n",
+        encoding="utf-8",
+    )
+    (
+        core_dir
+        / "guardrails"
+        / "profile_safety_guardrail"
+        / "profile_safety_guardrail.json"
+    ).write_text(
+        json.dumps(
+            {
+                "displayName": "profile_safety_guardrail",
+                "enabled": True,
+                "contentFilter": {
+                    "bannedContents": ["forbidden_phrase"],
+                    "matchType": "SIMPLE_STRING_MATCH",
+                },
+                "action": {
+                    "respondImmediately": {
+                        "responses": [{"text": "I cannot help with that."}]
+                    }
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    manifests_dir = tmp_path / "manifests"
+    p1 = manifests_dir / "profiles" / "profile_1"
+    p1.mkdir(parents=True)
+    (p1 / "identity.yaml").write_text(
+        "profile_id: profile_1\n"
+        "display_name: Profile One\n"
+        "languages: [en]\n"
+        "tts_voices:\n"
+        "  en:\n"
+        "    voice: en-US-Standard-A\n"
+        "    speaking_rate: 1.0\n",
+        encoding="utf-8",
+    )
+    (p1 / "channel_policy.yaml").write_text(
+        "profile_id: profile_1\n"
+        "supported_countries: [US]\n"
+        "channels:\n"
+        "  WEB:\n"
+        "    supported_modalities: [TEXT]\n",
+        encoding="utf-8",
+    )
+    envs_dir = manifests_dir / "envs"
+    envs_dir.mkdir(parents=True)
+    # Exact app: snippet from docs/guides/build.md
+    (envs_dir / "prod.yaml").write_text(
+        "environment: prod\n"
+        "templates:\n"
+        "  gcp_project: example-prod-{profile_slug}-{env}\n"
+        "  api: https://api.example.com/{env}/{service}\n"
+        "overrides:\n"
+        "  endpoint_region: us-central1\n"
+        "app:\n"
+        "  timeZoneSettings:\n"
+        "    timeZone: America/New_York\n"
+        "  guardrails:\n"
+        "    - profile_safety_guardrail\n"
+        "  audioProcessingConfig:\n"
+        "    inactivityTimeout: 300s\n",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out_docs_example"
+    build_app(core_dir, manifests_dir, "profile_1", "WEB", "prod", out_dir)
+
+    registry = build_registry()
+    config = LintConfig()
+    discovery = Discovery(out_dir, out_dir / "evals")
+    context = build_context(out_dir, config, discovery)
+    report = LintReport()
+    run_rules(registry, config, context, discovery, report)
+    errors = [r for r in report.results if r.severity == Severity.ERROR]
+    assert errors == [], f"Unexpected lint errors: {errors}"

@@ -11,6 +11,16 @@ subsidiary, region, business unit, or modality variant—distinct from the CES
 generated runtime code are involved: running `cxas build` twice on the same
 inputs produces identical output trees and ZIP archives.
 
+## One App per environment
+
+Each environment manifest (`envs/dev.yaml`, `envs/staging.yaml`, `envs/prod.yaml`)
+targets its own dedicated CES App and GCP project. CES Deployments are **never**
+used for environment promotion: instead, each `(profile, channel)` build produces
+a standalone App bundle deployed into that environment's dedicated CES App.
+Environment-specific App settings live in the `app:` block of `envs/<env>.yaml`
+so every environment's App configuration stays declarative, diffable, and
+schema-validated in Git.
+
 ## Manifest Layout
 
 ```text
@@ -74,8 +84,9 @@ channels:
 
 ### `envs/prod.yaml`
 
-Environment templates and `environment.json` overrides. Template values may use
-`{profile}`, `{profile_slug}`, `{env}`, `{channel}`, and `{service}`:
+Environment templates, `environment.json` overrides, and optional CES `App`
+config overrides (`app:`). Template values may use `{profile}`,
+`{profile_slug}`, `{env}`, `{channel}`, and `{service}`:
 
 ```yaml
 environment: prod
@@ -84,7 +95,40 @@ templates:
   api: https://api.example.com/{env}/{service}
 overrides:
   endpoint_region: us-central1
+app:
+  timeZoneSettings:
+    timeZone: America/New_York
+  guardrails:
+    - profile_safety_guardrail
+  audioProcessingConfig:
+    inactivityTimeout: 300s
 ```
+
+When `app:` is present, `cxas build` applies overlays in deterministic order
+(later layers win) and validates the merged config against the CES `App` proto
+schema (`V001`):
+
+1. `core/app.{json,yaml,yml}` (after token/conditional rendering)
+2. `envs/<env>.yaml` `app:` (tokens and conditionals inside `app:` are rendered
+   before merging)
+3. Profile-derived settings (`rootAgent` from channel `entry_agent`,
+   `audioProcessingConfig.synthesizeSpeechConfigs`, and `languageSettings`)
+
+Merge semantics for `app:`:
+
+- Nested mappings deep-merge recursively (for example, `app:` can set
+  `audioProcessingConfig.inactivityTimeout` without clobbering profile-derived
+  `synthesizeSpeechConfigs`).
+- Lists replace wholesale (never concatenated).
+- Scalars replace.
+- Explicit `null` deletes the key at any depth.
+
+Server-managed, read-only, and lock-controlled `App` fields are forbidden at the
+top level of `app:` (in both camelCase and snake_case): `name`, `locked`,
+`scmSettings` / `scm_settings`, `createTime` / `create_time`, `updateTime` /
+`update_time`, `etag`, `deploymentCount` / `deployment_count`,
+`predefinedVariableDeclarations` / `predefined_variable_declarations`, and
+`validationErrors` / `validation_errors`.
 
 ### `locales/content_blocks.yaml` (Optional)
 
@@ -171,6 +215,8 @@ Each built app directory includes:
   `rootAgent` synced to any configured `entry_agent`—which must match a
   surviving agent under `agents/`)
 - Merged `environment.json`
-- Generated `deployments/<channel-slug>.yaml` describing the `profileId`, CES
-  `channelProfile`, countries, languages, and modalities
+- Generated `deployments/<channel-slug>.yaml` **build metadata** recording the
+  `profileId`, CES `channelProfile`, countries, languages, modalities, and
+  `entryAgent` (this is local build metadata—excluded from packaged ZIPs—and
+  **not** a live CES Deployment resource)
 - Optional `<profile_id>_<channel-slug>.zip` when `--zip` is passed

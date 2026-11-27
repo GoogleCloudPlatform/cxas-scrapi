@@ -36,7 +36,9 @@ import yaml
 from pydantic import BaseModel, Field
 
 from cxas_scrapi.build.manifests import (
+    APP_CONFIG_FILENAMES,
     CHANNEL_PROFILE_TYPES,
+    FIELD_ENV_APP,
     ChannelCapabilities,
     ChannelPolicy,
     ContentBlockCatalog,
@@ -44,6 +46,7 @@ from cxas_scrapi.build.manifests import (
     Manifests,
     ProfileIdentity,
     load_manifests,
+    validate_app_overlay_mapping,
 )
 from cxas_scrapi.core.packaging import package_app_archive
 from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
@@ -54,6 +57,12 @@ if TYPE_CHECKING:
 _T = TypeVar("_T")
 JsonValue: TypeAlias = Any
 ConfigMap: TypeAlias = dict[str, JsonValue]
+AppLayer: TypeAlias = tuple[str, Mapping[str, JsonValue]]
+
+_KEY_ROOT_AGENT = "rootAgent"
+_KEY_AUDIO_PROCESSING_CONFIG = "audioProcessingConfig"
+_KEY_SYNTHESIZE_SPEECH_CONFIGS = "synthesizeSpeechConfigs"
+_KEY_LANGUAGE_SETTINGS = "languageSettings"
 
 _ALLOWED_ENV_TEMPLATE_VARS = frozenset(
     {"profile", "profile_slug", "env", "channel", "service"}
@@ -167,6 +176,44 @@ def deep_merge(
             for k, v in overrides.items()
         }
     )
+    return merged
+
+
+def _merge_app_entry(target: ConfigMap, key: str, val: JsonValue) -> None:
+    if val is None:
+        target.pop(key, None)
+    elif isinstance(val, Mapping):
+        existing = target.get(key)
+        nested: ConfigMap = existing if isinstance(existing, dict) else {}
+        target[key] = _merge_app_layer(nested, val)
+    else:
+        target[key] = copy.deepcopy(val)
+
+
+def _merge_app_layer(
+    target: ConfigMap, layer: Mapping[str, JsonValue]
+) -> ConfigMap:
+    for key, val in layer.items():
+        _merge_app_entry(target, key, val)
+    return target
+
+
+def merge_app_config(
+    base: Mapping[str, JsonValue],
+    *layers: Mapping[str, JsonValue] | None,
+) -> ConfigMap:
+    """Deep-merge ordered ``app:`` overlay layers onto a deep copy of ``base``.
+
+    Merge semantics (later layers win):
+    - Nested mappings deep-merge recursively.
+    - Lists replace wholesale (never concatenated).
+    - Scalars replace.
+    - Explicit ``None`` (YAML ``null``) deletes the key at any depth.
+    """
+    merged: ConfigMap = copy.deepcopy(dict(base))
+    for layer in layers:
+        if layer is not None:
+            _merge_app_layer(merged, layer)
     return merged
 
 
@@ -1237,10 +1284,10 @@ def _update_root_agent(
     entry_agent: str | None,
     disabled_agents: frozenset[str],
 ) -> bool:
-    current_root = data.get("rootAgent")
+    current_root = data.get(_KEY_ROOT_AGENT)
     if entry_agent:
         changed = current_root != entry_agent
-        data["rootAgent"] = entry_agent
+        data[_KEY_ROOT_AGENT] = entry_agent
         return changed
     if _matches_resource_ref(current_root, disabled_agents, "agents"):
         raise BuildError(
@@ -1261,15 +1308,15 @@ def _apply_app_manifest_settings(
         data, channel, channel_caps.entry_agent, disabled_agents
     )
     if profile.tts_voices:
-        audio_cfg = _ensure_dict_section(data, "audioProcessingConfig")
-        audio_cfg["synthesizeSpeechConfigs"] = {
+        audio_cfg = _ensure_dict_section(data, _KEY_AUDIO_PROCESSING_CONFIG)
+        audio_cfg[_KEY_SYNTHESIZE_SPEECH_CONFIGS] = {
             lang: {"voice": tts.voice, "speakingRate": tts.speaking_rate}
             for lang, tts in profile.tts_voices.items()
         }
         updated = True
 
     if profile.languages:
-        lang_cfg = _ensure_dict_section(data, "languageSettings")
+        lang_cfg = _ensure_dict_section(data, _KEY_LANGUAGE_SETTINGS)
         lang_cfg.update(
             {
                 "defaultLanguageCode": profile.languages[0],
@@ -1279,6 +1326,47 @@ def _apply_app_manifest_settings(
         )
         updated = True
     return updated
+
+
+def _apply_app_layers(
+    data: ConfigMap,
+    app_layers: Sequence[AppLayer],
+    renderer: _BuildRenderer,
+) -> ConfigMap:
+    merged = data
+    for source_label, layer in app_layers:
+        rendered_layer = _wrap_path_error(
+            Path(source_label),
+            functools.partial(
+                renderer.render_data, layer, evaluate_conditionals=True
+            ),
+        )
+        try:
+            validate_app_overlay_mapping(rendered_layer)
+        except ValueError as exc:
+            raise BuildError(f"{source_label}: {exc}") from exc
+        merged = merge_app_config(merged, rendered_layer)
+    return merged
+
+
+def _finalize_app_config(
+    data: ConfigMap,
+    app_layers: Sequence[AppLayer],
+    renderer: _BuildRenderer,
+    profile: ProfileIdentity,
+    channel_caps: ChannelCapabilities,
+) -> tuple[ConfigMap, bool]:
+    layered = bool(app_layers)
+    if app_layers:
+        data = _apply_app_layers(data, app_layers, renderer)
+    updated = _apply_app_manifest_settings(
+        data,
+        profile,
+        renderer.channel,
+        channel_caps,
+        renderer.disabled_agents,
+    )
+    return data, layered or updated
 
 
 def _wrap_path_error(path: Path, fn: Callable[[], _T]) -> _T:
@@ -1321,6 +1409,7 @@ def _render_json_file(
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
+    app_layers: Sequence[AppLayer] = (),
 ) -> None:
     rel_path = path.relative_to(out_dir)
     is_env_json = rel_path == Path("environment.json")
@@ -1337,12 +1426,8 @@ def _render_json_file(
         )
 
     if rel_path == Path("app.json") and isinstance(rendered, dict):
-        _apply_app_manifest_settings(
-            rendered,
-            profile,
-            renderer.channel,
-            channel_caps,
-            renderer.disabled_agents,
+        rendered, _ = _finalize_app_config(
+            rendered, app_layers, renderer, profile, channel_caps
         )
     path.write_text(json.dumps(rendered, indent=2) + "\n", "utf-8")
 
@@ -1403,25 +1488,22 @@ def _apply_yaml_mutations(
     renderer: _BuildRenderer,
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
+    app_layers: Sequence[AppLayer],
     *,
     is_agent_cfg: bool,
     is_app_yaml: bool,
-) -> bool:
+) -> tuple[JsonValue, bool]:
     pruned = is_agent_cfg and _prune_agent_config_refs(
         data, renderer.disabled_agents, renderer.disabled_tools
     )
-    app_updated = (
-        is_app_yaml
-        and isinstance(data, dict)
-        and _apply_app_manifest_settings(
-            data,
-            profile,
-            renderer.channel,
-            channel_caps,
-            renderer.disabled_agents,
-        )
+    if is_app_yaml and data is None:
+        data = {}
+    if not (is_app_yaml and isinstance(data, dict)):
+        return data, pruned
+    data, app_updated = _finalize_app_config(
+        data, app_layers, renderer, profile, channel_caps
     )
-    return pruned or app_updated
+    return data, pruned or app_updated
 
 
 def _render_yaml_file(
@@ -1430,6 +1512,7 @@ def _render_yaml_file(
     renderer: _BuildRenderer,
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
+    app_layers: Sequence[AppLayer] = (),
 ) -> None:
     try:
         text = path.read_text("utf-8")
@@ -1446,18 +1529,17 @@ def _render_yaml_file(
     data = _parse_yaml_with_conditionals(
         path, text, renderer, has_tokens=has_tokens
     )
-    if is_app_yaml and data is None:
-        data = {}
     if has_tokens:
         data = _wrap_path_error(
             path,
             lambda: renderer.render_data(data, evaluate_conditionals=False),
         )
-    modified = _apply_yaml_mutations(
+    data, modified = _apply_yaml_mutations(
         data,
         renderer,
         profile,
         channel_caps,
+        app_layers,
         is_agent_cfg=is_agent_cfg,
         is_app_yaml=is_app_yaml,
     )
@@ -1485,16 +1567,25 @@ def _render_single_file(
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
+    app_layers: Sequence[AppLayer] = (),
 ) -> list[str]:
     suffix = path.suffix
     if suffix == ".json":
         _render_json_file(
-            path, out_dir, renderer, profile, channel_caps, env_overrides
+            path,
+            out_dir,
+            renderer,
+            profile,
+            channel_caps,
+            env_overrides,
+            app_layers,
         )
     elif suffix == ".txt":
         return _render_text_file(path, out_dir, manifests, renderer)
     elif suffix in (".yaml", ".yml"):
-        _render_yaml_file(path, out_dir, renderer, profile, channel_caps)
+        _render_yaml_file(
+            path, out_dir, renderer, profile, channel_caps, app_layers
+        )
     elif suffix == ".py":
         _render_python_file(path, renderer)
     return []
@@ -1507,6 +1598,7 @@ def _render_staged_tree(
     profile: ProfileIdentity,
     channel_caps: ChannelCapabilities,
     env_overrides: Mapping[str, JsonValue],
+    app_layers: Sequence[AppLayer] = (),
 ) -> list[str]:
     warnings: list[str] = []
     for root, dirs, files in os.walk(out_dir):
@@ -1522,9 +1614,46 @@ def _render_staged_tree(
                     profile,
                     channel_caps,
                     env_overrides,
+                    app_layers,
                 )
             )
     return warnings
+
+
+def _validate_merged_app_config(staging_dir: Path, source_label: str) -> None:
+    app_cfg_path = next(
+        (
+            candidate
+            for fname in APP_CONFIG_FILENAMES
+            if (candidate := staging_dir / fname).is_file()
+        ),
+        None,
+    )
+    if app_cfg_path is None:
+        names = ", ".join(APP_CONFIG_FILENAMES)
+        raise BuildError(
+            f"{source_label}: '{FIELD_ENV_APP}:' overrides configured, but "
+            f"no app config ({names}) found in core directory."
+        )
+    data = (
+        _read_json_strict(app_cfg_path)
+        if app_cfg_path.suffix == ".json"
+        else yaml.load(app_cfg_path.read_text("utf-8"), Loader=Yaml12SafeLoader)
+    )
+    if isinstance(data, Mapping):
+        from cxas_scrapi.utils.lint_rules.schema import (  # noqa: PLC0415
+            validate_app_config_data,
+        )
+
+        errors = validate_app_config_data(data, staging_dir)
+    else:
+        errors = [f"expected a mapping, got {type(data).__name__}"]
+    if errors:
+        joined = "; ".join(errors)
+        raise BuildError(
+            f"{source_label} (merged into {app_cfg_path.name}): invalid "
+            f"App config: {joined}"
+        )
 
 
 def _write_deployment_manifest(
@@ -1597,6 +1726,12 @@ def _build_in_staging(
         channel_caps.entry_agent, channel, all_disabled_agents, surviving_agents
     )
 
+    env_source_label = str(manifests.root / "envs" / f"{environment}.yaml")
+    app_layers: tuple[AppLayer, ...] = (
+        ((env_source_label, env_manifest.app),)
+        if env_manifest.app is not None
+        else ()
+    )
     warnings = _render_staged_tree(
         staging_dir,
         manifests,
@@ -1604,7 +1739,10 @@ def _build_in_staging(
         profile,
         channel_caps,
         env_manifest.overrides,
+        app_layers,
     )
+    if app_layers:
+        _validate_merged_app_config(staging_dir, env_source_label)
     slug = _write_deployment_manifest(
         staging_dir, profile, policy, channel, environment, channel_caps
     )

@@ -22,6 +22,7 @@ import pytest
 
 from cxas_scrapi.build.manifests import (
     CHANNEL_PROFILE_TYPES,
+    FORBIDDEN_APP_KEYS,
     ContentBlockCatalog,
     ManifestError,
     load_manifests,
@@ -265,3 +266,96 @@ def test_yaml12_preserves_unquoted_country_no_and_booleans(
         "disabled": False,
         "country_code": "NO",
     }
+    assert env.app is None
+
+
+def test_env_manifest_app_block_and_yaml_anchor_merge(tmp_path: Path) -> None:
+    _write_minimal_profile(tmp_path)
+    envs_dir = tmp_path / "envs"
+    envs_dir.mkdir()
+    (envs_dir / "prod.yaml").write_text(
+        "environment: prod\n"
+        "app:\n"
+        "  timeZoneSettings: &tz\n"
+        "    timeZone: Europe/Oslo\n"
+        "  guardrails:\n"
+        "    - safety_guardrail\n"
+        "  description: null\n"
+        "  audioProcessingConfig:\n"
+        "    inactivityTimeout: 300s\n"
+        "  variableDeclarations:\n"
+        "    - name: country\n"
+        "      schema:\n"
+        "        type: STRING\n"
+        "        default: NO\n"
+        "overrides:\n"
+        "  tz_copy:\n"
+        "    <<: *tz\n"
+        "    timeZone: America/New_York\n",
+        encoding="utf-8",
+    )
+
+    manifests = load_manifests(tmp_path)
+    env = manifests.env("prod")
+    assert env.app == {
+        "timeZoneSettings": {"timeZone": "Europe/Oslo"},
+        "guardrails": ["safety_guardrail"],
+        "description": None,
+        "audioProcessingConfig": {"inactivityTimeout": "300s"},
+        "variableDeclarations": [
+            {
+                "name": "country",
+                "schema": {"type": "STRING", "default": "NO"},
+            }
+        ],
+    }
+    assert env.overrides == {"tz_copy": {"timeZone": "America/New_York"}}
+
+
+@pytest.mark.parametrize("forbidden_key", sorted(FORBIDDEN_APP_KEYS))
+def test_env_manifest_app_rejects_forbidden_keys(
+    tmp_path: Path, forbidden_key: str
+) -> None:
+    _write_minimal_profile(tmp_path)
+    envs_dir = tmp_path / "envs"
+    envs_dir.mkdir()
+    (envs_dir / "prod.yaml").write_text(
+        f"environment: prod\napp:\n  {forbidden_key}: value\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ManifestError,
+        match=rf"(?s)prod\.yaml:.*Forbidden key 'app\.{forbidden_key}'",
+    ):
+        load_manifests(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("yaml_snippet", "expected_match"),
+    [
+        ("app:\n  200: bad\n", r"(?s)prod\.yaml:.*Non-string key 'app\.200'"),
+        ("app:\n  true: bad\n", r"(?s)prod\.yaml:.*Non-string key 'app\.True'"),
+        (
+            "app:\n  audioProcessingConfig:\n    123: bad\n",
+            r"(?s)prod\.yaml:.*Non-string key 'app\.audioProcessingConfig\.123'",
+        ),
+        (
+            "app:\n  variableDeclarations:\n    - 123: bad\n",
+            r"(?s)prod\.yaml:.*Non-string key 'app\.variableDeclarations\[0\]\.123'",
+        ),
+        ("app:\n  - not_a_dict\n", r"(?s)prod\.yaml:.*'app' must be a mapping"),
+    ],
+)
+def test_env_manifest_app_rejects_non_string_keys_and_non_mapping(
+    tmp_path: Path, yaml_snippet: str, expected_match: str
+) -> None:
+    _write_minimal_profile(tmp_path)
+    envs_dir = tmp_path / "envs"
+    envs_dir.mkdir()
+    (envs_dir / "prod.yaml").write_text(
+        f"environment: prod\n{yaml_snippet}", encoding="utf-8"
+    )
+
+    with pytest.raises(ManifestError, match=expected_match):
+        load_manifests(tmp_path)

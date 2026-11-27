@@ -28,8 +28,13 @@ from cxas_scrapi.build.builder import (
     BuildReport,
     build_all,
     build_app,
+    merge_app_config,
 )
 from cxas_scrapi.build.manifests import (
+    APP_CONFIG_FILENAMES,
+    FIELD_ENV_APP,
+    FORBIDDEN_APP_KEY_PAIRS,
+    FORBIDDEN_APP_KEYS,
     ChannelCapabilities,
     ChannelPolicy,
     ContentBlockCatalog,
@@ -39,9 +44,14 @@ from cxas_scrapi.build.manifests import (
     ProfileIdentity,
     TtsVoice,
     load_manifests,
+    validate_app_overlay_mapping,
 )
 
 __all__ = [
+    "APP_CONFIG_FILENAMES",
+    "FIELD_ENV_APP",
+    "FORBIDDEN_APP_KEYS",
+    "FORBIDDEN_APP_KEY_PAIRS",
     "BuildError",
     "BuildReport",
     "ChannelCapabilities",
@@ -55,4 +65,6 @@ __all__ = [
     "build_all",
     "build_app",
     "load_manifests",
+    "merge_app_config",
+    "validate_app_overlay_mapping",
 ]

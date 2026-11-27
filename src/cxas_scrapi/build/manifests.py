@@ -30,8 +30,9 @@ and platform owners the latter.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+from typing import Any, TypeAlias, TypeVar
 
 import yaml
 from pydantic import (
@@ -44,14 +45,28 @@ from pydantic import (
 
 from cxas_scrapi.utils.yaml_utils import Yaml12SafeLoader
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
-
 PROFILE_ID_PATTERN = r"^[a-z0-9_-]{2,64}$"
 _PROFILE_ID_RE = re.compile(PROFILE_ID_PATTERN)
 _T = TypeVar("_T")
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 ManifestValue: TypeAlias = Any
+
+APP_CONFIG_FILENAMES: tuple[str, ...] = ("app.json", "app.yaml", "app.yml")
+FIELD_ENV_APP: str = "app"
+FORBIDDEN_APP_KEY_PAIRS: tuple[tuple[str, ...], ...] = (
+    ("name",),
+    ("locked",),
+    ("scmSettings", "scm_settings"),
+    ("createTime", "create_time"),
+    ("updateTime", "update_time"),
+    ("etag",),
+    ("deploymentCount", "deployment_count"),
+    ("predefinedVariableDeclarations", "predefined_variable_declarations"),
+    ("validationErrors", "validation_errors"),
+)
+FORBIDDEN_APP_KEYS: frozenset[str] = frozenset(
+    k for pair in FORBIDDEN_APP_KEY_PAIRS for k in pair
+)
 
 # Channel name (manifest key) -> CES deployment ChannelProfile type.
 CHANNEL_PROFILE_TYPES: dict[str, str] = {
@@ -159,6 +174,41 @@ class ChannelPolicy(_StrictModel):
         return value
 
 
+def _validate_string_keys(value: ManifestValue, path: str) -> None:
+    if isinstance(value, list):
+        for idx, item in enumerate(value):
+            _validate_string_keys(item, f"{path}[{idx}]")
+        return
+    if not isinstance(value, Mapping):
+        return
+    for key, nested in value.items():
+        if not isinstance(key, str):
+            raise ValueError(
+                f"Non-string key '{path}.{key}' ({type(key).__name__}) "
+                f"is not permitted in '{FIELD_ENV_APP}:' overrides; "
+                "all keys must be strings."
+            )
+        _validate_string_keys(nested, f"{path}.{key}")
+
+
+def validate_app_overlay_mapping(
+    mapping: ManifestValue, *, prefix: str = FIELD_ENV_APP
+) -> None:
+    """Validate ``app:`` overlay key types and reject forbidden App fields."""
+    if not isinstance(mapping, Mapping):
+        raise ValueError(
+            f"'{prefix}' must be a mapping, got {type(mapping).__name__}"
+        )
+    _validate_string_keys(mapping, prefix)
+    for key in mapping:
+        if key in FORBIDDEN_APP_KEYS:
+            raise ValueError(
+                f"Forbidden key '{prefix}.{key}' in '{FIELD_ENV_APP}:' "
+                "overrides: server-managed, read-only, or lock-controlled "
+                "CES App fields cannot be set via env manifests."
+            )
+
+
 class EnvManifest(_StrictModel):
     """Environment template manifest (``envs/<environment>.yaml``).
 
@@ -166,11 +216,24 @@ class EnvManifest(_StrictModel):
     ``{env}``, ``{channel}`` and ``{service}`` placeholders. They are
     exposed to app files as ``@@env.<key>@@`` (or
     ``@@env.<key>:<service>@@`` when the template uses ``{service}``).
+
+    ``overrides`` deep-merges into ``environment.json``, while the optional
+    ``app`` mapping deep-merges into ``app.{json,yaml,yml}`` before
+    profile-derived settings are applied and is validated against the CES
+    ``App`` schema.
     """
 
     environment: str = Field(pattern=r"^[a-z0-9_-]{1,32}$")
     templates: dict[str, str] = Field(default_factory=dict)
     overrides: dict[str, ManifestValue] = Field(default_factory=dict)
+    app: dict[str, ManifestValue] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_raw_app_block(cls, data: ManifestValue) -> ManifestValue:
+        if isinstance(data, dict) and data.get(FIELD_ENV_APP) is not None:
+            validate_app_overlay_mapping(data[FIELD_ENV_APP])
+        return data
 
     @model_validator(mode="before")
     @classmethod

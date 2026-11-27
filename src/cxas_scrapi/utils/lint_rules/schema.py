@@ -21,9 +21,11 @@ Ported from ``utils/validator.py`` — the linter is now the single
 validation tool.
 """
 
+import copy
 import json
 import re
 import typing
+from collections.abc import Mapping
 from pathlib import Path
 
 import proto
@@ -351,6 +353,68 @@ def _strip_v1main_only_fields(data: typing.Any, target: str) -> None:
             types.Evaluation.Scenario,
             ("milestones", "initialEvent", "initial_event"),
         )
+
+
+def _pop_legacy_app_tools(payload: dict[str, typing.Any]) -> str | None:
+    """Remove app-level custom ``tools`` and validate legacy remote tools."""
+    if "tools" not in payload:
+        return None
+    embedded_tools = payload.pop("tools")
+    if getattr(types, "RemoteAgentTool", None) is not None or not isinstance(
+        embedded_tools, list
+    ):
+        return None
+    for item in embedded_tools:
+        if isinstance(item, dict):
+            err = _validate_legacy_remote_agent_tool(item)
+            if err is not None:
+                return err
+    return None
+
+
+def validate_app_config_data(
+    data: Mapping[str, typing.Any],
+    app_root: Path,
+    *,
+    env_file: Path | None = None,
+) -> list[str]:
+    """Validate an in-memory App config dict against ``types.App`` (V001).
+
+    Returns a list of error strings (empty if valid). Does not mutate ``data``.
+    """
+    from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
+        resolve_env_booleans_for_lint,
+    )
+
+    payload: dict[str, typing.Any] = copy.deepcopy(dict(data))
+    try:
+        payload = _resolve_paths(payload, (), str(app_root))
+    except FileNotFoundError as exc:
+        return [f"Missing referenced file: {exc}"]
+
+    tool_err = _pop_legacy_app_tools(payload)
+    if tool_err is not None:
+        return [tool_err]
+
+    for key in [k for k in payload if k.startswith("_comment_")]:
+        payload.pop(key)
+
+    try:
+        _validate_fields(payload, types.App, path="app")
+    except ValueError as exc:
+        return [str(exc)]
+
+    _strip_v1main_only_fields(payload, "app_config")
+    resolve_env_booleans_for_lint(
+        payload, "app", app_root.name, app_root, env_file=env_file
+    )
+
+    try:
+        obj = types.App()
+        json_format.ParseDict(payload, obj._pb, ignore_unknown_fields=False)
+    except (json_format.ParseError, ValueError, TypeError) as exc:
+        return [f"Proto schema validation failed: {exc}"]
+    return []
 
 
 # ── Schema validation rule ───────────────────────────────────────────────
