@@ -299,7 +299,7 @@ def test_package_rejects_symlinks(tmp_path: Path) -> None:
     assert target_file.read_text("utf-8") == "do not overwrite"
 
 
-# Reproduces QA-002: app.yml skips $env_var and boolean env resolution.
+# Resolve $env_var variable defaults and boolean overrides for app.yml configs.
 def test_package_app_yml_resolves_env_vars_and_booleans(
     tmp_path: Path,
 ) -> None:
@@ -356,7 +356,7 @@ def test_package_app_yml_resolves_env_vars_and_booleans(
     assert staged["languageSettings"]["enableMultilingualSupport"] is True
 
 
-# Reproduces QA-004: package_app_archive corrupts unquoted YAML 1.2 `no` to False.
+# Preserve unquoted YAML 1.2 `no` language codes when packaging app.yaml.
 def test_package_app_yaml_preserves_yaml12_language_code_no(
     tmp_path: Path,
 ) -> None:
@@ -397,3 +397,82 @@ def test_package_app_yaml_preserves_yaml12_language_code_no(
         staged = yaml.safe_load(zf.read("app.yaml").decode("utf-8"))
     assert staged["languageSettings"]["defaultLanguageCode"] == "no"
     assert staged["languageSettings"]["supportedLanguageCodes"] == ["en", "no"]
+
+
+def test_package_app_archive_resolves_tool_and_toolset_env_vars(
+    tmp_path: Path,
+) -> None:
+    app_dir = tmp_path / "app_tool_env"
+    (app_dir / "tools" / "crm_lookup").mkdir(parents=True)
+    (app_dir / "toolsets" / "erp_conn").mkdir(parents=True)
+    (app_dir / "app.json").write_text(
+        json.dumps({"displayName": "Tool Env App"}), encoding="utf-8"
+    )
+    (app_dir / "tools" / "crm_lookup" / "crm_lookup.json").write_text(
+        json.dumps(
+            {
+                "displayName": "crm_lookup",
+                "openApiTool": {
+                    "name": "crm_lookup",
+                    "url": "$env_var",
+                    "openApiSchema": "openapi: 3.0.0\ninfo:\n  title: CRM\n  version: '1.0'\npaths: {}\n",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (app_dir / "toolsets" / "erp_conn" / "erp_conn.json").write_text(
+        json.dumps(
+            {
+                "displayName": "erp_conn",
+                "connectorToolset": {
+                    "connection": "$env_var",
+                    "connectorActions": [
+                        {
+                            "entityOperation": {
+                                "entityId": "Orders",
+                                "operation": "LIST",
+                            }
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env_file = tmp_path / "prod_env.json"
+    env_file.write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "crm_lookup": {
+                        "openApiTool": {"url": "https://crm.prod.example.com"}
+                    }
+                },
+                "toolsets": {
+                    "erp_conn": {
+                        "connectorToolset": {
+                            "connection": (
+                                "projects/demo/locations/us-central1/"
+                                "connections/erp-prod"
+                            )
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    zip_path = package_app_archive(app_dir, tmp_path / "tools.zip", env_file)
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        staged_tool = json.loads(
+            zf.read("tools/crm_lookup/crm_lookup.json").decode("utf-8")
+        )
+        staged_ts = json.loads(
+            zf.read("toolsets/erp_conn/erp_conn.json").decode("utf-8")
+        )
+    assert staged_tool["openApiTool"]["url"] == "https://crm.prod.example.com"
+    assert staged_ts["connectorToolset"]["connection"] == (
+        "projects/demo/locations/us-central1/connections/erp-prod"
+    )

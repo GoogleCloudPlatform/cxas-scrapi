@@ -133,13 +133,16 @@ def _stage_archive_dir(
 
 
 def _resolve_staged_env(
-    temp_dir: Path, resolved_env_vars: list[str] | None
+    temp_dir: Path,
+    resolved_env_vars: list[str] | None,
+    resolved_tool_env_vars: list[str] | None = None,
 ) -> None:
-    """Resolve ``$env_var`` defaults and boolean overrides in ``temp_dir``."""
+    """Resolve ``$env_var`` defaults, booleans, and tool/toolset configs."""
     # Local import: cxas_scrapi.utils imports core.apps, avoiding
     # circular import chains during package initialization.
     from cxas_scrapi.utils.env_vars import (  # noqa: PLC0415
         resolve_app_env_variables_in_dir,
+        resolve_tool_and_toolset_env_vars_in_dir,
     )
     from cxas_scrapi.utils.tracing.app_config import (  # noqa: PLC0415
         resolve_env_booleans_in_dir,
@@ -149,6 +152,9 @@ def _resolve_staged_env(
     if resolved_env_vars is not None:
         resolved_env_vars.extend(resolved)
     resolve_env_booleans_in_dir(str(temp_dir))
+    resolved_tools = resolve_tool_and_toolset_env_vars_in_dir(temp_dir)
+    if resolved_tool_env_vars is not None:
+        resolved_tool_env_vars.extend(resolved_tools)
 
 
 def _collect_archive_entries(
@@ -191,6 +197,7 @@ def package_app_archive(
     wrapper_dir: str | None = None,
     resolve_env: bool = True,
     resolved_env_vars: list[str] | None = None,
+    resolved_tool_env_vars: list[str] | None = None,
 ) -> Path:
     """Creates a deterministic ZIP archive from ``app_dir``.
 
@@ -198,12 +205,15 @@ def package_app_archive(
     top level of ``app_dir``. Sorts entries and normalizes ZIP metadata so
     identical inputs produce byte-identical archives.
 
-    When ``resolve_env`` is True (or ``resolved_env_vars`` is provided),
-    ``"$env_var"`` variable defaults and boolean environment overrides in the
-    staged app config are resolved from the staged ``environment.json`` (after
-    ``env_file`` is applied). If ``resolved_env_vars`` is a list, resolved
-    variable names are appended to it. Raises ``ValueError`` if a placeholder
-    cannot be resolved, a symlink is encountered, or ``wrapper_dir`` is unsafe.
+    When ``resolve_env`` is True (or ``resolved_env_vars`` /
+    ``resolved_tool_env_vars`` is provided), ``"$env_var"`` variable defaults,
+    boolean environment overrides, and tool/toolset ``"$env_var"`` placeholders
+    in the staged app are resolved from the staged ``environment.json`` (after
+    ``env_file`` is applied). If ``resolved_env_vars`` or
+    ``resolved_tool_env_vars`` is a list, resolved app variable names and
+    tool/toolset placeholders are appended to them respectively. Raises
+    ``ValueError`` if a placeholder cannot be resolved, a symlink is
+    encountered, or ``wrapper_dir`` is unsafe.
     """
     raw_app_dir = Path(app_dir)
     _reject_symlink(raw_app_dir, "app_dir")
@@ -232,8 +242,14 @@ def package_app_archive(
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         _stage_archive_dir(resolved_app_dir, temp_dir, resolved_env_file)
-        if resolve_env or resolved_env_vars is not None:
-            _resolve_staged_env(temp_dir, resolved_env_vars)
+        if (
+            resolve_env
+            or resolved_env_vars is not None
+            or resolved_tool_env_vars is not None
+        ):
+            _resolve_staged_env(
+                temp_dir, resolved_env_vars, resolved_tool_env_vars
+            )
         entries = _collect_archive_entries(temp_dir, wrapper_prefix)
         _write_deterministic_zip(output_zip, entries)
 

@@ -1438,7 +1438,7 @@ def test_python_token_escaping_fstrings_and_triple_quotes(
     assert rep_a.zip_path.read_bytes() == rep_b.zip_path.read_bytes()
 
 
-# Reproduces QA-003: out_dir symlink and regular-file handling in build_app.
+# Reject symlinked or regular-file out_dir targets in build_app.
 def test_build_rejects_symlink_or_regular_file_out_dir(
     tmp_path: Path,
 ) -> None:
@@ -1762,7 +1762,7 @@ def test_tokenized_entry_agent_configless_agent_exported_name_and_post_render_pr
     assert yaml_tok_cfg["tools"] == ["active_tool"]
 
 
-# Reproduces QA-001: legacy {@startBrand_*} and unknown conditional tags pass through.
+# Reject legacy {@startBrand_*} and unknown conditional tag kinds fail-fast.
 @pytest.mark.parametrize(
     "content",
     [
@@ -1787,7 +1787,7 @@ def test_unknown_and_legacy_brand_conditional_tags_fail_fast(
         )
 
 
-# Reproduces QA-002: symlinked .cxas-build-output marker bypasses unrelated dir guard.
+# Ensure a symlinked .cxas-build-output marker cannot bypass the unrelated dir guard.
 def test_symlinked_build_marker_cannot_bypass_unrelated_out_dir_guard(
     tmp_path: Path,
 ) -> None:
@@ -1810,7 +1810,7 @@ def test_symlinked_build_marker_cannot_bypass_unrelated_out_dir_guard(
     assert thesis.read_text("utf-8") == "important document"
 
 
-# Reproduces QA-003: agent <id>.yaml with block conditionals fails in pruning.
+# Ensure agent <id>.yaml files with block conditionals build cleanly during pruning.
 def test_agent_yaml_with_block_conditionals_builds_cleanly(
     tmp_path: Path,
 ) -> None:

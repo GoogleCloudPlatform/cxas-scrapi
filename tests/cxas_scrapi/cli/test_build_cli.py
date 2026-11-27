@@ -407,7 +407,7 @@ def test_cli_e2e_user_errors_no_tracebacks_and_help_intact(
     assert "package" in root_help
 
 
-# Reproduces QA-001: CLI `cxas package` resolves symlinks before validation.
+# Reject symlinked --app-dir and --env-file paths before resolving in `cxas package`.
 def test_cli_package_rejects_symlink_app_dir_and_env_file(
     tmp_path: Path,
 ) -> None:
