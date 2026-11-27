@@ -176,6 +176,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | C012 | `after-model-unreturned-response` | Error | `after_model_callback` mutates or constructs `LlmResponse` without returning it |
     | C018 | `callback-llm-response-traps` | Error | Catches `Part.from_text(partial=...)`, `Part.from_end_session(session_escalated=...)`, `partial=True` hazards, and empty `parts=[]` |
     | C019 | `sandbox-typing-and-imports` | Error | Unimported `typing` annotations, blocked sandbox HTTP/process imports, or `ThreadPoolExecutor` + `tools.*` (callbacks and tools) |
+    | C024 | `voice-before-model-request-mutation` | Warning | Live native-audio voice models ignore `before_model` `llm_request` mutations |
 
     ---
 
@@ -251,6 +252,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Fix:* Fix the syntax error. Run `python -m py_compile python_code.py` locally to check.
 
+    ---
+
+    **C024 — voice-before-model-request-mutation**
+
+    Live native-audio voice streaming models (`gemini-2.5-flash-native-audio-preview`, `gemini-3-flash-native-audio`, `gemini-3.0-flash-native-audio-preview`, `gemini-3.1-flash-live`) ignore `before_model_callback` mutations to `llm_request`. Cascaded models (such as `gemini-composite-v1`) are unaffected.
+
+    *Triggers:* A `before_model_callbacks` Python file mutates the `llm_request` argument (assignments, deletions, `hide_tool()`, or list/dict mutators such as `append`/`extend`/`insert`/`pop`/`remove`/`clear`/`update`/`setdefault`) on a live native-audio model.
+
+    *Fix:* Configure channel-specific tools and prompts statically or move dynamic gating into `before_tool_callback`.
+
 === "T — Tools"
 
     Rules in the `T` category check tool `python_code.py` files.
@@ -262,13 +273,18 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | T004 | `tool-fn-name` | Warning | Tool function name should match tool directory name |
     | T005 | `tool-high-cardinality` | Info | High-cardinality input arguments |
     | T006 | `tool-return-explosion` | Info | Tool returning excessive data |
-    | T008 | `tool-displayname-unreferenced` | Warning | Tool displayName not referenced by any agent |
+    | T008 | `tool-displayname-unreferenced` | Warning | Tool displayName not referenced by any reachable agent (supports JSON/YAML agents, callbacks, and attached guardrails) |
     | T009 | `tool-kwargs-signature` | Error | Tool function uses `**kwargs` |
     | T010 | `tool-python-syntax` | Error | Tool Python file must have valid syntax |
     | T011 | `tool-none-default` | Error | Tool parameter uses `None` as default value |
     | T012 | `tool-json-missing-description` | Error | Tool JSON configuration must include description |
     | T015 | `tool-entry-first-def` | Error | Entry tool function must be the first top-level `def` in `python_code.py` |
     | T016 | `tool-return-dict-annotation` | Warning | Python tool entry function should declare a `-> dict` return annotation |
+    | T017 | `data-store-filter-template` | Error | Detects template syntax (`{...}` or `{{...}}`) in data store static filters |
+    | T018 | `data-store-filter-parameter-behavior` | Error | Static-filtered `dataStoreTool` must not set `ALWAYS_INCLUDE` (or omit `filterParameterBehavior` on connector datastores) |
+    | T019 | `data-store-voice-modality` | Warning | Voice deployments require an `AUDIO` modality config on `dataStoreTool` |
+    | T020 | `tool-env-var-parity` | Warning | Complements `A018` by warning when `environment.json` is missing despite tool/toolset `$env_var` placeholders, or contains stale/dangling `tools`/`toolsets` entries |
+    | T021 | `openapi-schema-valid` | Error | OpenAPI schema files must be valid YAML with non-empty `paths` and valid `servers[].url` |
 
     ---
 
@@ -291,6 +307,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     Arguments like `timestamp`, `latitude/longitude`, or internal `session_id`/`request_id` values are hard for users to express, especially in voice mode.
 
     *Fix:* Design arguments that a human can express naturally (e.g., `region`, `category`, `last_n_days`).
+
+    ---
+
+    **T008 — tool-displayname-unreferenced**
+
+    Checks that each tool under `tools/` is attached to at least one reachable agent's `tools` list (supporting both JSON and YAML agent configs), invoked in reachable agent/tool Python code, or referenced by an attached guardrail's `action.toolCall`.
+
+    *Triggers:* A tool is not referenced by any agent, or is attached exclusively to orphaned/unreachable agents that cannot be reached from `rootAgent`.
+
+    *Fix:* Attach the tool to a reachable agent, wire its owning agent into `childAgents`, or remove the unused tool directory.
 
     ---
 
@@ -317,6 +343,52 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* The description field is missing or empty in the tool's JSON configuration (and, for `pythonFunction` tools, the Python tool function also lacks a docstring).
 
     *Fix:* Add a docstring to the Python tool function or a `'description'` key within the tool type object (`pythonFunction`, `remoteAgentTool`, `widgetTool`, etc.) in the tool's JSON file.
+
+    ---
+
+    **T017 — data-store-filter-template**
+
+    *Triggers:* When a data store tool (or its sources) contains template syntax (`{...}` or `{{...}}`) inside a static `filter`.
+
+    *Fix:* Remove the template syntax. Static filters do not support variable interpolation.
+
+    ---
+
+    **T018 — data-store-filter-parameter-behavior**
+
+    Aligns with `google.cloud.ces_v1.types.DataStoreTool.FilterParameterBehavior`: non-connector datastores omit the LLM filter parameter by default when `filterParameterBehavior` is unspecified (`0`), whereas connector datastores include it unless `NEVER_INCLUDE` (`3`) is set.
+
+    *Triggers:* `Error` when a `dataStoreTool` with a static `filter` sets `filterParameterBehavior` to `ALWAYS_INCLUDE` (`2`), or `Warning` when a connector datastore (`connectorConfig` or `type: CONNECTOR`) with a static `filter` omits `filterParameterBehavior` / leaves it unspecified (`0`).
+
+    *Fix:* Set `filterParameterBehavior` to `NEVER_INCLUDE` (or omit it for non-connector datastores).
+
+    ---
+
+    **T019 — data-store-voice-modality**
+
+    *Triggers:* When a data store tool lacks an `AUDIO` (or protobuf enum `2`) configuration block in `modalityConfigs`, does not disable `rewriterConfig`/`summarizationConfig` inside that block, or lacks a `snippetsConfig` in a voice app (declared via `deployments/*.{yaml,yml}` `modality` or `channelType`, `defaultChannelProfile` `modality`/`channelType`, or a voice `modelSettings.model`).
+
+    *Fix:* Add an `AUDIO` configuration to `modalityConfigs`, ensure `rewriterConfig.disabled` and `summarizationConfig.disabled` are both `true`, and provide a valid `snippetsConfig`.
+
+    ---
+
+    **T020 — tool-env-var-parity**
+
+    Complements `A018` (`tool-and-toolset-env-vars`, which validates forward `"$env_var"` placeholder resolution when `environment.json` or `--env-file` is present) by warning when default `environment.json` is missing while tools/toolsets reference `"$env_var"`, and checking the reverse direction for stale or dangling `environment.json` `tools` and `toolsets` entries using case-sensitive matching consistent with `A018` and `cxas push`.
+
+    *Triggers:* Default `environment.json` is absent while tools/toolsets use `"$env_var"` (`Warning`), or `environment.json` (or `--env-file`) defines a `tools` or `toolsets` key that does not match any local tool or toolset under `tools/` / `toolsets/` by exact directory name, `displayName`, tool sub-object `name`, or CES resource path (`Warning`).
+
+    *Fix:* Create `environment.json` (or pass `--env-file`), remove stale entries from `environment.json`, or fix casing to match the local tool/toolset.
+
+    ---
+
+    **T021 — openapi-schema-valid**
+
+    Validates every OpenAPI schema YAML under `tools/` and `toolsets/` (discovered via `openApiSchema` or `open_api_schema.{yaml,yml}`).
+
+    *Triggers:* Unreadable/non-UTF-8 file, invalid YAML syntax, non-mapping root, missing or empty `paths`, non-list `servers`, or invalid/blank `servers[].url` (must be `http(s)://...`, relative `/...`, or `$env_var`).
+
+    *Fix:* Fix the OpenAPI schema YAML structure, paths, and server URLs.
 
 === "E — Evals"
 
@@ -394,6 +466,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
     | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
     | A018 | `tool-and-toolset-env-vars` | Error | Validates `"$env_var"` placeholders across `tools/` and `toolsets/` manifests against `environment.json` |
+    | A019 | `voice-language-tts-parity` | Error | Validates `languageSettings` default/supported/multilingual parity and voice `synthesizeSpeechConfigs` coverage |
 
     ---
 
@@ -437,6 +510,14 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Fix:* Define the concrete environment-specific value under `tools.<displayName_or_dir>` or `toolsets.<displayName_or_dir>` in `environment.json` (or `--env-file`).
 
+    ---
+
+    **A019 — voice-language-tts-parity**
+
+    Validates `languageSettings` across all JSON/YAML apps (`app.{json,yaml,yml}`): `defaultLanguageCode` must appear in `supportedLanguageCodes` when non-empty (`Error`, case-insensitive BCP-47 match), multiple `supportedLanguageCodes` should not explicitly set `enableMultilingualSupport: false` (`Warning`), and when a voice app defines `audioProcessingConfig`, each supported language should have a non-empty `audioProcessingConfig.synthesizeSpeechConfigs` entry (`Warning`, case-insensitive BCP-47 match).
+
+    *Fix:* Align `defaultLanguageCode`, `supportedLanguageCodes`, `enableMultilingualSupport`, and `audioProcessingConfig.synthesizeSpeechConfigs`.
+
 === "S — Structure"
 
     Rules in the `S` category perform cross-reference checks between multiple files.
@@ -455,6 +536,12 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S011 | `agent-resource-references` | Error | Agent JSON references guardrails, toolsets, or `instruction` files that don't exist |
     | S012 | `tool-file-references` | Error | Tool JSON references `pythonCode` or `openApiSchema` files that don't exist |
     | S013 | `toolset-file-references` | Error | Toolset JSON references `openApiSchema` files that don't exist |
+    | S014 | `agent-tree-cycle` | Error | Agent `childAgents` hierarchy contains a cycle (self-loop, multi-hop, or disconnected) |
+    | S015 | `orphaned-agent` | Warning | Agent directory under `agents/` is not reachable from `rootAgent` via `childAgents` |
+    | S016 | `unused-toolset` | Warning | Toolset under `toolsets/` is not attached to any reachable agent |
+    | S017 | `unused-guardrail` | Warning | Guardrail under `guardrails/` is not attached to the app or any reachable agent |
+    | S018 | `agent-ref-self-or-orphan` | Warning | Instruction `{@AGENT:}` targets the current agent (self-transfer) or an orphaned/unreachable agent |
+    | S019 | `guardrail-jinja-syntax` | Error | Guardrail policy prompt (`llmPolicy` / `llmPromptSecurity.customPolicy`) contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`) |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 
@@ -491,6 +578,64 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     **S013 — toolset-file-references**
 
     Validates that `openApiToolset.openApiSchema` file paths in `<toolset>.json` exist on disk when non-inline paths are specified.
+
+    ---
+
+    **S014 — agent-tree-cycle**
+
+    CES enforces a strict tree hierarchy for `childAgents`. Cyclic parent-child references fail validation or create ambiguous delegation loops.
+
+    *Triggers:* Any cycle in `childAgents` (self-loops, 2-node or multi-hop cycles, whether reachable from `rootAgent` or disconnected), resolving JSON/YAML agent configs by directory name, `displayName`, `name`, or CES resource path.
+
+    *Fix:* Remove the cyclic reference from `childAgents` so agents form an acyclic tree.
+
+    ---
+
+    **S015 — orphaned-agent**
+
+    Detects dead agent directories under `agents/` that cannot be reached from `rootAgent` by traversing `childAgents` (supports both JSON and YAML apps). Stays silent when `rootAgent` is missing or invalid so `A006` reports the root cause without noise.
+
+    *Triggers:* An agent directory under `agents/` is not reachable from `rootAgent`.
+
+    *Fix:* Add the agent to a reachable parent's `childAgents` list, or delete the unused agent directory.
+
+    ---
+
+    **S016 — unused-toolset**
+
+    Detects toolsets under `toolsets/` (directories or flat `.json`/`.yaml`/`.yml` configs) that are never attached to any agent, or are attached exclusively to unreachable agents.
+
+    *Triggers:* A toolset is not listed in any agent's `toolsets` array (dict `{toolset: ...}` or string entries, including full CES resource paths), or is only attached to agents unreachable from `rootAgent`.
+
+    *Fix:* Attach the toolset to a reachable agent, wire its owning agent into `childAgents`, or remove the unused toolset.
+
+    ---
+
+    **S017 — unused-guardrail**
+
+    Detects guardrails under `guardrails/` (directories or flat `.json`/`.yaml`/`.yml` configs) that are not attached to `app.{json,yaml,yml}` or any reachable agent.
+
+    *Triggers:* A guardrail is absent from both app-level `guardrails` and every agent's `guardrails` list, or is only attached to agents unreachable from `rootAgent`.
+
+    *Fix:* Attach the guardrail to the app or a reachable agent, wire its owning agent into `childAgents`, or remove the unused guardrail.
+
+    ---
+
+    **S018 — agent-ref-self-or-orphan**
+
+    Scans agent instructions (custom `instruction` path or `instruction.txt`) for `{@AGENT: ...}` references targeting either the current agent itself (self-transfer) or an orphaned/unreachable agent.
+
+    *Triggers:* `{@AGENT: <target>}` resolves to the owning agent directory or an agent unreachable from `rootAgent`.
+
+    *Fix:* Remove the self-transfer or wire the target agent into `childAgents`.
+
+    ---
+
+    **S019 — guardrail-jinja-syntax**
+
+    *Triggers:* When a JSON or YAML guardrail's `llmPolicy.prompt` or `llmPromptSecurity.customPolicy.prompt` contains Jinja tokens (`{{...}}`, `{% ... %}`, or `{# ... #}`).
+
+    *Fix:* Use flat `{variable}` placeholders or pre-rendered static text instead of Jinja templates.
 
 === "V — Schema"
 

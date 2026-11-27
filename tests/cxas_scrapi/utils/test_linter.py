@@ -16,6 +16,7 @@
 """Tests for the linter framework, configuration, discovery, and runner."""
 
 import json
+import sys
 import typing
 
 import pytest
@@ -241,7 +242,7 @@ def test_reset_registry() -> None:
 
     registry_restored = build_registry()
     assert len(registry_restored.all_rules()) == initial_count
-    assert len(registry_restored.all_rules()) == 107  # noqa: PLR2004
+    assert len(registry_restored.all_rules()) == 120  # noqa: PLR2004
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -543,7 +544,59 @@ def test_discovery_filtering(tmp_path: typing.Any) -> None:
 def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
-    assert len(all_rules) == 107  # noqa: PLR2004
+    assert len(all_rules) == 120  # noqa: PLR2004
+
+
+def test_all_registered_rule_ids_are_unique() -> None:
+    """Every built-in (rule_id, category) is unique and each ID has one name."""
+    registry = build_registry()
+    all_rules = registry.all_rules()
+
+    # Inspect live module globals under lint_rules/ (avoids stale reloaded
+    # classes kept in Rule.__subclasses__() after test_reset_registry).
+    by_id_category: dict[tuple[str, str], set[type[Rule]]] = {}
+    for mod_name, mod in list(sys.modules.items()):
+        if not mod_name.startswith("cxas_scrapi.utils.lint_rules.") or not mod:
+            continue
+        for obj in vars(mod).values():
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, Rule)
+                and obj is not Rule
+                and obj.__module__ == mod_name
+                and obj.id
+                and obj.category
+            ):
+                by_id_category.setdefault((obj.id, obj.category), set()).add(
+                    obj
+                )
+
+    duplicates = {
+        key: sorted(c.__name__ for c in classes)
+        for key, classes in by_id_category.items()
+        if len(classes) > 1
+    }
+    assert duplicates == {}, f"Duplicate (id, category) rules: {duplicates}"
+
+    # Every statically defined rule class must survive in the registry
+    # (catches silent overwrites on duplicate (id, category) registration).
+    registered_by_key = {(r.id, r.category): type(r) for r in all_rules}
+    assert len(registered_by_key) == len(all_rules)
+    for key, classes in by_id_category.items():
+        (expected_cls,) = classes
+        assert registered_by_key.get(key) is expected_cls, (
+            f"Rule {key} ({expected_cls.__name__}) missing or overwritten"
+        )
+
+    id_to_names: dict[str, set[str]] = {}
+    for r in all_rules:
+        id_to_names.setdefault(r.id, set()).add(r.name)
+    mismatched = {
+        rid: sorted(names)
+        for rid, names in id_to_names.items()
+        if len(names) > 1
+    }
+    assert mismatched == {}, f"Rule ID mapped to multiple names: {mismatched}"
 
 
 def test_build_context(tmp_path: typing.Any) -> None:

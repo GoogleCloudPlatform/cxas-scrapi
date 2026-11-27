@@ -859,9 +859,37 @@ def _collect_placeholders_from_dict(
                         )
 
 
+def _detect_default_openapi_schema_placeholder(
+    root: Path,
+    category: str,
+    entry: str,
+) -> tuple[tuple[str, str], Path | None, bool] | None:
+    """Check default CES export OpenAPI schema files for ``$env_var``."""
+    default_folder = (
+        "open_api_toolset" if category == "toolsets" else "open_api_tool"
+    )
+    default_oa_key = (
+        "openApiToolset" if category == "toolsets" else "openApiTool"
+    )
+    for ext in (".yaml", ".yml"):
+        candidate_path = (
+            root / category / entry / default_folder / f"open_api_schema{ext}"
+        )
+        if candidate_path.is_symlink() or not candidate_path.is_file():
+            continue
+        try:
+            raw = candidate_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if ENV_VAR_PLACEHOLDER in raw:
+            return (default_oa_key, "url"), candidate_path, False
+    return None
+
+
 def _detect_openapi_schema_placeholder(
     root: Path,
     category: str,
+    entry: str,
     data: dict[str, Any],
 ) -> tuple[tuple[str, str], Path | None, bool] | None:
     """Return ``((oa_key, 'url'), schema_path, is_inline)`` if OpenAPI schema
@@ -888,14 +916,14 @@ def _detect_openapi_schema_placeholder(
             return (oa_key, "url"), None, True
         if "\n" not in schema_val:
             candidate_path = root / schema_val
-            if candidate_path.is_file():
+            if not candidate_path.is_symlink() and candidate_path.is_file():
                 try:
                     raw = candidate_path.read_text(encoding="utf-8")
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     return None
                 if ENV_VAR_PLACEHOLDER in raw:
                     return (oa_key, "url"), candidate_path, False
-    return None
+    return _detect_default_openapi_schema_placeholder(root, category, entry)
 
 
 def collect_tool_and_toolset_env_var_placeholders(
@@ -913,7 +941,7 @@ def collect_tool_and_toolset_env_var_placeholders(
         for entry, mpath in _iter_category_manifests(root, category):
             try:
                 data = _load_config_file(mpath)
-            except (json.JSONDecodeError, yaml.YAMLError, OSError):
+            except (ValueError, yaml.YAMLError, OSError):
                 continue
             if not isinstance(data, dict):
                 continue
@@ -938,7 +966,9 @@ def collect_tool_and_toolset_env_var_placeholders(
                     )
                 )
 
-            oa_hit = _detect_openapi_schema_placeholder(root, category, data)
+            oa_hit = _detect_openapi_schema_placeholder(
+                root, category, entry, data
+            )
             if oa_hit is not None:
                 oa_url_path, schema_path, is_inline = oa_hit
                 if oa_url_path not in seen_paths:
