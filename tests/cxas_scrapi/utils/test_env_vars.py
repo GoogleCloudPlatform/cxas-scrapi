@@ -925,8 +925,13 @@ def test_openapi_schema_path_traversal_and_symlink_rejected_without_touching_ext
             encoding="utf-8",
         )
 
+        # Default passive collection (used by cxas pull) does not crash.
+        assert collect_tool_and_toolset_env_var_placeholders(app_dir) == []
+
         with pytest.raises(ValueError, match=r"escapes app|Symlinks"):
-            collect_tool_and_toolset_env_var_placeholders(app_dir)
+            collect_tool_and_toolset_env_var_placeholders(
+                app_dir, strict_schema_paths=True
+            )
 
         with pytest.raises(ValueError, match=r"escapes app|Symlinks"):
             resolve_tool_and_toolset_env_vars_in_dir(app_dir)
@@ -946,6 +951,48 @@ def test_openapi_schema_path_traversal_and_symlink_rejected_without_touching_ext
         )
         assert len(lint_results) == 1
         assert external_schema.read_text(encoding="utf-8") == original_content
+
+
+def test_external_openapi_schema_without_env_var_does_not_break_push_pull_or_package(
+    tmp_path: Path,
+) -> None:
+    from cxas_scrapi.core.packaging import package_app_archive  # noqa: PLC0415
+
+    external_schema = tmp_path / "shared.yaml"
+    plain_content = (
+        "openapi: 3.0.0\nservers:\n  - url: https://shared.example.com\n"
+    )
+    external_schema.write_text(plain_content, encoding="utf-8")
+
+    app_dir = tmp_path / "app"
+    tool_dir = app_dir / "tools" / "plain_api"
+    tool_dir.mkdir(parents=True)
+    (app_dir / "app.json").write_text(
+        json.dumps({"displayName": "Plain App"}), encoding="utf-8"
+    )
+    (tool_dir / "plain_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "plain_api",
+                "openApiTool": {"openApiSchema": "../shared.yaml"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert collect_tool_and_toolset_env_var_placeholders(app_dir) == []
+    assert (
+        collect_tool_and_toolset_env_var_placeholders(
+            app_dir, strict_schema_paths=True
+        )
+        == []
+    )
+    assert validate_tool_and_toolset_env_vars(app_dir, {}) == ([], [], [])
+    assert resolve_tool_and_toolset_env_vars_in_dir(app_dir) == []
+    assert preserve_tool_and_toolset_env_vars_on_pull(app_dir, []) == []
+    zip_path = package_app_archive(app_dir, tmp_path / "plain.zip")
+    assert zip_path.is_file()
+    assert external_schema.read_text(encoding="utf-8") == plain_content
 
 
 def test_openapi_url_and_schema_both_resolved_when_both_use_env_var(

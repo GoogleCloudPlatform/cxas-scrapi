@@ -136,6 +136,8 @@ def _resolve_staged_env(
     temp_dir: Path,
     resolved_env_vars: list[str] | None,
     resolved_tool_env_vars: list[str] | None = None,
+    *,
+    source_app_dir: Path | None = None,
 ) -> None:
     """Resolve ``$env_var`` defaults, booleans, and tool/toolset configs."""
     # Local import: cxas_scrapi.utils imports core.apps, avoiding
@@ -152,7 +154,9 @@ def _resolve_staged_env(
     if resolved_env_vars is not None:
         resolved_env_vars.extend(resolved)
     resolve_env_booleans_in_dir(str(temp_dir))
-    resolved_tools = resolve_tool_and_toolset_env_vars_in_dir(temp_dir)
+    resolved_tools = resolve_tool_and_toolset_env_vars_in_dir(
+        temp_dir, source_app_dir=source_app_dir
+    )
     if resolved_tool_env_vars is not None:
         resolved_tool_env_vars.extend(resolved_tools)
 
@@ -198,6 +202,7 @@ def package_app_archive(
     resolve_env: bool = True,
     resolved_env_vars: list[str] | None = None,
     resolved_tool_env_vars: list[str] | None = None,
+    source_app_dir: Path | None = None,
 ) -> Path:
     """Creates a deterministic ZIP archive from ``app_dir``.
 
@@ -248,7 +253,14 @@ def package_app_archive(
             or resolved_tool_env_vars is not None
         ):
             _resolve_staged_env(
-                temp_dir, resolved_env_vars, resolved_tool_env_vars
+                temp_dir,
+                resolved_env_vars,
+                resolved_tool_env_vars,
+                source_app_dir=(
+                    Path(source_app_dir).resolve()
+                    if source_app_dir is not None
+                    else resolved_app_dir
+                ),
             )
         entries = _collect_archive_entries(temp_dir, wrapper_prefix)
         _write_deterministic_zip(output_zip, entries)

@@ -1179,7 +1179,7 @@ class ToolAndToolsetEnvVars(Rule):
         app_root = file_path.parent
         try:
             placeholders = collect_tool_and_toolset_env_var_placeholders(
-                app_root
+                app_root, strict_schema_paths=True
             )
         except ValueError as e:
             return [

@@ -3553,3 +3553,213 @@ def test_yaml_anchor_merge_and_explicit_key_identity_conditionals_rejected(
             "prod",
             tmp_path / "out_anchor_identity_cond",
         )
+
+
+def test_core_snake_case_root_agent_reports_camel_case_error_and_root_agent_blame(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    (core_dir / "app.json").unlink()
+
+    # 1. core/app.yaml with snake_case root_agent (with camelCase or snake_case
+    # displayName) must fail with the clear snake_case -> camelCase error
+    # blaming core/app.yaml, NOT misleading "missing 'rootAgent'".
+    for yaml_body in (
+        "displayName: App\nroot_agent: default_agent\n",
+        "display_name: App\nroot_agent: default_agent\n",
+    ):
+        (core_dir / "app.yaml").write_text(yaml_body, encoding="utf-8")
+        with pytest.raises(BuildError) as exc_snake:
+            build_app(
+                core_dir,
+                manifests_dir,
+                "profile_1",
+                "DIGITAL_APP",
+                "prod",
+                tmp_path / "out_snake_root_only",
+            )
+        msg = str(exc_snake.value)
+        assert "core/app.yaml" in msg
+        assert "root_agent" in msg
+        assert "snake_case" in msg
+        assert "rootAgent" in msg
+        assert "missing 'rootAgent'" not in msg
+
+    # 2. rootAgent errors attribute blame accurately to core/app.* vs envs/*.
+    (core_dir / "app.yaml").write_text(
+        "displayName: App\nrootAgent: ghost_agent\n", encoding="utf-8"
+    )
+    with pytest.raises(BuildError) as exc_core_ghost:
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_core_ghost",
+        )
+    assert "core/app.yaml" in str(exc_core_ghost.value)
+    assert "envs/prod.yaml" not in str(exc_core_ghost.value)
+
+    (core_dir / "app.yaml").write_text("displayName: App\n", encoding="utf-8")
+    with pytest.raises(BuildError) as exc_core_missing:
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            tmp_path / "out_core_missing",
+        )
+    assert "core/app.yaml" in str(exc_core_missing.value)
+    assert "missing 'rootAgent'" in str(exc_core_missing.value)
+
+    (core_dir / "app.yaml").write_text(
+        "displayName: App\nrootAgent: default_agent\n", encoding="utf-8"
+    )
+    for bad_root in ("ghost_agent", "null"):
+        (manifests_dir / "envs" / "prod.yaml").write_text(
+            "environment: prod\n"
+            "templates:\n"
+            "  api: https://api.example.com/{profile_slug}/{env}/{service}\n"
+            "app:\n"
+            f"  rootAgent: {bad_root}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildError) as exc_env_root:
+            build_app(
+                core_dir,
+                manifests_dir,
+                "profile_1",
+                "DIGITAL_APP",
+                "prod",
+                tmp_path / f"out_env_{bad_root}",
+            )
+        assert "envs/prod.yaml" in str(exc_env_root.value)
+        assert "core/app.yaml" not in str(exc_env_root.value)
+
+
+def test_flow_style_yaml_nested_name_inside_dynamic_conditional_allowed(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # 1. Block-root YAML with inline flow mapping containing nested `name`.
+    block_flow = core_dir / "tools" / "block_flow_tool"
+    block_flow.mkdir()
+    (block_flow / "block_flow_tool.yaml").write_text(
+        "displayName: Block Flow Tool\n"
+        "{@startToolEnabled_active_tool}\n"
+        "parameters: {properties: {name: {type: STRING}}}\n"
+        "{@endToolEnabled_active_tool}\n",
+        encoding="utf-8",
+    )
+
+    # 2. Flow-root YAML with nested `name` inside dynamic conditional.
+    root_flow = core_dir / "tools" / "root_flow_tool"
+    root_flow.mkdir()
+    (root_flow / "root_flow_tool.yaml").write_text(
+        "{\n"
+        '  "displayName": "Root Flow Tool",\n'
+        "{@startToolEnabled_active_tool}\n"
+        '  "parameters": {"properties": {"name": {"type": "STRING"}}},\n'
+        "{@endToolEnabled_active_tool}\n"
+        '  "description": "Ok"\n'
+        "}\n",
+        encoding="utf-8",
+    )
+
+    out_ok = tmp_path / "out_flow_nested_name"
+    build_app(
+        core_dir, manifests_dir, "profile_1", "VOICE_TELEPHONY", "prod", out_ok
+    )
+    bf_cfg = yaml.safe_load(
+        (
+            out_ok / "tools" / "block_flow_tool" / "block_flow_tool.yaml"
+        ).read_text("utf-8")
+    )
+    rf_cfg = yaml.safe_load(
+        (out_ok / "tools" / "root_flow_tool" / "root_flow_tool.yaml").read_text(
+            "utf-8"
+        )
+    )
+    assert bf_cfg["parameters"]["properties"]["name"]["type"] == "STRING"
+    assert rf_cfg["parameters"]["properties"]["name"]["type"] == "STRING"
+
+    # 3. Split dynamic anchor definition + dynamic merge key must still fail.
+    split_tool = core_dir / "tools" / "split_anchor_tool"
+    split_tool.mkdir()
+    (split_tool / "split_anchor_tool.yaml").write_text(
+        "{@startToolEnabled_active_tool}\n"
+        "_base: &base\n"
+        "  displayName: secret_tool_disabled\n"
+        "{@endToolEnabled_active_tool}\n"
+        "{@startToolEnabled_active_tool}\n"
+        "<<: *base\n"
+        "{@endToolEnabled_active_tool}\n"
+        "description: Ok\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match=r"Conditional tag|identity"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_split_anchor",
+        )
+
+
+def test_build_zip_non_sibling_out_rejects_external_openapi_schema_with_env_var(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+    external_schema = tmp_path / "shared_env.yaml"
+    original_content = (
+        "openapi: 3.0.0\n"
+        "info:\n  title: External\n  version: '1.0'\n"
+        "servers:\n  - url: $env_var\n"
+        "paths: {}\n"
+    )
+    external_schema.write_text(original_content, encoding="utf-8")
+
+    ext_tool = core_dir / "tools" / "ext_openapi"
+    ext_tool.mkdir()
+    (ext_tool / "ext_openapi.json").write_text(
+        json.dumps(
+            {
+                "displayName": "ext_openapi",
+                "openApiTool": {
+                    "name": "ext_openapi",
+                    "openApiSchema": "../shared_env.yaml",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (core_dir / "environment.json").write_text(
+        json.dumps(
+            {
+                "tools": {
+                    "ext_openapi": {
+                        "openApiTool": {"url": "https://api.example.com"}
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    nested_out = tmp_path / "dist" / "profile_1" / "digital_app"
+    with pytest.raises(BuildError, match=r"escapes app directory"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "DIGITAL_APP",
+            "prod",
+            nested_out,
+            package_zip=True,
+        )
+    assert external_schema.read_text(encoding="utf-8") == original_content

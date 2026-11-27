@@ -106,8 +106,10 @@ app:
 
 `cxas build` always validates the final `app.{json,yaml,yml}` config against the
 CES `App` proto schema (`V001`), attributing errors to `core/app.*` or
-`envs/<env>.yaml`. When `app:` is present, overlays apply in deterministic order
-(later layers win):
+`envs/<env>.yaml`. Canonical camelCase CES `App` field names are required (for
+example `displayName`, `rootAgent`, `languageSettings`; `snake_case` keys such
+as `root_agent` are rejected). When `app:` is present, overlays apply in
+deterministic order (later layers win):
 
 1. `core/app.{json,yaml,yml}` (after token/conditional rendering)
 2. `envs/<env>.yaml` `app:` (tokens and conditionals inside `app:` are rendered
