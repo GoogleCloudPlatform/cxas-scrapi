@@ -490,6 +490,38 @@ class LintConfig:
 
 # ── Discovery ────────────────────────────────────────────────────────────
 
+AGENT_CONFIG_SUFFIXES: tuple[str, ...] = (".json", ".yaml", ".yml")
+
+
+def find_agent_config(agent_dir: Path, name: str | None = None) -> Path | None:
+    """Return the first matching config file in ``agent_dir``."""
+    stem = name or agent_dir.name
+    for suffix in AGENT_CONFIG_SUFFIXES:
+        candidate = agent_dir / f"{stem}{suffix}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def load_structured_config(
+    file_path: Path, content: str | None = None
+) -> dict[str, typing.Any] | None:
+    """Load a JSON or YAML mapping from ``file_path`` (or ``content``)."""
+    try:
+        text = (
+            file_path.read_text(encoding="utf-8")
+            if content is None
+            else content
+        )
+        data = (
+            yaml.safe_load(text)
+            if file_path.suffix in (".yaml", ".yml")
+            else json.loads(text)
+        )
+    except (json.JSONDecodeError, yaml.YAMLError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
 
 class Discovery:
     """Discovers agents, tools, callbacks, evals, and configs.
@@ -555,9 +587,9 @@ class Discovery:
                 if inst.exists():
                     result[d.name] = inst
                 else:
-                    json_file = d / f"{d.name}.json"
-                    if json_file.exists():
-                        result[d.name] = json_file
+                    cfg_file = find_agent_config(d)
+                    if cfg_file is not None:
+                        result[d.name] = cfg_file
         return result
 
     def discover_tools(self) -> dict[str, Path]:
@@ -673,7 +705,7 @@ class Discovery:
         return None
 
     def discover_agent_configs(self) -> dict[str, Path]:
-        """Return ``{agent_name: json_path}`` for all agent configs."""
+        """Return ``{agent_name: config_path}`` for all agent configs."""
         if not self.app_root:
             return {}
         agents_dir = self.app_root / "agents"
@@ -687,9 +719,9 @@ class Discovery:
                     and d.name not in self.limit_agents
                 ):
                     continue
-                json_file = d / f"{d.name}.json"
-                if json_file.exists():
-                    result[d.name] = json_file
+                cfg_file = find_agent_config(d)
+                if cfg_file is not None:
+                    result[d.name] = cfg_file
         return result
 
     def discover_agent_models(self) -> dict[str, str]:
@@ -697,19 +729,14 @@ class Discovery:
         configs = self.discover_agent_configs()
         result = {}
         for name, path in configs.items():
-            try:
-                data = json.loads(path.read_text())
-                model_settings = (
-                    data.get("modelSettings")
-                    or data.get("model_settings")
-                    or {}
-                )
-                if isinstance(model_settings, dict) and model_settings.get(
-                    "model"
-                ):
-                    result[name] = model_settings["model"]
-            except Exception:
-                pass
+            data = load_structured_config(path)
+            if data is None:
+                continue
+            model_settings = (
+                data.get("modelSettings") or data.get("model_settings") or {}
+            )
+            if isinstance(model_settings, dict) and model_settings.get("model"):
+                result[name] = model_settings["model"]
         return result
 
     def _discover_resource_dirs(self, subdir: str) -> dict[str, Path]:
@@ -734,7 +761,10 @@ class Discovery:
         return self._discover_resource_dirs("evaluations")
 
     def discover_evaluation_expectations(self) -> dict[str, Path]:
-        return self._discover_resource_dirs("evaluation_expectations")
+        return self._discover_resource_dirs("evaluationExpectations")
+
+    def discover_evaluation_datasets(self) -> dict[str, Path]:
+        return self._discover_resource_dirs("evaluationDatasets")
 
     def dir_name_to_display(self, dir_name: str) -> str:
         """Convert directory name to display name."""
@@ -749,6 +779,7 @@ SINGLE_RESOURCE_RULES = {
     "guardrail": "V005",
     "evaluation": "V006",
     "evaluation_expectations": "V007",
+    "evaluation_datasets": "V008",
 }
 
 
@@ -877,22 +908,26 @@ def build_context(
     agent_to_parents = defaultdict(set)
 
     for parent_name, config_path in agent_configs.items():
-        try:
-            content = config_path.read_text()
-            agent_config = json.loads(content)
-            child_agents = agent_config.get("childAgents", [])
-            for child_ref in child_agents:
-                # Resolve child_ref to agent_name
-                child_name = None
-                if child_ref in agents:
-                    child_name = child_ref
-                elif child_ref in display_to_agent:
-                    child_name = display_to_agent[child_ref]
+        agent_config = load_structured_config(config_path)
+        if agent_config is None:
+            continue
+        child_agents = (
+            agent_config.get("childAgents")
+            or agent_config.get("child_agents")
+            or []
+        )
+        if not isinstance(child_agents, list):
+            continue
+        for child_ref in child_agents:
+            # Resolve child_ref to agent_name
+            child_name = None
+            if child_ref in agents:
+                child_name = child_ref
+            elif child_ref in display_to_agent:
+                child_name = display_to_agent[child_ref]
 
-                if child_name:
-                    agent_to_parents[child_name].add(parent_name)
-        except Exception:  # pylint: disable=broad-except
-            pass
+            if child_name:
+                agent_to_parents[child_name].add(parent_name)
 
     resolved_model = (
         model_override or config.model or discovery.discover_app_model()
@@ -1016,6 +1051,7 @@ def run_rules(
             "eval_expectation_config": (
                 discovery.discover_evaluation_expectations()
             ),
+            "eval_dataset_config": discovery.discover_evaluation_datasets(),
         }
         app_cfg = discovery.discover_app_config()
         if app_cfg:

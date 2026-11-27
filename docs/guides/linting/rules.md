@@ -394,6 +394,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
     | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
     | A018 | `tool-and-toolset-env-vars` | Error | Validates `"$env_var"` placeholders across `tools/` and `toolsets/` manifests against `environment.json` |
+    | A019 | `agent-composite-model-placement` | Error | Rejects `gemini-composite-*` models in agent-level `modelSettings.model` |
 
     ---
 
@@ -437,6 +438,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     *Fix:* Define the concrete environment-specific value under `tools.<displayName_or_dir>` or `toolsets.<displayName_or_dir>` in `environment.json` (or `--env-file`).
 
+    ---
+
+    **A019 - agent-composite-model-placement**
+
+    CES only accepts `gemini-composite` / `gemini-composite-*` aliases (such as `gemini-composite-v1` and `gemini-composite-v2`) at the app level (`app.json` / `app.yaml` `modelSettings.model`). Setting a composite model (including `models/...` or `publishers/.../models/...` resource prefixes) inside an agent config (`agents/<name>/<name>.json` or `.yaml`) causes `cxas push` and agent update calls to fail with a server field violation.
+
+    *Triggers:* Any non-app config sets `modelSettings.model` (or `model_settings.model`) to `gemini-composite` or `gemini-composite-*` (with or without a `models/` resource prefix).
+
+    *Fix:* Move `modelSettings.model` to `app.json` and omit it from the agent config (or set a supported per-agent non-composite model override).
+
 === "S — Structure"
 
     Rules in the `S` category perform cross-reference checks between multiple files.
@@ -455,6 +466,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | S011 | `agent-resource-references` | Error | Agent JSON references guardrails, toolsets, or `instruction` files that don't exist |
     | S012 | `tool-file-references` | Error | Tool JSON references `pythonCode` or `openApiSchema` files that don't exist |
     | S013 | `toolset-file-references` | Error | Toolset JSON references `openApiSchema` files that don't exist |
+    | S014 | `eval-resource-dir-casing` | Error | Evaluation expectation and dataset directories must use camelCase (`evaluationExpectations/` and `evaluationDatasets/`) |
 
     These rules are similar to I009 and I013 but operate at a higher level, cross-referencing the agent JSON config against the local file system.
 
@@ -492,6 +504,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
 
     Validates that `openApiToolset.openApiSchema` file paths in `<toolset>.json` exist on disk when non-inline paths are specified.
 
+    ---
+
+    **S014 - eval-resource-dir-casing**
+
+    Both `cxas push` and CES `ImportApp` archive only camelCase `evaluationExpectations/` and `evaluationDatasets/` directories at the app root and drop snake_case `evaluation_expectations/` and `evaluation_datasets/` folders.
+
+    *Triggers:* `evaluation_expectations/` or `evaluation_datasets/` exists under the app root.
+
+    *Fix:* Rename `evaluation_expectations/` to `evaluationExpectations/` and `evaluation_datasets/` to `evaluationDatasets/`.
+
 === "V — Schema"
 
     Rules in the `V` category validate resource configs against the CES protobuf schema. These catch structural issues that would cause API errors on push.
@@ -505,6 +527,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | V005 | `schema-guardrail-valid` | Error | Guardrail config conforms to CES proto schema |
     | V006 | `schema-evaluation-valid` | Error | Evaluation config conforms to CES proto schema |
     | V007 | `schema-eval-expectation-valid` | Error | Evaluation expectation config conforms to CES proto schema |
+    | V008 | `schema-eval-dataset-valid` | Error | Evaluation dataset config conforms to CES proto schema |
 
     Schema validation catches issues like unknown fields, wrong types, and missing required fields — before you try to push and get a cryptic API error.
 

@@ -2981,6 +2981,13 @@ def get_parser() -> argparse.ArgumentParser:
             " directory against CES schema."
         ),
     )
+    parser_lint.add_argument(
+        "--evaluation-datasets",
+        help=(
+            "Validate a single evaluation datasets"
+            " directory against CES schema."
+        ),
+    )
     parser_lint.set_defaults(func=app_lint)
 
     # Parser for 'llm-lint'

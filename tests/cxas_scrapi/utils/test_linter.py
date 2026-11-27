@@ -240,8 +240,10 @@ def test_reset_registry() -> None:
         importlib.reload(mod)
 
     registry_restored = build_registry()
-    assert len(registry_restored.all_rules()) == initial_count
-    assert len(registry_restored.all_rules()) == 107  # noqa: PLR2004
+    restored_rules = registry_restored.all_rules()
+    assert len(restored_rules) == initial_count
+    assert len(restored_rules) == 110  # noqa: PLR2004
+    assert {"V008", "S014", "A019"} <= {r.id for r in restored_rules}
 
 
 # ── LintConfig ───────────────────────────────────────────────────────────
@@ -543,7 +545,8 @@ def test_discovery_filtering(tmp_path: typing.Any) -> None:
 def test_build_registry_all_rules() -> None:
     registry = build_registry()
     all_rules = registry.all_rules()
-    assert len(all_rules) == 107  # noqa: PLR2004
+    assert {"V008", "S014", "A019"} <= {r.id for r in all_rules}
+    assert len(all_rules) == 110  # noqa: PLR2004
 
 
 def test_build_context(tmp_path: typing.Any) -> None:

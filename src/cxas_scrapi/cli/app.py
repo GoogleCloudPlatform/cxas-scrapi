@@ -755,6 +755,52 @@ def apps_get(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _run_single_resource_rules(
+    *,
+    flag: str,
+    rule_id: str,
+    resource_path: Path,
+    resource_dir_path: Path,
+    app_root: Path,
+    registry: Any,
+    context: Any,
+    report: Any,
+) -> None:
+    """Runs single-resource lint rules with cxaslint.yaml overrides."""
+    from cxas_scrapi.utils.linter import (  # noqa: PLC0415
+        LintConfig,
+        Severity,
+        find_agent_config,
+    )
+
+    config = LintConfig.load(app_root)
+
+    def _run_rule(rule_obj: Any, target: Path, content: str) -> None:
+        rel = str(target.relative_to(app_root))
+        if config.is_ignored(rel):
+            return
+        sev = config.get_severity(rule_obj, rel)
+        if sev == Severity.OFF:
+            return
+        for result in rule_obj.check(target, content, context):
+            result.severity = sev
+            report.add(result)
+
+    rule_obj = registry.get(rule_id)
+    if rule_obj is not None:
+        _run_rule(rule_obj, resource_dir_path, "")
+
+    if flag == "agent":
+        a019 = registry.get("A019")
+        cfg_file = (
+            resource_path
+            if resource_path.is_file()
+            else find_agent_config(resource_dir_path)
+        )
+        if a019 is not None and cfg_file is not None:
+            _run_rule(a019, cfg_file, cfg_file.read_text(encoding="utf-8"))
+
+
 def app_lint(args: argparse.Namespace) -> None:
     """Handles the 'lint' command."""
     from cxas_scrapi.utils.linter import (  # noqa: PLC0415
@@ -783,24 +829,54 @@ def app_lint(args: argparse.Namespace) -> None:
     show_fixes = getattr(args, "fix", False)
 
     # Per-resource validation (--agent, --tool, etc.)
+    resource_parent_dirs = {
+        "agents",
+        "tools",
+        "toolsets",
+        "guardrails",
+        "evaluations",
+        "evaluationExpectations",
+        "evaluationDatasets",
+    }
     for flag, rule_id in SINGLE_RESOURCE_RULES.items():
         resource_dir = getattr(args, flag, None)
         if not resource_dir:
             continue
+
+        env_file_arg = getattr(args, "env_file", None)
+        resolved_env_file = (
+            Path(env_file_arg).resolve() if env_file_arg else None
+        )
         resource_path = Path(resource_dir).resolve()
-        rule_obj = registry.get(rule_id)
+        resource_dir_path = (
+            resource_path if resource_path.is_dir() else resource_path.parent
+        )
+        app_root_guess = (
+            resource_dir_path.parent.parent
+            if resource_dir_path.parent.name in resource_parent_dirs
+            else resource_dir_path.parent
+        )
         report = LintReport()
         context = LintContext(
-            project_root=resource_path.parent,
-            app_dir=resource_path.parent,
-            evals_dir=resource_path.parent,
+            project_root=app_root_guess,
+            app_dir=app_root_guess,
+            evals_dir=app_root_guess / "evals",
+            app_root=app_root_guess,
+            env_file=resolved_env_file,
         )
         if not json_output:
-            print(f"Validating {flag}: {resource_path.name}")
+            print(f"Validating {flag}: {resource_dir_path.name}")
             print("=" * 60)
-        if rule_obj is not None:
-            for result in rule_obj.check(resource_path, "", context):
-                report.add(result)
+        _run_single_resource_rules(
+            flag=flag,
+            rule_id=rule_id,
+            resource_path=resource_path,
+            resource_dir_path=resource_dir_path,
+            app_root=app_root_guess,
+            registry=registry,
+            context=context,
+            report=report,
+        )
         report.print_and_exit(json_output, show_fixes)
         return
 
