@@ -24,6 +24,8 @@ import google.cloud.dialogflowcx_v3beta1.services as real_dfcx_services
 import google.cloud.dialogflowcx_v3beta1.types as real_dfcx_types
 import pytest
 
+pytest_plugins = ["cxas_scrapi.evals.callback_chain.pytest_plugin"]
+
 # Global Test Constants
 TEST_APP_NAME = "projects/mock-project/locations/mock-location/apps/mock-app-id"
 

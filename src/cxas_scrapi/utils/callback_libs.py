@@ -15,20 +15,452 @@
 # limitations under the License.
 
 import base64
+import dataclasses
+import datetime
+import enum
+import inspect
 import json as json_lib
-from typing import Any
+import math
+import types
+import uuid
+from collections.abc import Generator
+from typing import (  # noqa: F401, UP035
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import pydantic
+
+
+class _Base64JsonStr(str):
+    """Marker `str` subclass emitted by `Blob.model_dump(mode='json')` so
+    `Blob.model_validate` round-trips exact binary bytes without heuristics.
+    """
+
+
+def _ces_encoder(obj: Any) -> Any:
+    """Custom JSON encoder aligned with the CES sandbox system library."""
+    if isinstance(obj, str):
+        return str(obj)
+    if isinstance(obj, bytes):
+        try:
+            return obj.decode("utf-8")
+        except UnicodeDecodeError:
+            return base64.b64encode(obj).decode("ascii")
+    if isinstance(obj, set):
+        return list(obj)
+    if hasattr(obj, "to_dict") and callable(obj.to_dict):
+        return obj.to_dict()
+    if isinstance(obj, pydantic.BaseModel):
+        return obj.model_dump(mode="json")
+    raise TypeError(
+        f"Object of type {type(obj).__name__} is not JSON serializable"
+    )
+
+
+class _OrjsonShim(types.ModuleType):
+    """Compatibility shim for callbacks using orjson in environments without it.
+
+    Enforces real orjson's strictness:
+    - Raises `TypeError("Dict key must be str")` on non-string dict keys unless
+      `OPT_NON_STR_KEYS` is set.
+    - Serializes `NaN`, `Infinity`, and `-Infinity` as `null`.
+    - Requires `default` callback for custom types
+      (`bytes`, `set`, `BaseModel`).
+    """
+
+    JSONDecodeError = json_lib.JSONDecodeError
+    JSONEncodeError = TypeError
+    OPT_NON_STR_KEYS = 1
+    OPT_INDENT_2 = 2
+    OPT_SORT_KEYS = 4
+    OPT_NAIVE_UTC = 8
+    OPT_UTC_Z = 16
+    OPT_SERIALIZE_NUMPY = 32
+
+    def _prepare(
+        self,
+        val: Any,
+        default: Callable[[Any], Any] | None,
+        allow_non_str_keys: bool,
+    ) -> Any:
+        if val is None or isinstance(val, (str, bool)):
+            return val
+        if isinstance(val, int):
+            if val > (1 << 64) - 1 or val < -(1 << 63):
+                raise self.JSONEncodeError("Integer exceeds 64-bit range")
+            return val
+        if isinstance(val, float):
+            if math.isnan(val) or math.isinf(val):
+                return None
+            return val
+        if isinstance(val, datetime.datetime):
+            iso = val.isoformat()
+            if iso.endswith("+00:00"):
+                return iso[:-6] + "Z"
+            return iso
+        if isinstance(val, (datetime.date, datetime.time)):
+            return val.isoformat()
+        if isinstance(val, uuid.UUID):
+            return str(val)
+        if isinstance(val, enum.Enum):
+            return self._prepare(val.value, default, allow_non_str_keys)
+        if dataclasses.is_dataclass(val) and not isinstance(val, type):
+            return self._prepare(
+                dataclasses.asdict(val), default, allow_non_str_keys
+            )
+        if isinstance(val, dict):
+            out: dict[str, Any] = {}
+            for k, v in val.items():
+                if not isinstance(k, str):
+                    if not allow_non_str_keys:
+                        raise self.JSONEncodeError("Dict key must be str")
+                    k_str = str(k)
+                else:
+                    k_str = k
+                out[k_str] = self._prepare(v, default, allow_non_str_keys)
+            return out
+        if isinstance(val, (list, tuple)):
+            return [
+                self._prepare(item, default, allow_non_str_keys) for item in val
+            ]
+        if default is not None:
+            converted = default(val)
+            return self._prepare(converted, default, allow_non_str_keys)
+        raise self.JSONEncodeError(
+            f"Type is not JSON serializable: {type(val).__name__}"
+        )
+
+    def dumps(
+        self,
+        obj: Any,
+        default: Callable[[Any], Any] | None = None,
+        option: int | None = None,
+    ) -> bytes:
+        allow_non_str_keys = bool(option and (option & self.OPT_NON_STR_KEYS))
+        prepared = self._prepare(obj, default, allow_non_str_keys)
+        indent = 2 if (option and (option & self.OPT_INDENT_2)) else None
+        sort_keys = bool(option and (option & self.OPT_SORT_KEYS))
+        separators = (",", ": ") if indent is not None else (",", ":")
+        return json_lib.dumps(
+            prepared,
+            indent=indent,
+            sort_keys=sort_keys,
+            separators=separators,
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+
+    def loads(self, data: bytes | str) -> Any:
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        return json_lib.loads(data)
+
+
+try:
+    import orjson  # type: ignore[import-not-found]
+except ImportError:
+    orjson = _OrjsonShim("orjson")
 
 
 # Util
 def is_json_serializable(value: Any) -> bool:
     """Returns true if it can get a JSON dump of the value."""
     try:
-        _ = pydantic.TypeAdapter(type(value)).dump_json(value)
+        json_lib.dumps(value, default=_ces_encoder)
         return True
+    except (TypeError, OverflowError, ValueError):
+        try:
+            _ = pydantic.TypeAdapter(type(value)).dump_json(value)
+            return True
+        except Exception:
+            return False
+
+
+class StatusError(Exception):
+    """Exception matching CES sandbox StatusError."""
+
+    def __init__(
+        self,
+        message: str,
+        code: int | None = None,
+        *,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        resolved = code if code is not None else status_code
+        self.code = resolved
+        self.status_code = resolved
+
+
+class HttpMethod(enum.Enum):
+    """HTTP methods matching CES sandbox HttpMethod."""
+
+    GET = "GET"
+    HEAD = "HEAD"
+    POST = "POST"
+    PUT = "PUT"
+    DELETE = "DELETE"
+    CONNECT = "CONNECT"
+    OPTIONS = "OPTIONS"
+    TRACE = "TRACE"
+    PATCH = "PATCH"
+
+
+class ExternalResponse:
+    """Response from an external HTTP or tool call in the CES sandbox."""
+
+    def __init__(
+        self,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+        body: bytes | str | dict[str, Any] = b"",
+    ) -> None:
+        self.status_code = status_code
+        self.headers = headers or {}
+        if isinstance(body, dict):
+            self._json_data: Any = body
+            self.body = json_lib.dumps(body, default=_ces_encoder).encode(
+                "utf-8"
+            )
+        elif isinstance(body, str):
+            self._json_data = None
+            self.body = body.encode("utf-8")
+        else:
+            self._json_data = None
+            self.body = body
+
+    def json(self) -> Any:
+        if self._json_data is not None:
+            return self._json_data
+        return json_lib.loads(self.text())
+
+    def text(self, encoding: str = "utf-8") -> str:
+        return self.body.decode(encoding)
+
+
+class MockExternalResponse(dict, ExternalResponse):
+    """Dict-compatible ExternalResponse returned by mock_tools for dicts."""
+
+    def __init__(
+        self,
+        data: Any,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self._is_dict_payload = isinstance(data, dict)
+        self._raw_payload = data
+        if isinstance(data, dict):
+            dict.__init__(self, data)
+            body_arg: bytes | str | dict[str, Any] = data
+        elif isinstance(data, (list, bool, int, float)):
+            dict.__init__(self, {"result": data})
+            body_arg = json_lib.dumps(data, default=_ces_encoder)
+        elif data is None:
+            dict.__init__(self, {"result": None})
+            self._is_dict_payload = True
+            body_arg = {"result": None}
+        elif isinstance(data, bytes):
+            dict.__init__(self)
+            body_arg = data
+        else:
+            body_str = str(data)
+            try:
+                parsed = json_lib.loads(body_str)
+                if isinstance(parsed, dict):
+                    dict.__init__(self, parsed)
+                    self._is_dict_payload = True
+                else:
+                    dict.__init__(self)
+            except Exception:
+                dict.__init__(self)
+            body_arg = body_str
+
+        ExternalResponse.__init__(
+            self, status_code=status_code, headers=headers, body=body_arg
+        )
+
+    def json(self) -> Any:
+        if self._is_dict_payload:
+            return dict(self)
+        if isinstance(self._raw_payload, (list, bool, int, float)):
+            return self._raw_payload
+        return ExternalResponse.json(self)
+
+
+def _wrap_mock_tool_output(raw: Any) -> Any:
+    """Wraps mock tool output so dict access and .json() work seamlessly."""
+    if isinstance(raw, ExternalResponse):
+        return raw
+    if isinstance(raw, dict):
+        return MockExternalResponse(raw)
+    if isinstance(raw, (str, bytes)):
+        return ExternalResponse(status_code=200, body=raw)
+    return raw
+
+
+def _call_mock_tool_target(
+    name: str, target: Callable[..., Any], payload: dict[str, Any]
+) -> Any:
+    """Invokes a callable mock with the CES dict payload.
+
+    Zero-parameter mocks are called as `target()`, mocks accepting a single
+    positional argument as `target(payload)`, and `**kwargs`-style mocks
+    (shared with `run_turn` tool implementations) as `target(**payload)`.
+    Call sites stay strict: `tools.<name>(args=None)` already rejects keyword
+    and non-dict arguments before reaching the mock.
+    """
+    try:
+        sig = inspect.signature(target)
+    except (TypeError, ValueError):
+        return target(payload)
+    if not sig.parameters:
+        return target()
+    try:
+        sig.bind(payload)
     except TypeError:
-        return False
+        pass
+    else:
+        return target(payload)
+    try:
+        sig.bind(**payload)
+    except TypeError as exc:
+        raise TypeError(
+            f"Mock for tools.{name} must accept the CES dict payload "
+            f"positionally (`fn(args)`), as keyword arguments "
+            f"(`fn(**args)`), or take no arguments: {exc}"
+        ) from exc
+    return target(**payload)
+
+
+class MockTools:
+    """Mock `tools` namespace injected into callback execution scope."""
+
+    def __init__(
+        self,
+        mock_tools: dict[str, Any] | None = None,
+        call_log: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._mock_tools = mock_tools or {}
+        self._call_log = call_log if call_log is not None else []
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        if name not in self._mock_tools:
+            raise AttributeError(
+                f"Tool '{name}' is not configured in mock_tools."
+            )
+        target = self._mock_tools[name]
+
+        def _invoke(args: dict[str, Any] | None = None) -> Any:
+            # Mirrors CES `tools.<name>(args: dict[str, Any] | None = None)`:
+            # keyword arguments raise `TypeError` at the call site and
+            # non-dict positional payloads are rejected for every mock kind.
+            if args is not None and not isinstance(args, dict):
+                raise TypeError(
+                    f"tools.{name}() argument must be a dict or None, "
+                    f"got {type(args).__name__}"
+                )
+            payload: dict[str, Any] = {} if args is None else args
+            source = getattr(target, "_cxas_tool_source", "user-mock")
+            log_entry: dict[str, Any] = {
+                "tool": name,
+                "args": () if args is None else (args,),
+                "kwargs": {},
+                "source": source,
+                "status_code": 200,
+            }
+            self._call_log.append(log_entry)
+            try:
+                if callable(target):
+                    raw = _call_mock_tool_target(name, target, payload)
+                else:
+                    raw = target
+            except Exception as exc:
+                err_code = (
+                    getattr(exc, "status_code", None)
+                    or getattr(exc, "code", None)
+                    or 500
+                )
+                log_entry["status_code"] = err_code
+                raise
+            wrapped = _wrap_mock_tool_output(raw)
+            log_entry["status_code"] = getattr(wrapped, "status_code", 200)
+            return wrapped
+
+        return _invoke
+
+
+class _MockAsyncToolHandle:
+    """Result handle returned by `async_tools.<name>(args)`.
+
+    CES callbacks run synchronously and call the handle (`fut()`), while
+    `async def` Python tools may `await` it (or pass it to `asyncio.gather`).
+    The handle is not a coroutine, so unawaited handles never warn.
+    """
+
+    __slots__ = ("_result",)
+
+    def __init__(self, result: Any) -> None:
+        self._result = result
+
+    def __call__(self) -> Any:
+        return self._result
+
+    def __await__(self) -> Generator[Any, None, Any]:
+        return self._result
+        yield  # pragma: no cover - makes `__await__` a generator
+
+
+class MockAsyncTools:
+    """Mock `async_tools` namespace injected into callback execution scope."""
+
+    def __init__(self, sync_tools: MockTools) -> None:
+        self._sync_tools = sync_tools
+
+    def __getattr__(self, name: str) -> Callable[..., _MockAsyncToolHandle]:
+        sync_fn = getattr(self._sync_tools, name)
+
+        def _async_invoke(
+            args: dict[str, Any] | None = None,
+        ) -> _MockAsyncToolHandle:
+            # CES callbacks run synchronously: `async_tools.<name>(args)`
+            # returns a zero-arg callable (`fut = async_tools.x({...});
+            # resp = fut()`) that is also awaitable for `async def` tools.
+            return _MockAsyncToolHandle(sync_fn(args))
+
+        return _async_invoke
+
+
+def _tag_blob_json_data(src: Any, dumped: Any) -> Any:
+    """Tags serialized `Blob.data` strings in `model_dump(mode='json')` output
+    with `_Base64JsonStr` using the exact source model structure.
+    """
+    if isinstance(src, Blob) and isinstance(dumped, dict):
+        if isinstance(dumped.get("data"), str):
+            dumped["data"] = _Base64JsonStr(dumped["data"])
+        return dumped
+    if isinstance(src, pydantic.BaseModel) and isinstance(dumped, dict):
+        for f_name, f_info in type(src).model_fields.items():
+            child_src = getattr(src, f_name, None)
+            if child_src is None:
+                continue
+            for key in (f_name, f_info.alias):
+                if key and key in dumped:
+                    dumped[key] = _tag_blob_json_data(child_src, dumped[key])
+        return dumped
+    if isinstance(src, (list, tuple)) and isinstance(dumped, list):
+        for idx, (s_item, d_item) in enumerate(zip(src, dumped, strict=False)):
+            dumped[idx] = _tag_blob_json_data(s_item, d_item)
+        return dumped
+    return dumped
 
 
 # Types
@@ -40,6 +472,12 @@ class BaseModel(pydantic.BaseModel):
         extra="ignore",
         populate_by_name=True,
     )
+
+    def model_dump(self, **kwargs: Any) -> dict[str, Any]:
+        dumped = super().model_dump(**kwargs)
+        if kwargs.get("mode") == "json":
+            return _tag_blob_json_data(self, dumped)
+        return dumped
 
 
 class Blob(BaseModel):
@@ -54,9 +492,48 @@ class Blob(BaseModel):
         default=None, alias="transcript"
     )
 
+    @pydantic.field_serializer("data", when_used="json")
+    def _serialize_data_json(self, value: bytes | None) -> str | None:
+        if value is None:
+            return None
+        return _Base64JsonStr(base64.b64encode(value).decode("ascii"))
+
+    @pydantic.field_validator("data", mode="before")
+    @classmethod
+    def _validate_data(
+        cls, value: Any, info: pydantic.ValidationInfo
+    ) -> bytes | None:
+        if value is None or isinstance(value, bytes):
+            return value
+        if isinstance(value, str):
+            is_json_mode = getattr(info, "mode", None) == "json"
+            is_b64_tagged = isinstance(value, _Base64JsonStr)
+            is_fixture_b64 = bool(
+                info.context and info.context.get("fixture_base64") is True
+            )
+            is_round_trip = bool(
+                info.context and info.context.get("ces_json_round_trip") is True
+            )
+            if is_json_mode or is_b64_tagged or is_fixture_b64 or is_round_trip:
+                try:
+                    return base64.b64decode(
+                        value.encode("ascii"), validate=True
+                    )
+                except Exception:
+                    if is_fixture_b64:
+                        return base64.b64decode(value.encode("ascii"))
+                    return value.encode("utf-8")
+            return value.encode("utf-8")
+        return value
+
     @property
     def raw_data(self) -> bytes:
-        return base64.b64decode(self.data)
+        if self.data is None:
+            return b""
+        try:
+            return base64.b64decode(self.data, validate=True)
+        except Exception:
+            return self.data
 
     @raw_data.setter
     def raw_data(self, value: bytes) -> None:
@@ -117,6 +594,10 @@ class Part(BaseModel):
         default=None,
     )
     inline_data: Blob | None = pydantic.Field(default=None, alias="inlineData")
+    thought: bool | None = pydantic.Field(default=None)
+    thought_signature: bytes | str | None = pydantic.Field(
+        default=None, alias="thoughtSignature"
+    )
 
     def text_or_transcript(self) -> str | None:
         if self.text is not None:
@@ -241,6 +722,10 @@ class Content(BaseModel):
     def is_model(self) -> bool:
         return self.role == "model"
 
+    @classmethod
+    def from_text(cls, text: str, role: str | None = None) -> "Content":
+        return cls(parts=[Part.from_text(text)], role=role)
+
 
 class FunctionDeclaration(BaseModel):
     """Datamodel for the function declaration."""
@@ -248,6 +733,47 @@ class FunctionDeclaration(BaseModel):
     name: str | None = pydantic.Field(
         default=None,
     )
+    description: str | None = pydantic.Field(
+        default=None,
+    )
+    parameters: dict[str, Any] | None = pydantic.Field(
+        default=None,
+    )
+    response: dict[str, Any] | None = pydantic.Field(
+        default=None,
+    )
+
+
+class UsageMetadata(BaseModel):
+    """Token usage statistics returned by an LLM invocation."""
+
+    prompt_token_count: int = pydantic.Field(
+        default=0, alias="promptTokenCount"
+    )
+    candidates_token_count: int = pydantic.Field(
+        default=0, alias="candidatesTokenCount"
+    )
+    total_token_count: int = pydantic.Field(default=0, alias="totalTokenCount")
+    cached_content_token_count: int = pydantic.Field(
+        default=0, alias="cachedContentTokenCount"
+    )
+    thoughts_token_count: int = pydantic.Field(
+        default=0, alias="thoughtsTokenCount"
+    )
+
+    @pydantic.model_validator(mode="after")
+    def _populate_total_token_count(self) -> "UsageMetadata":
+        if self.total_token_count == 0 and (
+            self.prompt_token_count
+            or self.candidates_token_count
+            or self.thoughts_token_count
+        ):
+            self.total_token_count = (
+                self.prompt_token_count
+                + self.candidates_token_count
+                + self.thoughts_token_count
+            )
+        return self
 
 
 class ToolDeclaration(BaseModel):
@@ -270,6 +796,37 @@ class GenerateContentConfig(BaseModel):
     excluded_tools: list[str] | None = pydantic.Field(
         default=None, alias="excludedTools"
     )
+    temperature: float | None = pydantic.Field(
+        default=None,
+    )
+
+    @pydantic.field_validator("system_instruction", mode="before")
+    @classmethod
+    def _coerce_system_instruction(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return Content(role="system", parts=[Part.from_text(value)])
+        return value
+
+    @pydantic.field_validator("tools", mode="before")
+    @classmethod
+    def _coerce_tools(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        out: list[Any] = []
+        for item in value:
+            if isinstance(item, ToolDeclaration):
+                out.append(item)
+            elif hasattr(item, "function_declarations"):
+                out.append(
+                    ToolDeclaration(
+                        function_declarations=getattr(
+                            item, "function_declarations", None
+                        )
+                    )
+                )
+            else:
+                out.append(item)
+        return out
 
     def hide_tool(self, tool_name: str) -> None:
         if self.excluded_tools is None:
@@ -301,15 +858,28 @@ class EventActions(BaseModel):
     )
 
 
+class _CallablePartList(list):
+    """A `list[Part]` that is also callable as `event.parts()`."""
+
+    def __call__(self) -> list["Part"]:
+        return list(self)
+
+
 class Event(BaseModel):
     """Representation of an event in the session in the tool context."""
 
-    id: str
-    author: str
-    timestamp: int
-    invocation_id: str = pydantic.Field(alias="invocationId")
+    id: str = pydantic.Field(
+        default_factory=lambda: f"evt_{uuid.uuid4().hex[:12]}"
+    )
+    author: str = "user"
+    timestamp: int = pydantic.Field(
+        default_factory=lambda: int(
+            datetime.datetime.now(datetime.timezone.utc).timestamp()
+        )
+    )
+    invocation_id: str = pydantic.Field(default="", alias="invocationId")
     content: Content | None = None
-    actions: EventActions = EventActions()
+    actions: EventActions = pydantic.Field(default_factory=EventActions)
     long_running_tool_ids: set[str] | None = pydantic.Field(
         default=None, alias="longRunningToolIds"
     )
@@ -338,10 +908,17 @@ class Event(BaseModel):
     def has_error(self) -> bool:
         return self.error_code is not None
 
-    def parts(self) -> list[Part]:
+    @property
+    def role(self) -> str | None:
+        if self.content and self.content.role:
+            return self.content.role
+        return "user" if self.author == "user" else "model"
+
+    @property
+    def parts(self) -> _CallablePartList:
         if self.content and self.content.parts:
-            return self.content.parts
-        return []
+            return _CallablePartList(self.content.parts)
+        return _CallablePartList()
 
 
 class CallbackContext(BaseModel):
@@ -365,6 +942,21 @@ class CallbackContext(BaseModel):
     location: str = pydantic.Field(default="", alias="location")
     app_id: str = pydantic.Field(default="", alias="appId")
     turn_index: int = pydantic.Field(default=0, alias="turnIndex")
+    _ces_session_initialized: bool = pydantic.PrivateAttr(default=False)
+    _image_version: str = pydantic.PrivateAttr(default="v1")
+    _image_version_explicit: bool = pydantic.PrivateAttr(default=False)
+
+    def __init__(self, **data: Any) -> None:
+        raw_img = data.pop("_image_version", data.pop("image_version", None))
+        super().__init__(**data)
+        if raw_img is not None:
+            norm_img = str(raw_img).strip().lower()
+            if norm_img not in ("v1", "v2"):
+                raise ValueError(
+                    f"Invalid image_version {raw_img!r}. Expected 'v1' or 'v2'."
+                )
+            self._image_version = norm_img
+            self._image_version_explicit = True
 
     # Alias to state. `variables` is the legacy CES name for state.
     @property
@@ -388,21 +980,43 @@ class CallbackContext(BaseModel):
         del self.state[key]
 
     def get_last_user_input(self) -> list[Part]:
-        parts = []
+        if getattr(self, "_image_version", "v1") == "v1":
+            parts: list[Part] = []
+            for event in reversed(self.events):
+                if parts and not event.is_user():
+                    break
+                parts += event.parts()
+            parts.reverse()
+            return parts
+        user_events: list[Event] = []
         for event in reversed(self.events):
-            if parts and not event.is_user():
+            if event.is_user():
+                user_events.append(event)
+            elif user_events:
                 break
-            parts += event.parts()
-        parts.reverse()
+        parts = []
+        for event in reversed(user_events):
+            parts.extend(event.parts())
         return parts
 
     def get_last_agent_output(self) -> list[Part]:
-        parts = []
+        if getattr(self, "_image_version", "v1") == "v1":
+            parts: list[Part] = []
+            for event in reversed(self.events):
+                if parts and not event.is_agent():
+                    break
+                parts += event.parts()
+            parts.reverse()
+            return parts
+        agent_events: list[Event] = []
         for event in reversed(self.events):
-            if parts and not event.is_agent():
+            if event.is_agent():
+                agent_events.append(event)
+            elif agent_events:
                 break
-            parts += event.parts()
-        parts.reverse()
+        parts = []
+        for event in reversed(agent_events):
+            parts.extend(event.parts())
         return parts
 
     def parts(self) -> list[Part]:
@@ -423,16 +1037,34 @@ class ToolContext(CallbackContext):
 class Tool(BaseModel):
     """Datamodel for the tool."""
 
-    name: str
-    description: str
+    name: str = ""
+    description: str = ""
+    function_declarations: list[FunctionDeclaration] | None = pydantic.Field(
+        default=None, alias="functionDeclarations"
+    )
 
 
-class LlmRequest(BaseModel):
+class LlmRequest(BaseModel):  # noqa: PLW1641
     """Datamodel for the LLM request."""
 
     model: str | None = None
     contents: list[Content] = pydantic.Field(default_factory=list)
     config: GenerateContentConfig | None = None
+    _excluded_tools_applied: list[str] = pydantic.PrivateAttr(
+        default_factory=list
+    )
+    _initial_tools_meta: list[tuple[str, str]] = pydantic.PrivateAttr(
+        default_factory=list
+    )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, LlmRequest):
+            return NotImplemented
+        return (
+            self.model == other.model
+            and self.contents == other.contents
+            and self.config == other.config
+        )
 
 
 class LlmResponse(BaseModel):
@@ -443,7 +1075,33 @@ class LlmResponse(BaseModel):
     turn_complete: bool | None = pydantic.Field(
         default=None, alias="turnComplete"
     )
+    usage_metadata: UsageMetadata | None = pydantic.Field(
+        default=None, alias="usageMetadata"
+    )
+    model_version: str | None = pydantic.Field(
+        default=None, alias="modelVersion"
+    )
+    finish_reason: str | None = pydantic.Field(
+        default=None, alias="finishReason"
+    )
+    block_reason: str | None = pydantic.Field(default=None, alias="blockReason")
 
     @classmethod
-    def from_parts(cls, parts: list[Part]) -> "LlmResponse":
-        return cls(content=Content(parts=parts, role="model"))
+    def from_parts(
+        cls,
+        parts: list[Part],
+        partial: bool | None = None,
+        *,
+        usage_metadata: UsageMetadata | None = None,
+        model_version: str | None = None,
+        finish_reason: str | None = None,
+        block_reason: str | None = None,
+    ) -> "LlmResponse":
+        return cls(
+            content=Content(parts=parts, role="model"),
+            partial=partial,
+            usage_metadata=usage_metadata,
+            model_version=model_version,
+            finish_reason=finish_reason,
+            block_reason=block_reason,
+        )
