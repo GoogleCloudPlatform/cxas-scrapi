@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from cxas_scrapi.utils.env_vars import (
@@ -449,6 +450,163 @@ def test_env_vars_explicit_schema_blocks_stale_default_schema_fallback(
     assert _run_specific(tmp_path, {"A018"}).results == []
     assert resolve_tool_and_toolset_env_vars_in_dir(tmp_path) == []
     assert stale_schema.read_text(encoding="utf-8") == stale_before
+
+
+def test_shared_openapi_schema_conflicting_urls_rejected_before_writes(
+    tmp_path: Path,
+) -> None:
+    """Conflicting URLs on a shared OpenAPI schema fail A018 and abort writes."""
+    _write_json(
+        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
+    )
+    shared = _write_yaml(
+        tmp_path / "schemas" / "shared.yaml",
+        {
+            "openapi": "3.0.0",
+            "servers": [{"url": "$env_var"}],
+            "paths": {
+                "/health": {
+                    "get": {"responses": {"200": {"description": "ok"}}}
+                }
+            },
+        },
+    )
+    tool_a = _write_json(
+        tmp_path / "tools" / "tool_a" / "tool_a.json",
+        {
+            "displayName": "tool_a",
+            "openApiTool": {
+                "openApiSchema": "schemas/shared.yaml",
+                "url": "$env_var",
+            },
+        },
+    )
+    tool_b = _write_json(
+        tmp_path / "tools" / "tool_b" / "tool_b.json",
+        {
+            "displayName": "tool_b",
+            "openApiTool": {
+                "openApiSchema": "schemas/shared.yaml",
+                "url": "$env_var",
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "environment.json",
+        {
+            "tools": {
+                "tool_a": {"openApiTool": {"url": "https://a.example.com"}},
+                "tool_b": {"openApiTool": {"url": "https://b.example.com"}},
+            }
+        },
+    )
+    before = {
+        p: p.read_text(encoding="utf-8") for p in (tool_a, tool_b, shared)
+    }
+
+    rep = _run_specific(tmp_path, {"A018"})
+    assert len(rep.results) == 1
+    assert rep.results[0].rule_id == "A018"
+    assert rep.results[0].severity == Severity.ERROR
+    assert "tool_a" in rep.results[0].message
+    assert "tool_b" in rep.results[0].message
+
+    with pytest.raises(ValueError, match=r"tool_a.*tool_b"):
+        resolve_tool_and_toolset_env_vars_in_dir(tmp_path)
+
+    for path, content in before.items():
+        assert path.read_text(encoding="utf-8") == content
+
+
+def test_shared_openapi_schema_identical_urls_resolved_cleanly(
+    tmp_path: Path,
+) -> None:
+    """Identical URLs on a shared OpenAPI schema pass A018 and resolve cleanly."""
+    _write_json(
+        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
+    )
+    shared = _write_yaml(
+        tmp_path / "schemas" / "shared.yaml",
+        {
+            "openapi": "3.0.0",
+            "servers": [{"url": "$env_var"}],
+            "paths": {
+                "/health": {
+                    "get": {"responses": {"200": {"description": "ok"}}}
+                }
+            },
+        },
+    )
+    tool_a = _write_json(
+        tmp_path / "tools" / "tool_a" / "tool_a.json",
+        {
+            "displayName": "tool_a",
+            "openApiTool": {
+                "openApiSchema": "schemas/shared.yaml",
+                "url": "$env_var",
+            },
+        },
+    )
+    tool_b = _write_json(
+        tmp_path / "tools" / "tool_b" / "tool_b.json",
+        {
+            "displayName": "tool_b",
+            "openApiTool": {
+                "openApiSchema": "schemas/shared.yaml",
+                "url": "$env_var",
+            },
+        },
+    )
+    _write_json(
+        tmp_path / "environment.json",
+        {
+            "tools": {
+                "tool_a": {"openApiTool": {"url": "https://same.example.com"}},
+                "tool_b": {"openApiTool": {"url": "https://same.example.com"}},
+            }
+        },
+    )
+
+    assert _run_specific(tmp_path, {"A018"}).results == []
+    resolve_tool_and_toolset_env_vars_in_dir(tmp_path)
+    for path in (shared, tool_a, tool_b):
+        text = path.read_text(encoding="utf-8")
+        assert "$env_var" not in text
+        assert "https://same.example.com" in text
+
+
+def test_a018_snake_case_manifest_and_default_schema_emits_single_error(
+    tmp_path: Path,
+) -> None:
+    """Snake-case open_api_tool.url + default open_api_schema.yaml emits 1 A018 error."""
+    _write_json(
+        tmp_path / "app.json", {"displayName": "app", "rootAgent": "root"}
+    )
+    _write_yaml(
+        tmp_path / "tools" / "a" / "a.yaml",
+        {
+            "display_name": "a",
+            "open_api_tool": {"url": "$env_var"},
+        },
+    )
+    _write_yaml(
+        tmp_path / "tools" / "a" / "open_api_tool" / "open_api_schema.yaml",
+        {
+            "openapi": "3.0.0",
+            "servers": [{"url": "$env_var"}],
+            "paths": {
+                "/health": {
+                    "get": {"responses": {"200": {"description": "ok"}}}
+                }
+            },
+        },
+    )
+    _write_json(tmp_path / "environment.json", {})
+
+    rep = _run_specific(tmp_path, {"A018"})
+    assert len(rep.results) == 1
+    assert rep.results[0].rule_id == "A018"
+    assert rep.results[0].severity == Severity.ERROR
 
 
 def test_t020_missing_default_env_warns_once_and_missing_env_file_no_duplicate(
