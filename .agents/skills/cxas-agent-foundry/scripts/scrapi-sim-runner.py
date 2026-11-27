@@ -35,7 +35,13 @@ from datetime import datetime
 from typing import Any
 
 import yaml
-from config import get_project_path, load_app_name
+from config import (
+    gemini_location_kwarg,
+    get_project_path,
+    load_app_name,
+    load_config,
+    resolve_gemini_location_from_config,
+)
 
 from cxas_scrapi.core.audio_transformer import parse_noise_snr
 from cxas_scrapi.evals.simulation_evals import (
@@ -241,6 +247,7 @@ def cmd_run(args: typing.Any) -> typing.Any:
     """Run sim evals against the live agent."""
     data = load_yaml()
     app_name = get_app_name()
+    cfg = load_config()
 
     templates = load_sim_templates()
 
@@ -348,11 +355,15 @@ def cmd_run(args: typing.Any) -> typing.Any:
             f.strip() for f in args.burst_noise_files.split(",") if f.strip()
         ]
 
+    gemini_location = resolve_gemini_location_from_config(
+        getattr(args, "gemini_location", None), cfg
+    )
     sim = EnhancedSimRunner(
         app_name=app_name,
         user_agent_extension=USER_AGENT_EXTENSION,
         expectations_only=args.expectations_only,
         deployment_id=args.deployment_id,
+        **gemini_location_kwarg(SimulationEvals.__init__, gemini_location),
     )
     all_results = sim.run_simulations(
         test_cases=test_cases,
@@ -585,6 +596,16 @@ def main() -> typing.Any:
         help=(
             "Optional: Alias for --burst-noise-snr level "
             "('LOW', 'MEDIUM', 'HIGH')."
+        ),
+    )
+    p_run.add_argument(
+        "--gemini-location",
+        type=str,
+        default=None,
+        help=(
+            "Google Cloud location for simulated user, judge, and TTS Gemini "
+            "models (defaults to GOOGLE_CLOUD_LOCATION, gecx-config.json "
+            "gemini_location, or 'global')."
         ),
     )
 

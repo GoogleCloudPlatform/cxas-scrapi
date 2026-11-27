@@ -28,6 +28,7 @@ import ingestion
 import instruction_coverage
 import models
 from absl import app, flags
+from config import resolve_gemini_location_from_config
 
 from cxas_scrapi.utils import gcs_utils, gemini
 
@@ -49,8 +50,11 @@ _PROJECT_ID = flags.DEFINE_string(
 )
 _LOCATION = flags.DEFINE_string(
     "location",
-    "global",
-    "Google Cloud location for Gemini services (default: global).",
+    None,
+    (
+        "Google Cloud location for Gemini services (defaults to "
+        "GOOGLE_CLOUD_LOCATION, gecx-config.json gemini_location, or global)."
+    ),
 )
 _MODEL = flags.DEFINE_string(
     "model",
@@ -375,20 +379,21 @@ async def async_main() -> None:
     agent_dir = Path(_AGENT_DIR.value)
     output_file = Path(_OUTPUT_FILE.value)
 
+    config = _read_config_file(agent_dir)
     if _PROJECT_ID.value:
         os.environ["GOOGLE_CLOUD_PROJECT"] = _PROJECT_ID.value
-    if _LOCATION.value:
-        os.environ["GOOGLE_CLOUD_LOCATION"] = _LOCATION.value
 
-    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get(
-        "GCP_PROJECT"
+    project_id = (
+        os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GCP_PROJECT")
+        or config.get("gcp_project_id")
     )
     if not project_id:
         raise ValueError(
             "GOOGLE_CLOUD_PROJECT environment variable must be set."
         )
 
-    location = os.environ.get("GOOGLE_CLOUD_LOCATION") or "global"
+    location = resolve_gemini_location_from_config(_LOCATION.value, config)
 
     print(f"Initializing Gemini Generate for (Project: {project_id})...")
     gemini_client = gemini.GeminiGenerate(

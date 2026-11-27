@@ -17,6 +17,12 @@ import re
 from typing import List, Dict, Any, Set, Tuple
 import concurrent.futures
 
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from config import resolve_gemini_location_from_config
+
 USER_AGENT_EXTENSION = "skill/cxas-agent-foundry/generate_interactive_report"
 
 def get_app_metadata(app_name_arg: str | None = None) -> Dict[str, str]:
@@ -32,6 +38,7 @@ def get_app_metadata(app_name_arg: str | None = None) -> Dict[str, str]:
     metadata = {
         "project_id": os.environ.get("GOOGLE_CLOUD_PROJECT", os.environ.get("GCP_PROJECT", "")),
         "location": "us",
+        "gemini_location": "",
         "app_id": ""
     }
 
@@ -44,6 +51,11 @@ def get_app_metadata(app_name_arg: str | None = None) -> Dict[str, str]:
                         metadata["project_id"] = cfg["gcp_project_id"]
                     if cfg.get("location"):
                         metadata["location"] = cfg["location"]
+                    cfg_gemini_loc = cfg.get("gemini_location") or cfg.get(
+                        "vertex_location"
+                    )
+                    if cfg_gemini_loc:
+                        metadata["gemini_location"] = cfg_gemini_loc
                     app_ref = cfg.get("deployed_app_id", cfg.get("app_id", ""))
                     if app_ref:
                         metadata["app_id"] = str(app_ref).split("/")[-1]
@@ -96,7 +108,11 @@ def get_app_metadata(app_name_arg: str | None = None) -> Dict[str, str]:
 
     return metadata
 
-def call_llm_for_categories(failures: List[Dict[str, Any]], app_name_arg: str | None = None) -> Dict[int, List[str]]:
+def call_llm_for_categories(
+    failures: List[Dict[str, Any]],
+    app_name_arg: str | None = None,
+    gemini_location: str | None = None,
+) -> Dict[int, List[str]]:
     """
     Use Gemini LLM to dynamically categorize failure instances into 
     3 to 8 domain-agnostic diagnostic categories using parallel batching 
@@ -109,8 +125,15 @@ def call_llm_for_categories(failures: List[Dict[str, Any]], app_name_arg: str | 
         from cxas_scrapi.utils.gemini import GeminiGenerate
         meta = get_app_metadata(app_name_arg)
         project_id = meta.get("project_id")
-        client = GeminiGenerate(project_id=project_id) if project_id else GeminiGenerate()
-        
+        if not project_id:
+            return {}
+        resolved_location = resolve_gemini_location_from_config(
+            gemini_location, meta
+        )
+        client = GeminiGenerate(
+            project_id=project_id, location=resolved_location
+        )
+
         # Prepare failure list items with index
         failure_items = []
         for idx, item in enumerate(failures):
@@ -189,7 +212,12 @@ def fallback_categorize(expectation_text: str, justification: str) -> str:
         
     return "Other Failure"
 
-def generate_dynamic_report(sim_data: List[Dict[str, Any]], title: str = "GECX Simulation Evaluation Report", app_name_arg: str | None = None) -> str:
+def generate_dynamic_report(
+    sim_data: List[Dict[str, Any]],
+    title: str = "GECX Simulation Evaluation Report",
+    app_name_arg: str | None = None,
+    gemini_location: str | None = None,
+) -> str:
     """Build dynamic interactive HTML report with universal filters."""
     
     meta = get_app_metadata(app_name_arg)
@@ -232,7 +260,11 @@ def generate_dynamic_report(sim_data: List[Dict[str, Any]], title: str = "GECX S
                     })
                     failure_map_ref.append((item_idx, exp_idx))
                     
-    llm_cat_mapping = call_llm_for_categories(failure_list, app_name_arg=app_name_arg)
+    llm_cat_mapping = call_llm_for_categories(
+        failure_list,
+        app_name_arg=app_name_arg,
+        gemini_location=gemini_location,
+    )
     
     # 3. Process items and assign categories
     all_categories: Set[str] = set()
@@ -758,6 +790,16 @@ def main():
     parser.add_argument("--app-name", required=False, help="CXAS App Name/ID to run evals first")
     parser.add_argument("--output", "-o", required=False, help="Path to save output HTML report")
     parser.add_argument("--title", required=False, default="GECX Interactive Simulation Evaluation Report", help="Title for the report")
+    parser.add_argument(
+        "--gemini-location",
+        required=False,
+        default=None,
+        help=(
+            "Google Cloud location for Gemini models (defaults to "
+            "GOOGLE_CLOUD_LOCATION, gecx-config.json gemini_location, "
+            "or 'global')"
+        ),
+    )
     
     args = parser.parse_args()
     
@@ -771,6 +813,8 @@ def main():
             cmd = ["uv", "run", "python", sim_runner_script, "run", "--channel", "text"]
             if args.app_name:
                 cmd.extend(["--app-name", args.app_name])
+            if args.gemini_location:
+                cmd.extend(["--gemini-location", args.gemini_location])
             res = subprocess.run(cmd, text=True)
         else:
             app_arg = args.app_name or "."
@@ -807,7 +851,12 @@ def main():
     else:
         sim_data = [data] if isinstance(data, dict) else []
         
-    html_content = generate_dynamic_report(sim_data, title=args.title, app_name_arg=args.app_name)
+    html_content = generate_dynamic_report(
+        sim_data,
+        title=args.title,
+        app_name_arg=args.app_name,
+        gemini_location=args.gemini_location,
+    )
     
     output_path = args.output
     if not output_path:
