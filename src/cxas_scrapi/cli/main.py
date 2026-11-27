@@ -2869,6 +2869,14 @@ def get_parser() -> argparse.ArgumentParser:
             "will be deleted"
         ),
     )
+    parser_push.add_argument(
+        "--lint",
+        action="store_true",
+        help=(
+            "Run offline cxas lint on --app-dir (and --env-file when "
+            "provided) before uploading, and abort on lint errors."
+        ),
+    )
     attach_hot_patch_args(parser_push)
     parser_push.set_defaults(func=app_push)
 
