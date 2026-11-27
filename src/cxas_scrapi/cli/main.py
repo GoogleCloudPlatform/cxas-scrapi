@@ -763,6 +763,43 @@ def _bq_dataset(value: str) -> str:
     return value
 
 
+def _positive_int(value: str) -> int:
+    """argparse type for options that need a whole number of 1 or more."""
+    try:
+        number = int(value)
+    except ValueError:
+        number = 0
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"{value!r} is not 1 or more")
+    return number
+
+
+def evals_trends_cmd(args: argparse.Namespace) -> None:
+    """Handles 'cxas evals trends'."""
+    from cxas_scrapi.utils.eval_trends import write_eval_trends_markdown
+
+    try:
+        path = write_eval_trends_markdown(
+            bq_dataset=args.bq_dataset,
+            output_path=args.output,
+            days=args.days,
+            suite_name=(args.suite_name or "").strip() or None,
+            git_ref=(args.git_ref or "").strip() or None,
+            min_tag_cases=args.min_tag_cases,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"Failed to generate the trends report: {e}")
+        sys.exit(1)
+    print(f"Trends report written to {path}")
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if args.github_step_summary and summary_path:
+        with (
+            open(path, encoding="utf-8") as src,
+            open(summary_path, "a", encoding="utf-8") as dst,
+        ):
+            dst.write(src.read() + "\n")
+
+
 def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     """Handles the 'evals report' command."""
     from cxas_scrapi.utils.reporting import (  # noqa: PLC0415
@@ -973,6 +1010,14 @@ def combined_evals_report_cmd(args: argparse.Namespace) -> None:
     else:
         actual_output_path = report_res
     print(f"Combined report generated at {actual_output_path}")
+    if not getattr(args, "bq_dataset", None) and not getattr(
+        args, "dry_run", False
+    ):
+        print(
+            "Tip: add --bq-dataset <project.dataset> to keep a history of "
+            "results in BigQuery, then run 'cxas evals trends' for pass-rate "
+            "trends."
+        )
     if (
         gate_summary is not None
         and getattr(args, "min_pass_rate", None) is not None
@@ -2417,6 +2462,63 @@ def get_parser() -> argparse.ArgumentParser:
         ),
     )
     parser_report.set_defaults(func=combined_evals_report_cmd)
+
+    parser_trends = evals_subparsers.add_parser(
+        "trends",
+        help=(
+            "Write a Markdown trends report (pass rate, new failures, "
+            "longest-failing cases, tags, run time) from results exported "
+            "with 'cxas evals report --bq-dataset'."
+        ),
+    )
+    parser_trends.add_argument(
+        "--bq-dataset",
+        type=_bq_dataset,
+        required=True,
+        help="BigQuery dataset (project.dataset) holding the eval results.",
+    )
+    parser_trends.add_argument(
+        "--days",
+        type=_positive_int,
+        default=30,
+        help="Number of days to cover, today included, in UTC (default: 30).",
+    )
+    parser_trends.add_argument(
+        "--suite-name",
+        default=None,
+        help="Only include runs of this suite.",
+    )
+    parser_trends.add_argument(
+        "--git-ref",
+        default=None,
+        help=(
+            "Only include runs with this recorded git ref "
+            "(GITHUB_REF_NAME or CI_COMMIT_REF_NAME, for example 'main'; "
+            "GitHub pull request runs are stored as '<number>/merge', "
+            "local runs as 'local')."
+        ),
+    )
+    parser_trends.add_argument(
+        "--min-tag-cases",
+        type=_positive_int,
+        default=5,
+        help=(
+            "Don't report tags used by fewer than this many different "
+            "cases (default: 5). The report says how many it left out."
+        ),
+    )
+    parser_trends.add_argument(
+        "--output",
+        default="eval_trends.md",
+        help="Output Markdown path (default: eval_trends.md).",
+    )
+    parser_trends.add_argument(
+        "--github-step-summary",
+        action="store_true",
+        default=False,
+        help="Also append the report to GITHUB_STEP_SUMMARY.",
+    )
+    parser_trends.set_defaults(func=evals_trends_cmd)
 
     parser_test_tools = subparsers.add_parser(
         "test-tools",

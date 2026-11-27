@@ -145,6 +145,12 @@ cxas evals report --output-dir <project>/eval-reports/ \
   --suite-name <suite> --bq-dataset <gcp-project>.<dataset>
 ```
 
+**For a trends report from that history (Markdown with charts):**
+```bash
+cxas evals trends --bq-dataset <gcp-project>.<dataset> --days 30 \
+  --output <project>/eval-reports/eval_trends.md
+```
+
 **For an interactive diagnostic dashboard (dynamic parameter filters & LLM failure clustering):**
 ```bash
 python .agents/skills/cxas-agent-foundry/scripts/generate_interactive_report.py \

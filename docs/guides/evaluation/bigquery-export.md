@@ -1,6 +1,6 @@
 # Eval Results in BigQuery
 
-`cxas evals report` can export every eval result to BigQuery, so you can follow pass rate, volume, duration and tags over time, find flaky cases and spot the commit that introduced a regression.
+`cxas evals report` can export every eval result to BigQuery, so you can follow pass rate, volume, duration and tags over time, find flaky cases and spot the commit that introduced a regression. `cxas evals trends` turns that history into a Markdown report with charts, with no dashboard tool to set up.
 
 ## Setup
 
@@ -101,6 +101,97 @@ Both tables are partitioned by day on `started_at`. Two views come with them:
 - `v_eval_daily_by_tag`: per day, suite, category and tag: runs, executions, PASS/FAIL/ERROR counts, pass rate and p50 duration. A result with several tags counts once per tag.
 
 The export keeps the definition of these two views in line with the installed version, so don't edit them: create your own views next to them.
+
+## Trends report
+
+```bash
+cxas evals trends --bq-dataset my-project.cxas_evals --days 30 --output eval_trends.md
+```
+
+The report is a single Markdown file. Charts are Mermaid blocks, so they render in GitHub and GitLab Markdown, GitHub step summaries and this documentation site.
+
+The identity that runs it needs `roles/bigquery.dataViewer` on the dataset and `roles/bigquery.jobUser` on the project. Its queries use the user agent `cxas-scrapi/<version>:eval-bq-trends` and the job label `cxas-scrapi: eval-bq-trends`.
+
+| Option | Description |
+|---|---|
+| `--bq-dataset project.dataset` | Dataset holding the eval results. Required. |
+| `--days 30` | Number of days to cover: today and the days before it, in UTC (default: 30). |
+| `--suite-name nightly` | Only include runs of this suite. |
+| `--git-ref main` | Only include runs with this recorded git ref (`GITHUB_REF_NAME` or `CI_COMMIT_REF_NAME`, for example `main`; GitHub pull request runs are stored as `<number>/merge`, local runs as `local`). Check the `Ref` column in the last-runs table for stored values. |
+| `--min-tag-cases 5` | Don't report tags used by fewer than this many different cases (default: 5). |
+| `--output eval_trends.md` | Output path (default: `eval_trends.md`). |
+| `--github-step-summary` | Also append the report to `GITHUB_STEP_SUMMARY`. |
+
+| Section | What it shows |
+|---|---|
+| Summary | Pass rate, executions, errors, goal completion, expectations met, average turns and runs: last day, previous day and whole period. Then one line per category (simulation, golden, tool, callback) with its executions, pass rate and p50/p90 duration |
+| Pass rate per day | A chart for all categories together, plus one per category when there are two or more categories. Each chart needs at least two days with PASS or FAIL results |
+| Changes since the previous run | Cases that passed in their previous evaluated run and fail in the latest one, and cases that got fixed, with their tags (error-only runs are skipped) |
+| Longest-failing cases | Cases failing in the latest run that haven't passed since, with at least two failing runs in the period (error-only runs are skipped) |
+| Pass rate per tag | The worst tags with their pass rate on the last 7 days with runs, then the tags whose pass rate dropped or rose the most between the recent days and the days before |
+| Most frequent failed expectations | The expectations that weren't met most often (FAIL results only) |
+| Executions per day | Volume chart |
+| Time to run the evals | Run time per day and a table of the last runs (pass rate, gate, run time, git ref, commit). When no run has a recorded run time, the chart shows the sum of the durations of all results instead |
+| Flaky cases | Up to 10 cases with both PASS and FAIL on the same commit. Runs without a commit (local runs) are ignored |
+
+Notes:
+
+- Pass rate = PASS / (PASS + FAIL). Errors are excluded from pass rate, goals, expectations, turns and failed expectations. Days are in UTC.
+- "Executions" counts results: one per attempt of a case. A run without results is ignored.
+- "Last day" and "previous day" are the last two days that have results.
+- A case counts as passing in a run when at least one of its attempts passed.
+- Tags come from simulation definitions, so the per-tag sections cover simulations. Tags used by fewer than 5 different cases aren't reported (`--min-tag-cases`), so a tag that identifies a single case, such as a unique ID, isn't shown as a group. The report says how many tags it left out.
+- "Changes since the previous run" and "Longest-failing cases" compare runs within a suite and a category, need at least two runs in the period, and skip runs where a case only errored. A run of tool tests only is therefore compared with the last run that had tool tests. If several refs export to the same dataset, use `--git-ref` (for example `--git-ref main`) so a run isn't compared with a run of another ref.
+- Give a run that covers part of a category (for example a tag or file filter) its own `--suite-name`. Otherwise it counts as the latest run of the whole suite.
+
+### Example report
+
+Parts of a report, with made-up data:
+
+> Last 14 days, suite `nightly`, git ref `main`, from `my-project.cxas_evals`. Pass rate = PASS / (PASS + FAIL). Errors are excluded from pass rate, goals, expectations and turns. Days are in UTC.
+
+**Summary**
+
+| Metric | Last day (03-14) | Previous day (03-13) | Last 14 days |
+|---|---|---|---|
+| Pass rate | 94.2% | 93.8% | 91.2% |
+| Executions | 1010 | 505 | 8080 |
+| Errors | 3 | 1 | 26 |
+| Goal completion | 96.2% | 95.8% | 94.1% |
+| Expectations met | 95.0% | 94.6% | 92.3% |
+| Turns per result (average) | 7.1 | 7.1 | 7.1 |
+| Runs | 2 | 1 | 16 |
+
+**Pass rate per day**
+
+```mermaid
+xychart-beta
+  title "Pass rate per day, all categories (%)"
+  x-axis ["03-01", "03-02", "03-03", "03-04", "03-05", "03-06", "03-07", "03-08", "03-09", "03-10", "03-11", "03-12", "03-13", "03-14"]
+  y-axis "Pass rate (%)" 80 --> 100
+  line [89.5, 90.1, 89.7, 90.9, 91.8, 91.1, 92.4, 93.5, 92.4, 87.2, 88.2, 93, 93.8, 94.2]
+```
+
+**Changes since the previous run**
+
+For each suite and category, the latest run compared with each case's previous PASS or FAIL run (runs where a case only errored are skipped).
+
+**New failures (3)**
+
+| Category | Test | Tags |
+|---|---|---|
+| golden | `order_status_delayed_shipment` |  |
+| simulation | `payments_update_expired_card` | P0, payments |
+| simulation | `refund_partial_amount` | billing, payments |
+
+**Fixed (2)**
+
+| Category | Test | Tags |
+|---|---|---|
+| callback | `billing/before_model_callbacks/test_escalation_trigger` |  |
+| simulation | `auth_reset_password_no_email` | P0, authentication |
+
+The full report continues with the other sections of the table above.
 
 ## Example queries
 
