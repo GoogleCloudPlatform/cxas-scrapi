@@ -213,26 +213,34 @@ def _raise_identity_cond_error(dyn_kind: str) -> None:
     )
 
 
+_MISSING_IDENTITY = object()
+_IDENTITY_KEYS = frozenset({"displayName", "name"})
+
+
 def _extract_identity_pair(
     data: JsonValue,
 ) -> tuple[JsonValue, JsonValue]:
     if not isinstance(data, dict):
-        return None, None
-    return data.get("name"), data.get("displayName")
+        return _MISSING_IDENTITY, _MISSING_IDENTITY
+    return (
+        data.get("name", _MISSING_IDENTITY),
+        data.get("displayName", _MISSING_IDENTITY),
+    )
 
 
 def _check_branch_duplicate_identity(branch_text: str, dyn_kind: str) -> None:
-    try:
-        yaml.load(branch_text, Loader=UniqueKeyYaml12SafeLoader)
-    except yaml.constructor.ConstructorError as exc:
-        msg = str(exc)
-        if (
-            "Duplicate mapping key 'displayName'" in msg
-            or "Duplicate mapping key 'name'" in msg
-        ):
+    with contextlib.suppress(yaml.YAMLError):
+        root = yaml.compose(branch_text, Loader=Yaml12SafeLoader)
+        if not isinstance(root, yaml.MappingNode):
+            return
+        keys = [
+            key_node.value
+            for key_node, _ in root.value
+            if isinstance(key_node, yaml.ScalarNode)
+            and key_node.value in _IDENTITY_KEYS
+        ]
+        if len(keys) != len(set(keys)):
             _raise_identity_cond_error(dyn_kind)
-    except yaml.YAMLError:
-        return
 
 
 def _verify_single_dynamic_branch(

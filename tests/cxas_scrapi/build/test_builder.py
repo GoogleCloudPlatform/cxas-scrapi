@@ -3763,3 +3763,56 @@ def test_build_zip_non_sibling_out_rejects_external_openapi_schema_with_env_var(
             package_zip=True,
         )
     assert external_schema.read_text(encoding="utf-8") == original_content
+
+
+def test_mutually_exclusive_dynamic_blocks_sharing_nested_name_and_null_top_level_name(
+    tmp_path: Path,
+) -> None:
+    core_dir, manifests_dir = _setup_sample_workspace(tmp_path)
+
+    # 1. Two dynamic blocks setting the same nested `name:` key under
+    # `parameters:` (one enabled, one disabled) must build cleanly.
+    nested_tool = core_dir / "tools" / "nested_param_tool"
+    nested_tool.mkdir()
+    (nested_tool / "nested_param_tool.yaml").write_text(
+        "displayName: Nested Param Tool\n"
+        "parameters:\n"
+        "  {@startToolEnabled_active_tool}\n"
+        "  name: active_param\n"
+        "  {@endToolEnabled_active_tool}\n"
+        "  {@startToolEnabled_secret_tool_disabled}\n"
+        "  name: secret_param\n"
+        "  {@endToolEnabled_secret_tool_disabled}\n",
+        encoding="utf-8",
+    )
+
+    out_ok = tmp_path / "out_nested_param_name"
+    build_app(
+        core_dir, manifests_dir, "profile_1", "VOICE_TELEPHONY", "prod", out_ok
+    )
+    rendered = yaml.safe_load(
+        (
+            out_ok / "tools" / "nested_param_tool" / "nested_param_tool.yaml"
+        ).read_text("utf-8")
+    )
+    assert rendered["parameters"]["name"] == "active_param"
+
+    # 2. A dynamic block adding top-level `name: null` must be rejected.
+    null_name_tool = core_dir / "tools" / "null_name_tool"
+    null_name_tool.mkdir()
+    (null_name_tool / "null_name_tool.yaml").write_text(
+        "displayName: Null Name Tool\n"
+        "{@startToolEnabled_active_tool}\n"
+        "name: null\n"
+        "{@endToolEnabled_active_tool}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(BuildError, match=r"Conditional tag|identity"):
+        build_app(
+            core_dir,
+            manifests_dir,
+            "profile_1",
+            "VOICE_TELEPHONY",
+            "prod",
+            tmp_path / "out_null_top_level_name",
+        )
