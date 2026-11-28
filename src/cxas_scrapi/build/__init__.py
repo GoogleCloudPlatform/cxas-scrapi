@@ -23,6 +23,14 @@ deterministic — no LLM, no timestamps, and no runtime Python code is
 generated.
 """
 
+from cxas_scrapi.build.backport import (
+    BackportChange,
+    BackportResult,
+    BackportScope,
+    BackportTarget,
+    backport_live_to_source,
+    format_backport_pr_body,
+)
 from cxas_scrapi.build.builder import (
     BuildError,
     BuildReport,
@@ -84,6 +92,10 @@ __all__ = [
     "FORBIDDEN_APP_KEY_PAIRS",
     "AgentChannelOverride",
     "AgentOverride",
+    "BackportChange",
+    "BackportResult",
+    "BackportScope",
+    "BackportTarget",
     "BrandOverrides",
     "BuildError",
     "BuildGateError",
@@ -109,11 +121,13 @@ __all__ = [
     "TtsVoice",
     "apply_brand_overrides",
     "apply_instruction_override",
+    "backport_live_to_source",
     "build_all",
     "build_app",
     "check_drift",
     "enforce_pre_push_gate",
     "extract_normalized_resources",
+    "format_backport_pr_body",
     "load_manifests",
     "merge_app_config",
     "normalize_json_obj",

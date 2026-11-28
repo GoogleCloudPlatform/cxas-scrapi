@@ -421,3 +421,40 @@ canonical SHA-256 lockfiles (`<app>.lock.json`) next to built bundles and run
   `DRIFT`, `ORPHAN`, or `CONFLICT` resource is detected. Pass `--live-dir` for
   offline checks or `--force-ours <resource_id>` to intentionally override a
   specific resource.
+
+## Console-to-Git Backport (`cxas backport --target brand`)
+
+To promote approved Console UI edits back into Git-tracked
+`manifests/brands/<brand_id>/overrides.yaml` with automated rebuild, lint, and
+round-trip SHA-256 verification:
+
+```bash
+cxas backport \
+  --core-dir core/ \
+  --manifests-dir manifests/ \
+  --live-dir live_export/ \
+  --dist dist/ \
+  --brand brand_1 \
+  --channel WEB \
+  --env prod \
+  --target brand \
+  --scope channel \
+  --pr-body-out pr_body.md
+```
+
+Key options:
+- **`--scope channel` (default)** vs. **`--scope brand`**: Scopes backported
+  deltas to the edited channel (`channels.<CHANNEL>`) with a strict
+  zero-blast-radius proof across all sibling bundles, or promotes them across
+  all channels of that brand while proving zero sister-brand mutations.
+- **`--dry-run`**: Runs the full delta computation, reverse tokenization,
+  rebuild, lint, and SHA-256 round-trip proof, then restores all files cleanly
+  so `manifests/`, `dist/`, `.lock.json`, and Git branches remain untouched on
+  disk.
+- **`--force-live <resource_id>`**: Accepts live Console edits on specific
+  resources that have a 3-way conflict against concurrent Git changes.
+- **`--pr-body-out <path>`**: Writes a review-ready Pull Request Markdown body
+  summarizing modified files, deltas, lint status, and verified bundles.
+- **`--git-branch <name>`**: Creates and checks out a new local branch after
+  verification passes (requires a clean tracked working tree and cannot be
+  combined with `--dry-run`).
