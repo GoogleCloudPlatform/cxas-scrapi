@@ -323,6 +323,18 @@ class AgentTurnManager:
             if self.barge_in_triggered_time is None:
                 self.barge_in_triggered_time = time.time()
 
+    def is_barge_in_triggered(self) -> bool:
+        with self.lock:
+            return self.barge_in_triggered
+
+    def is_barge_in_window_missed(self) -> bool:
+        with self.lock:
+            return self.barge_in_window_missed
+
+    def has_received_audio(self) -> bool:
+        with self.lock:
+            return self.first_audio_received_time is not None
+
     def get_barge_in_metadata(
         self, agent_text: str = "", barge_in_ignored: bool = False
     ) -> BargeInMetadata:
@@ -849,7 +861,14 @@ class BidiSessionHandler:
                     )
                 return
 
-            self.agent_turn_manager.record_barge_in_triggered()
+            if (
+                not self.agent_turn_manager.is_barge_in_window_missed()
+                and not self._is_session_aborted()
+                and self.ws_app
+                and self.ws_app.sock
+                and self.ws_app.sock.connected
+            ):
+                self.agent_turn_manager.record_barge_in_triggered()
             self._stream_input_payload(
                 turn_n1_input,
                 idx + 1,
@@ -1312,11 +1331,34 @@ class BidiSessionHandler:
                     barge_in_val = raw_sig
 
             if has_interruption:
-                logging.info(
-                    "Received server interruption_signal (barge-in=%s)",
-                    barge_in_val,
-                )
-                self.agent_turn_manager.mark_interrupted(barge_in=barge_in_val)
+                if not barge_in_val:
+                    logging.debug(
+                        "Ignoring non-barge-in interruption_signal "
+                        "(barge-in=False)."
+                    )
+                elif (
+                    self._barge_in_pair_active
+                    and not self.agent_turn_manager.is_barge_in_triggered()
+                ):
+                    if self.agent_turn_manager.has_received_audio():
+                        logging.warning(
+                            "Ignoring pre-trigger interruption_signal "
+                            "(barge-in=True) received after Turn N audio "
+                            "started but before barge_in_after_ms."
+                        )
+                    else:
+                        logging.debug(
+                            "Ignoring pre-barge-in interruption_signal "
+                            "(barge-in=True) before Turn N barge-in trigger."
+                        )
+                else:
+                    logging.info(
+                        "Received server interruption_signal (barge-in=%s)",
+                        barge_in_val,
+                    )
+                    self.agent_turn_manager.mark_interrupted(
+                        barge_in=barge_in_val
+                    )
 
             if response.session_output:
                 if (

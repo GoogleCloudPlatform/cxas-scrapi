@@ -230,6 +230,203 @@ def test_bidi_session_handler_interruption_signal_extraction() -> None:
     assert handler.agent_turn_manager.barge_in_signal_received is True
 
 
+def test_bidi_session_handler_ignores_non_barge_in_interruption_signal() -> (
+    None
+):
+    handler = BidiSessionHandler(
+        location="us",
+        token="token",
+        config={"session": "sessions/s1"},
+        inputs=[],
+    )
+
+    # Regular (non-barge-in) turn: non-barge-in interruption signals
+    # (bargeIn=False or empty proto3 dict {}) must not mark the turn
+    # interrupted or complete.
+    handler.agent_turn_manager.prepare_for_turn(expected_turn_index=1)
+    handler._on_message(None, json.dumps({"interruptionSignal": {}}))
+    handler._on_message(
+        None, json.dumps({"interruptionSignal": {"bargeIn": False}})
+    )
+    assert handler.agent_turn_manager.interrupted_flag is False
+    assert handler.agent_turn_manager.barge_in_signal_received is False
+    assert handler.agent_turn_manager.is_agent_done_talking() is False
+
+    # Active barge-in pair AFTER trigger: bargeIn=False must still not falsely
+    # mark the turn interrupted (e.g., when barge-in is disabled/ignored).
+    handler._barge_in_pair_active = True
+    handler.agent_turn_manager.prepare_for_turn(
+        expected_turn_index=2, barge_in_after_ms=500
+    )
+    handler.agent_turn_manager.record_barge_in_triggered()
+    handler._on_message(None, json.dumps({"interruptionSignal": {}}))
+    handler._on_message(
+        None, json.dumps({"interruptionSignal": {"bargeIn": False}})
+    )
+    assert handler.agent_turn_manager.interrupted_flag is False
+    assert handler.agent_turn_manager.barge_in_signal_received is False
+
+
+def test_bidi_session_handler_ignores_pre_barge_in_interruption_signal(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    handler = BidiSessionHandler(
+        location="us",
+        token="token",
+        config={"session": "sessions/s1"},
+        inputs=[],
+    )
+    handler._barge_in_pair_active = True
+    handler.agent_turn_manager.prepare_for_turn(
+        expected_turn_index=2, barge_in_after_ms=1500
+    )
+
+    # Non-barge-in and pre-trigger bargeIn=True signals arriving during Turn N
+    # before Turn N barge-in trigger must be ignored.
+    handler._on_message(
+        None, json.dumps({"interruptionSignal": {"bargeIn": False}})
+    )
+    handler._on_message(
+        None, json.dumps({"interruptionSignal": {"bargeIn": True}})
+    )
+    assert handler.agent_turn_manager.first_audio_received_time is None
+    assert handler.agent_turn_manager.interrupted_flag is False
+    assert handler.agent_turn_manager.is_agent_done_talking() is False
+
+    # Once Turn N agent audio starts (before barge_in_after_ms), a pre-trigger
+    # bargeIn=True signal must still be ignored and logged at WARNING.
+    handler.agent_turn_manager.add_audio(b"\x01\x00" * 16000)
+    handler.agent_turn_manager.first_audio_received_time = time.time() - 0.1
+    with caplog.at_level(logging.WARNING):
+        handler._on_message(
+            None, json.dumps({"interruptionSignal": {"bargeIn": True}})
+        )
+    assert handler.agent_turn_manager.interrupted_flag is False
+    assert handler.agent_turn_manager.is_agent_done_talking() is False
+    assert any(
+        r.levelno == logging.WARNING
+        and "pre-trigger interruption_signal" in r.message
+        for r in caplog.records
+    )
+
+    # Once Turn N agent audio plays past barge_in_after_ms, barge_in_triggered
+    # flips True and subsequent bargeIn=True interruptionSignals are honored.
+    handler.agent_turn_manager.first_audio_received_time = time.time() - 1.6
+    assert handler.agent_turn_manager.is_agent_done_talking() is True
+    assert handler.agent_turn_manager.is_barge_in_triggered() is True
+
+    post_sig = json.dumps({"interruptionSignal": {"bargeIn": True}})
+    handler._on_message(None, post_sig)
+    assert handler.agent_turn_manager.interrupted_flag is True
+    assert handler.agent_turn_manager.barge_in_signal_received is True
+
+
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_send_barge_in_pair_missed_window_does_not_mark_triggered(
+    mock_sleep: typing.Any,
+) -> None:
+    resp_q: queue.Queue[typing.Any] = queue.Queue()
+    handler = BidiSessionHandler(
+        location="us",
+        token="token",
+        config={"session": "sessions/s1"},
+        input_queue=queue.Queue(),
+        response_queue=resp_q,
+    )
+    handler.ws_app = MagicMock()
+    handler.ws_app.sock.connected = True
+
+    def fake_stream(
+        input_item: dict[str, typing.Any],
+        turn_index: int,
+        leading_silence: bool = True,
+        trailing_silence: bool = True,
+    ) -> None:
+        if turn_index == 0:
+            # Turn N finishes shorter than barge_in_after_ms -> window missed.
+            handler.agent_turn_manager.add_audio(b"\x01\x00" * 1600)
+            handler.agent_turn_manager.first_audio_received_time = (
+                time.time() - 0.5
+            )
+            handler.agent_turn_manager.mark_turn_completed()
+        else:
+            # Even a bargeIn=True signal arriving on turn_n1_input after Turn N
+            # missed its barge-in window must not retroactively mark Turn N
+            # interrupted.
+            assert handler.agent_turn_manager.is_barge_in_triggered() is False
+            handler._on_message(
+                None, json.dumps({"interruptionSignal": {"bargeIn": True}})
+            )
+            handler.next_turn_outputs.append(
+                types.SessionOutput(
+                    turn_index=2, text="Next", turn_completed=True
+                )
+            )
+            handler.next_turn_completed_flag = True
+
+    handler._stream_input_payload = MagicMock(side_effect=fake_stream)  # type: ignore[method-assign]
+    handler._send_silence = MagicMock()  # type: ignore[method-assign]
+
+    handler._send_barge_in_pair(
+        {
+            "turn": {"audio": b"turn_n"},
+            "barge_in_next": {"audio": b"turn_n1"},
+            "barge_in_after_ms": 1500,
+        },
+        idx=0,
+    )
+
+    resp_n = resp_q.get_nowait()
+    assert resp_n.barge_in_metadata is not None
+    assert resp_n.barge_in_metadata.barge_in_window_missed is True
+    assert resp_n.barge_in_metadata.interrupted is False
+
+
+@patch("cxas_scrapi.core.sessions.time.sleep")
+def test_send_barge_in_pair_closed_socket_does_not_mark_triggered(
+    mock_sleep: typing.Any,
+) -> None:
+    resp_q: queue.Queue[typing.Any] = queue.Queue()
+    handler = BidiSessionHandler(
+        location="us",
+        token="token",
+        config={"session": "sessions/s1"},
+        input_queue=queue.Queue(),
+        response_queue=resp_q,
+    )
+    handler.ws_app = MagicMock()
+    handler.ws_app.sock.connected = True
+    observed_triggered_on_n1: list[bool] = []
+
+    def fake_stream(
+        input_item: dict[str, typing.Any],
+        turn_index: int,
+        leading_silence: bool = True,
+        trailing_silence: bool = True,
+    ) -> None:
+        if turn_index == 0:
+            # Socket closes cleanly during Turn N before barge_in_after_ms.
+            handler.ws_app.sock.connected = False  # type: ignore[union-attr]
+        else:
+            observed_triggered_on_n1.append(
+                handler.agent_turn_manager.is_barge_in_triggered()
+            )
+
+    handler._stream_input_payload = MagicMock(side_effect=fake_stream)  # type: ignore[method-assign]
+    handler._send_silence = MagicMock()  # type: ignore[method-assign]
+
+    handler._send_barge_in_pair(
+        {
+            "turn": {"audio": b"turn_n"},
+            "barge_in_next": {"audio": b"turn_n1"},
+            "barge_in_after_ms": 1500,
+        },
+        idx=0,
+    )
+
+    assert observed_triggered_on_n1 == [False]
+
+
 def test_bidi_session_handler_comfort_noise_rejection() -> None:
     handler = BidiSessionHandler(
         location="us",
