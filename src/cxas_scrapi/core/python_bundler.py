@@ -500,23 +500,10 @@ def _split_for_bundle_insert(content: str) -> tuple[str, str]:
     return head, tail
 
 
-def bundle_shared_python(
-    app_dir: Path,
-    *,
-    source_root: Path | None = None,
-    max_bundle_bytes: int = MAX_BUNDLE_BYTES_PER_FILE,
-    native_python_env: bool = False,
-) -> dict[str, int]:
-    """Tree-shaking AST marker bundler.
-
-    Inserts one `CXAS_SHARED_BUNDLE` block per entrypoint without touching any
-    other byte of the entrypoint, so `strip_shared_bundles` restores it exactly.
-    Raises `PythonBundlerError` if a bundled shared module or entrypoint is not
-    valid UTF-8 Python or contains symlinks.
-    """
-    if source_root is None:
-        source_root = app_dir
-
+def _discover_shared_modules(
+    source_root: Path,
+) -> tuple[dict[str, str], dict[str, Path], set[str]]:
+    """Discover shared Python modules under ``python_lib/`` safely."""
     search_paths: list[Path] = []
     env_dir = source_root / "pythonEnvFiles"
     env_content = env_dir / "content"
@@ -574,15 +561,59 @@ def bundle_shared_python(
                             f"UTF-8: {exc}"
                         ) from exc
                     module_paths[mod_name] = path
+    return available_modules, module_paths, packages
+
+
+def _compute_module_closure(
+    entrypoint_source: str,
+    available_modules: dict[str, str],
+    packages: frozenset[str] | set[str],
+) -> set[str]:
+    """Return transitive closure of shared modules imported by an entrypoint."""
+    deps = _get_module_dependencies("entrypoint", entrypoint_source)
+    closure: set[str] = set()
+    queue = sorted(deps)
+    while queue:
+        curr = queue.pop(0)
+        if curr in available_modules and curr not in closure:
+            closure.add(curr)
+            parts = curr.split(".")
+            for i in range(1, len(parts)):
+                p = ".".join(parts[:i])
+                if p in available_modules and p not in closure:
+                    queue.append(p)
+            mod_deps = _get_module_dependencies(
+                curr, available_modules[curr], is_package=curr in packages
+            )
+            queue.extend(sorted(d for d in mod_deps if d not in closure))
+    return closure
+
+
+def bundle_shared_python(
+    app_dir: Path,
+    *,
+    source_root: Path | None = None,
+    max_bundle_bytes: int = MAX_BUNDLE_BYTES_PER_FILE,
+    native_python_env: bool = False,
+) -> dict[str, int]:
+    """Tree-shaking AST marker bundler.
+
+    Inserts one `CXAS_SHARED_BUNDLE` block per entrypoint without touching any
+    other byte of the entrypoint, so `strip_shared_bundles` restores it exactly.
+    Raises `PythonBundlerError` if a bundled shared module or entrypoint is not
+    valid UTF-8 Python or contains symlinks.
+    """
+    if source_root is None:
+        source_root = app_dir
+
+    available_modules, module_paths, packages = _discover_shared_modules(
+        source_root
+    )
 
     entrypoints = _discover_entrypoints(app_dir)
 
     validated: set[str] = set()
     results: dict[str, int] = {}
-    marker_begin_regex = re.compile(
-        rf"^{re.escape(BUNDLE_BEGIN_PREFIX)} \(sha256:[a-f0-9]{{16}}\) ===\r?\n.*?^{re.escape(BUNDLE_END_LINE)}(?:\r?\n)?",  # noqa: E501
-        re.MULTILINE | re.DOTALL,
-    )
 
     for ep in entrypoints:
         _assert_safe_subpath(ep, app_dir, label="app_dir")
@@ -592,7 +623,7 @@ def bundle_shared_python(
             raise PythonBundlerError(
                 f"Entrypoint {ep} is not valid UTF-8: {exc}"
             ) from exc
-        content = marker_begin_regex.sub("", original)
+        content = _BUNDLE_MARKER_REGEX.sub("", original)
 
         if native_python_env:
             if content != original:
@@ -607,22 +638,7 @@ def bundle_shared_python(
                 f"Entrypoint {ep} is not valid Python: {exc}"
             ) from exc
 
-        deps = _get_module_dependencies("entrypoint", content)
-        closure: set[str] = set()
-        queue = sorted(deps)
-        while queue:
-            curr = queue.pop(0)
-            if curr in available_modules and curr not in closure:
-                closure.add(curr)
-                parts = curr.split(".")
-                for i in range(1, len(parts)):
-                    p = ".".join(parts[:i])
-                    if p in available_modules and p not in closure:
-                        queue.append(p)
-                mod_deps = _get_module_dependencies(
-                    curr, available_modules[curr], is_package=curr in packages
-                )
-                queue.extend(sorted(d for d in mod_deps if d not in closure))
+        closure = _compute_module_closure(content, available_modules, packages)
 
         if not closure:
             if content != original:
@@ -763,6 +779,151 @@ def _local_module_source(local_source_dir: Path, module: str) -> str | None:
     return None
 
 
+_MEMORY_ENTRYPOINT = Path("<memory>")
+_BUNDLE_MARKER_REGEX = re.compile(
+    rf"^({re.escape(BUNDLE_BEGIN_PREFIX)} \(sha256:([a-f0-9]{{16}})\) ===\r?\n.*?^{re.escape(BUNDLE_END_LINE)}(?:\r?\n)?)",  # noqa: E501
+    re.MULTILINE | re.DOTALL,
+)
+_ANY_BUNDLE_MARKER_REGEX = re.compile(
+    rf"^(?:{re.escape(BUNDLE_BEGIN_PREFIX)}|{re.escape(BUNDLE_END_PREFIX)})\b",
+    re.MULTILINE,
+)
+
+
+def _strip_shared_bundle_impl(
+    content: str,
+    ep: Path,
+    *,
+    force: bool = False,
+    local_source_dir: Path | None = None,
+) -> tuple[str, bool, str | None, dict[str, str], set[str]]:
+    matches = list(_BUNDLE_MARKER_REGEX.finditer(content))
+    if not matches:
+        if not force and _ANY_BUNDLE_MARKER_REGEX.search(content):
+            raise BundleDigestMismatchError(
+                f"Malformed shared bundle markers in {ep}"
+            )
+        return content, False, None, {}, set()
+
+    if force:
+        new_content = content
+        for match in reversed(matches):
+            new_content = (
+                new_content[: match.start()] + new_content[match.end() :]
+            )
+        return new_content, True, None, {}, set()
+
+    if len(matches) > 1:
+        raise BundleDigestMismatchError(
+            f"Block tampered in Console: {len(matches)} shared bundle "
+            f"blocks in {ep} (expected 1)"
+        )
+    match = matches[0]
+    outside = content[: match.start()] + content[match.end() :]
+    if _ANY_BUNDLE_MARKER_REGEX.search(outside):
+        raise BundleDigestMismatchError(
+            f"Block tampered in Console: stray shared bundle marker in {ep}"
+        )
+
+    bundle_text = match.group(1)
+    expected_digest = match.group(2)
+
+    parsed_modules, packages, tree = _parse_bundled_modules(bundle_text, ep)
+    sorted_modules = _topo_sort_modules(parsed_modules, packages)
+    actual_digest, expected_text = _render_bundle(sorted_modules, packages)
+
+    if actual_digest != expected_digest:
+        raise BundleDigestMismatchError(
+            f"Block tampered in Console: {actual_digest} != {expected_digest}"
+        )
+    if ast.dump(ast.parse(expected_text)) != ast.dump(tree):
+        raise BundleDigestMismatchError(
+            f"Block tampered in Console: unexpected statements in {ep}"
+        )
+    # Byte-level check (CRLF-normalized): also catches comments and
+    # whitespace edits that the AST comparison cannot see.
+    if _normalize_block(bundle_text) != _normalize_block(expected_text):
+        raise BundleDigestMismatchError(
+            f"Block tampered in Console: unexpected content in {ep}"
+        )
+
+    if local_source_dir is not None:
+        for m, src in parsed_modules.items():
+            local_src = _local_module_source(local_source_dir, m)
+            if local_src is not None and local_src != src:
+                raise BundleDigestMismatchError(
+                    f"Drift between pulled block and local python_lib for "
+                    f"{ep} ({m})"
+                )
+
+    new_content = content[: match.start()] + content[match.end() :]
+    return new_content, True, actual_digest, parsed_modules, packages
+
+
+def strip_shared_bundle_text(
+    content: str,
+    ep: Path | str = _MEMORY_ENTRYPOINT,
+    *,
+    force: bool = False,
+) -> str:
+    """Validates and strips a `CXAS_SHARED_BUNDLE` block without disk writes."""
+    ep_path = ep if isinstance(ep, Path) else Path(ep)
+    new_content, _had_bundle, _, _, _ = _strip_shared_bundle_impl(
+        content, ep_path, force=force, local_source_dir=None
+    )
+    return new_content
+
+
+def inspect_entrypoint_bundle(
+    content: str,
+    ep: Path | str = _MEMORY_ENTRYPOINT,
+    *,
+    app_dir: Path | None = None,
+    force: bool = False,
+) -> tuple[str, str | None, dict[str, str], set[str]]:
+    """Inspects an entrypoint's embedded or tree-shaken python_lib closure."""
+    ep_path = ep if isinstance(ep, Path) else Path(ep)
+    new_content, had_bundle, digest, parsed_modules, packages = (
+        _strip_shared_bundle_impl(
+            content, ep_path, force=force, local_source_dir=None
+        )
+    )
+    if had_bundle or app_dir is None:
+        return new_content, digest, parsed_modules, packages
+
+    try:
+        ast.parse(content, filename=str(ep_path))
+    except SyntaxError as exc:
+        raise PythonBundlerError(
+            f"Entrypoint {ep_path} is not valid Python: {exc}"
+        ) from exc
+
+    available_modules, module_paths, all_packages = _discover_shared_modules(
+        Path(app_dir).resolve()
+    )
+    if not available_modules:
+        return content, None, {}, set()
+
+    closure = _compute_module_closure(content, available_modules, all_packages)
+    if not closure:
+        return content, None, {}, set()
+
+    for m in sorted(closure):
+        try:
+            ast.parse(available_modules[m], filename=str(module_paths[m]))
+        except SyntaxError as exc:
+            raise PythonBundlerError(
+                f"Shared module {m} ({module_paths[m]}) is not valid "
+                f"Python: {exc}"
+            ) from exc
+
+    subset_modules = {m: available_modules[m] for m in closure}
+    subset_packages = {m for m in closure if m in all_packages}
+    sorted_modules = _topo_sort_modules(subset_modules, subset_packages)
+    comp_digest, _bundle_text = _render_bundle(sorted_modules, subset_packages)
+    return content, comp_digest, subset_modules, subset_packages
+
+
 def strip_shared_bundles(
     app_dir: Path, *, local_source_dir: Path | None = None, force: bool = False
 ) -> list[Path]:
@@ -780,15 +941,6 @@ def strip_shared_bundles(
 
     entrypoints = _discover_entrypoints(app_dir)
 
-    marker_regex = re.compile(
-        rf"^({re.escape(BUNDLE_BEGIN_PREFIX)} \(sha256:([a-f0-9]{{16}})\) ===\r?\n.*?^{re.escape(BUNDLE_END_LINE)}(?:\r?\n)?)",  # noqa: E501
-        re.MULTILINE | re.DOTALL,
-    )
-    any_marker_regex = re.compile(
-        rf"^(?:{re.escape(BUNDLE_BEGIN_PREFIX)}|{re.escape(BUNDLE_END_PREFIX)})\b",
-        re.MULTILINE,
-    )
-
     stripped: list[Path] = []
     for ep in entrypoints:
         try:
@@ -797,70 +949,15 @@ def strip_shared_bundles(
             raise PythonBundlerError(
                 f"Entrypoint {ep} is not valid UTF-8: {exc}"
             ) from exc
-        matches = list(marker_regex.finditer(content))
-        if not matches:
-            if not force and any_marker_regex.search(content):
-                raise BundleDigestMismatchError(
-                    f"Malformed shared bundle markers in {ep}"
-                )
-            continue
-
-        if force:
-            new_content = content
-            for match in reversed(matches):
-                new_content = (
-                    new_content[: match.start()] + new_content[match.end() :]
-                )
+        new_content, had_bundle, _, _, _ = _strip_shared_bundle_impl(
+            content,
+            ep,
+            force=force,
+            local_source_dir=local_source_dir,
+        )
+        if had_bundle:
             ep.write_text(new_content, encoding="utf-8")
             stripped.append(ep)
-            continue
-
-        if len(matches) > 1:
-            raise BundleDigestMismatchError(
-                f"Block tampered in Console: {len(matches)} shared bundle "
-                f"blocks in {ep} (expected 1)"
-            )
-        match = matches[0]
-        outside = content[: match.start()] + content[match.end() :]
-        if any_marker_regex.search(outside):
-            raise BundleDigestMismatchError(
-                f"Block tampered in Console: stray shared bundle marker in {ep}"
-            )
-
-        bundle_text = match.group(1)
-        expected_digest = match.group(2)
-
-        parsed_modules, packages, tree = _parse_bundled_modules(bundle_text, ep)
-        sorted_modules = _topo_sort_modules(parsed_modules, packages)
-        actual_digest, expected_text = _render_bundle(sorted_modules, packages)
-
-        if actual_digest != expected_digest:
-            raise BundleDigestMismatchError(
-                f"Block tampered in Console: "
-                f"{actual_digest} != {expected_digest}"
-            )
-        if ast.dump(ast.parse(expected_text)) != ast.dump(tree):
-            raise BundleDigestMismatchError(
-                f"Block tampered in Console: unexpected statements in {ep}"
-            )
-        # Byte-level check (CRLF-normalized): also catches comments and
-        # whitespace edits that the AST comparison cannot see.
-        if _normalize_block(bundle_text) != _normalize_block(expected_text):
-            raise BundleDigestMismatchError(
-                f"Block tampered in Console: unexpected content in {ep}"
-            )
-
-        for m, src in parsed_modules.items():
-            local_src = _local_module_source(local_source_dir, m)
-            if local_src is not None and local_src != src:
-                raise BundleDigestMismatchError(
-                    f"Drift between pulled block and local python_lib for "
-                    f"{ep} ({m})"
-                )
-
-        new_content = content[: match.start()] + content[match.end() :]
-        ep.write_text(new_content, encoding="utf-8")
-        stripped.append(ep)
 
     return stripped
 

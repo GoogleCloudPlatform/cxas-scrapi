@@ -1,0 +1,79 @@
+{
+  "tools": {
+    "block_freeze_credit_card": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/cards/block-or-freeze"
+      }
+    },
+    "book_branch_appointment": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/branches/appointments"
+      }
+    },
+    "change_credit_card_limit": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/cards/change-limit"
+      }
+    },
+    "check_sepa_transfer_limits": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/payments/sepa-limits"
+      }
+    },
+    "display_deeplink": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/ui/deeplink-card"
+      }
+    },
+    "exchange_mobile_token": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/auth/exchange-mobile-token"
+      }
+    },
+    "execute_sepa_transfer": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/payments/sepa-transfer"
+      }
+    },
+    "find_branches": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/branches/search"
+      }
+    },
+    "get_account_balance": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/accounts/balance"
+      }
+    },
+    "get_mobile_caller_data": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/auth/mobile-caller-data"
+      }
+    },
+    "list_credit_cards": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/cards"
+      }
+    },
+    "request_websocket_handover": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/handover/websocket-transfer"
+      }
+    },
+    "resolve_escalation_queue": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/handover/resolve-queue"
+      }
+    },
+    "trigger_step_up_challenge": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/auth/step-up-challenge"
+      }
+    },
+    "verify_pin": {
+      "openApiTool": {
+        "url": "https://bfa.cymbal.api.cymbal-retail.example.com/v1/auth/verify-pin"
+      }
+    }
+  }
+}

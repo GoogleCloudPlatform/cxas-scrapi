@@ -291,3 +291,52 @@ incompatible with Guided Agents:
 | `get_verbatim_content_block` / `resolve_content_block_or_handoff` | Resolves localized static copy, failing closed to handoff | Use `cxas build` content macros | Native content blocks integration |
 | `adapt_presentation` | Inspects `channel_class` to adapt rich payloads vs. plain audio text | Use declarative channel routing | Declarative channels integration |
 | `check_disabled_agent` | Inspects `disabled_agents` context and emits a short-circuit return | Build-time manifest exclusions (`cxas build`) | Native agent routing policies |
+
+## Lockfiles and 3-Way Drift Detection
+
+To detect out-of-band Console edits before overwriting a live CES app, generate
+canonical SHA-256 lockfiles (`<app>.lock.json`) next to built bundles and run
+3-way (`base` vs. `ours` vs. `live`) drift checks:
+
+- **Emit lockfiles during build**: Pass `--write-locks` to `cxas build` to
+  write `<out_dir>.lock.json` as a sibling of each built app directory (never
+  inside the app bundle itself).
+- **Generate a standalone lockfile**:
+
+  ```bash
+  cxas lock --bundle dist/brand_1/web
+  ```
+
+- **Run a 3-way drift check**:
+
+  ```bash
+  cxas drift \
+    --app brand_1-web \
+    --dist dist/brand_1/web \
+    --live live_export/ \
+    --lockfile dist/brand_1/web.lock.json \
+    --conflicts-dir conflicts/brand_1-web
+  ```
+
+  Normalization strips volatile CES envelope fields (`uuid`, `uid`, `etag`,
+  `createTime`, `updateTime`), proto3 defaults, and server-default values so an
+  unchanged CES round trip reports `CLEAN`. Non-clean resources are classified
+  as `DRIFT`, `ORPHAN`, or `CONFLICT` (writing 3-way `.diff` conflict markers
+  into `--conflicts-dir`) and can be explicitly resolved via `--accept-live` or
+  `--force-ours`.
+
+- **Gate `cxas push` on drift**:
+
+  ```bash
+  cxas push \
+    --app-dir dist/brand_1/web \
+    --to my-ces-app \
+    --check-drift \
+    --lockfile dist/brand_1/web.lock.json
+  ```
+
+  Without `--live-dir`, `cxas push --check-drift` exports the live target app
+  to a temporary directory and aborts before `import_app` if any unresolved
+  `DRIFT`, `ORPHAN`, or `CONFLICT` resource is detected. Pass `--live-dir` for
+  offline checks or `--force-ours <resource_id>` to intentionally override a
+  specific resource.

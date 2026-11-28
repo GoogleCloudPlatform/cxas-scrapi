@@ -1,0 +1,263 @@
+{
+  "name": "00000000-0000-4000-8000-000000000001",
+  "displayName": "slide5-demo-cymbal-digital",
+  "rootAgent": "root_agent",
+  "audioProcessingConfig": {
+    "synthesizeSpeechConfigs": {
+      "de-DE": {
+        "voice": "de-DE-Chirp3-HD-Iapetus",
+        "speakingRate": 1.0
+      }
+    },
+    "bargeInConfig": {
+    },
+    "inactivityTimeout": "20s"
+  },
+  "loggingSettings": {
+    "conversationLoggingSettings": {
+      "retentionWindow": "31536000s"
+    }
+  },
+  "guardrails": ["banking_scope_llm_policy", "pii_account_id_content_filter", "prompt_security_guard"],
+  "metadata": {
+    "audioRewriterDisabled": "false",
+    "blueprintId": "cymbal-retail-polymorphic-v2",
+    "brandId": "cymbal",
+    "modality": "digital",
+    "model_pool.agent_planner": "gemini-2.5-flash-001",
+    "model_pool.datastore_rewriter_summarizer": "gemini-2.5-flash-lite-001",
+    "model_pool.eval_judge": "gemini-2.5-pro-002",
+    "model_pool.guardrail_judge": "gemini-2.5-flash-001",
+    "model_pool.voice_talker_thinker": "gemini-composite-v2",
+    "tenantId": "0"
+  },
+  "modelSettings": {
+    "model": "gemini-2.5-flash-001",
+    "temperature": 1.0
+  },
+  "variableDeclarations": [{
+    "name": "auth_ctx",
+    "description": "Monotonic customer identity verification and step-up authorization context.",
+    "schema": {
+      "type": "OBJECT",
+      "properties": {
+        "auth_method": {
+          "type": "STRING",
+          "description": "Verified primary authentication method identifier."
+        },
+        "authenticated": {
+          "type": "BOOLEAN",
+          "description": "True only after server-verified primary authentication succeeds."
+        },
+        "customer_ref": {
+          "type": "STRING",
+          "description": "Synthetic pseudonymous customer reference identifier."
+        },
+        "pin_locked": {
+          "type": "BOOLEAN",
+          "description": "True if telephone or banking PIN is locked due to failed attempts."
+        },
+        "step_up_completed": {
+          "type": "BOOLEAN",
+          "description": "True only after strong 2FA step-up challenge verification succeeds."
+        }
+      }
+    }
+  }, {
+    "name": "cards_ctx",
+    "description": "Credit card selection, lifecycle status, and limit modification state.",
+    "schema": {
+      "type": "OBJECT",
+      "properties": {
+        "card_status": {
+          "type": "STRING",
+          "description": "Current operational status of the selected credit card."
+        },
+        "limit_error_code": {
+          "type": "STRING",
+          "description": "Latest error or eligibility code returned by card limit BFA."
+        },
+        "requested_limit_eur": {
+          "type": "NUMBER",
+          "description": "Customer-requested credit card limit in EUR."
+        },
+        "selected_card_last4": {
+          "type": "STRING",
+          "description": "Masked last four digits of the selected credit card."
+        }
+      }
+    }
+  }, {
+    "name": "consent_ctx",
+    "description": "EU AI Act Art. 50 disclosure and recording consent tracking state.",
+    "schema": {
+      "type": "OBJECT",
+      "properties": {
+        "ai_disclosure_shown": {
+          "type": "BOOLEAN",
+          "description": "True once the required EU AI Act Art. 50 disclosure has been delivered."
+        },
+        "consent_status": {
+          "type": "STRING",
+          "description": "Customer recording consent status."
+        },
+        "recording_state": {
+          "type": "STRING",
+          "description": "Current call or transcript recording state."
+        }
+      }
+    }
+  }, {
+    "name": "disabled_agent_authentication_agent",
+    "description": "Flat scalar operational kill-switch mirror for authentication_agent.",
+    "schema": {
+      "type": "BOOLEAN"
+    }
+  }, {
+    "name": "disabled_agent_branch_information_agent",
+    "description": "Flat scalar operational kill-switch mirror for branch_information_agent.",
+    "schema": {
+      "type": "BOOLEAN"
+    }
+  }, {
+    "name": "disabled_agent_credit_cards_agent",
+    "description": "Flat scalar operational kill-switch mirror for credit_cards_agent.",
+    "schema": {
+      "type": "BOOLEAN"
+    }
+  }, {
+    "name": "disabled_agent_guide_agent",
+    "description": "Flat scalar operational kill-switch mirror for guide_agent.",
+    "schema": {
+      "type": "BOOLEAN"
+    }
+  }, {
+    "name": "disabled_agent_human_interaction_agent",
+    "description": "Flat scalar operational kill-switch mirror for human_interaction_agent.",
+    "schema": {
+      "type": "BOOLEAN"
+    }
+  }, {
+    "name": "disabled_agent_sepa_transfer_agent",
+    "description": "Flat scalar operational kill-switch mirror for sepa_transfer_agent.",
+    "schema": {
+      "type": "BOOLEAN"
+    }
+  }, {
+    "name": "segment",
+    "description": "Flat scalar mirror of session_ctx.segment for runtime CEL condition evaluation.",
+    "schema": {
+      "type": "STRING"
+    }
+  }, {
+    "name": "session_ctx",
+    "description": "Server-initialized session routing, brand, modality, surface, segment, and runtime kill-switch context.",
+    "schema": {
+      "type": "OBJECT",
+      "properties": {
+        "brand_id": {
+          "type": "STRING",
+          "description": "Server-resolved retail banking brand identifier."
+        },
+        "disabled_agents": {
+          "type": "OBJECT",
+          "properties": {
+            "authentication_agent": {
+              "type": "BOOLEAN",
+              "description": "Emergency runtime kill-switch flag for authentication specialist."
+            },
+            "branch_information_agent": {
+              "type": "BOOLEAN",
+              "description": "Emergency runtime kill-switch flag for branch servicing specialist."
+            },
+            "credit_cards_agent": {
+              "type": "BOOLEAN",
+              "description": "Emergency runtime kill-switch flag for credit card specialist."
+            },
+            "guide_agent": {
+              "type": "BOOLEAN",
+              "description": "Emergency runtime kill-switch flag for general knowledge specialist."
+            },
+            "human_interaction_agent": {
+              "type": "BOOLEAN",
+              "description": "Emergency runtime kill-switch flag for human handover specialist."
+            },
+            "sepa_transfer_agent": {
+              "type": "BOOLEAN",
+              "description": "Emergency runtime kill-switch flag for SEPA transfer specialist."
+            }
+          },
+          "description": "Runtime emergency kill-switch flags keyed by specialist identifier."
+        },
+        "handoff_ref_token": {
+          "type": "STRING",
+          "description": "Warm human escalation correlation reference token."
+        },
+        "tenant_id": {
+          "type": "NUMBER",
+          "description": "Numeric core-banking tenant identifier."
+        },
+        "modality": {
+          "type": "STRING",
+          "description": "Active interaction modality (voice or digital)."
+        },
+        "segment": {
+          "type": "STRING",
+          "description": "Customer servicing segment identifier (mass or employee)."
+        },
+        "segment_policy_note": {
+          "type": "STRING",
+          "description": "Pre-rendered segment-specific servicing policy note."
+        },
+        "surface_greeting": {
+          "type": "STRING",
+          "description": "Pre-rendered surface-specific greeting guidance."
+        },
+        "surface_id": {
+          "type": "STRING",
+          "description": "Entry surface identifier (call-center, mobile-app, public-web, olb)."
+        }
+      }
+    }
+  }, {
+    "name": "surface_id",
+    "description": "Flat scalar mirror of session_ctx.surface_id for runtime CEL condition evaluation.",
+    "schema": {
+      "type": "STRING"
+    }
+  }, {
+    "name": "transfer_ctx",
+    "description": "SEPA credit transfer preparation and finality confirmation state.",
+    "schema": {
+      "type": "OBJECT",
+      "properties": {
+        "amount_eur": {
+          "type": "NUMBER",
+          "description": "Requested SEPA credit transfer amount in EUR."
+        },
+        "masked_account_id": {
+          "type": "STRING",
+          "description": "Masked destination account ID for customer confirmation."
+        },
+        "recipient_name": {
+          "type": "STRING",
+          "description": "Beneficiary name for the SEPA credit transfer."
+        },
+        "sepa_finality_ack": {
+          "type": "BOOLEAN",
+          "description": "True when the customer explicitly confirms irreversible SEPA execution."
+        }
+      }
+    }
+  }],
+  "globalInstruction": "global_instruction.txt",
+  "languageSettings": {
+    "defaultLanguageCode": "de-DE",
+    "supportedLanguageCodes": ["de-DE", "en-GB"],
+    "enableMultilingualSupport": true
+  },
+  "timeZoneSettings": {
+    "timeZone": "Europe/Berlin"
+  },
+  "toolExecutionMode": "SEQUENTIAL"
+}

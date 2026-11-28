@@ -1,0 +1,15 @@
+{
+  "description": "Customer identity verification and Cymbal Sign step-up authentication specialist for Cymbal Bank.",
+  "displayName": "authentication_agent",
+  "instruction": "agents/authentication_agent/instruction.txt",
+  "modelSettings": {
+    "model": "gemini-2.5-flash-001",
+    "temperature": 1.0
+  },
+  "tools": [
+    "verify_pin",
+    "trigger_step_up_challenge",
+    "exchange_mobile_token",
+    "get_mobile_caller_data"
+  ]
+}

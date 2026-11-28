@@ -1,0 +1,14 @@
+{
+  "name": "451a526b-25af-4f5f-949a-5f7a958fa26e",
+  "openApiTool": {
+    "openApiSchema": "tools/verify_pin/open_api_tool/open_api_schema.yaml",
+    "name": "verify_pin",
+    "description": "Verify telephone banking PIN against Cymbal Bank ID / Cymbal-Kundennummer for Cymbal Bank via server-side BFA.",
+    "apiAuthentication": {
+      "serviceAgentIdTokenAuthConfig": {
+      }
+    }
+  },
+  "executionType": "SYNCHRONOUS",
+  "displayName": "verify_pin"
+}
