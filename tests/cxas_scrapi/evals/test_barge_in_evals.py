@@ -35,10 +35,14 @@ from cxas_scrapi.core.sessions import (
     ScrapiRunSessionResponse,
 )
 from cxas_scrapi.evals.simulation_evals import (
+    BargeInGenerationOutput,
     LLMUserConversation,
     SimulationEvals,
     Step,
+    StepProgress,
+    StepStatus,
     cleanup_session_dir,
+    generate_model_barge_in,
 )
 from cxas_scrapi.evals.turn_evals import (
     TurnEvals,
@@ -49,6 +53,7 @@ from cxas_scrapi.evals.turn_evals import (
     _coerce_expected_bool,
     _resolve_step_input,
 )
+from cxas_scrapi.utils.eval_utils import EvalUtils
 from cxas_scrapi.utils.reporting import _load_sim_test_cases
 
 
@@ -896,3 +901,735 @@ def test_existing_example_yamls_validate_with_barge_in() -> None:
         if Step(**s).barge_in_after_ms is not None
     )
     assert matching_step.barge_in_after_ms == 1500
+
+
+def test_step_barge_in_normalization_and_timing_bounds() -> None:
+    # Sub-object range [min_ms, max_ms] and list of styles
+    step_range = Step(
+        goal="Interrupt with order change",
+        barge_in={
+            "after_ms": [700, 1900],
+            "style": ["urgent_pivot", "impatient_cutoff"],
+        },
+    )
+    assert step_range.is_barge_in_step() is True
+    assert step_range.barge_in is not None
+    assert step_range.barge_in.enabled is True
+    assert step_range.barge_in.min_ms == 700
+    assert step_range.barge_in.max_ms == 1900
+    assert step_range.barge_in.after_ms == 1300
+    assert step_range.barge_in_after_ms == 1300
+    assert step_range.barge_in.style == "urgent_pivot,impatient_cutoff"
+    assert step_range.resolve_timing_bounds() == (700, 1900)
+
+    # Sub-object with "auto"
+    step_auto = Step(
+        goal="Interrupt automatically",
+        barge_in={
+            "after_ms": "auto",
+            "min_ms": 600,
+            "max_ms": 1800,
+        },
+    )
+    assert step_auto.is_barge_in_step() is True
+    assert step_auto.resolve_timing_bounds() == (600, 1800)
+    assert step_auto.barge_in_after_ms == 1200
+
+    # Sub-object fixed timestamp with jitter
+    step_jitter = Step(
+        goal="Interrupt with jitter",
+        barge_in={
+            "after_ms": 1000,
+            "jitter_ms": 200,
+        },
+    )
+    assert step_jitter.resolve_timing_bounds() == (800, 1200)
+
+
+def test_generate_model_barge_in_utterance_and_timing_variance_across_runs() -> (
+    None
+):
+    # 1. Offline variance across 5 runs (rotates across all 5 styles and timing windows)
+    offline_utterances = set()
+    offline_styles = []
+    offline_timings = set()
+    for run_idx in range(5):
+        out = generate_model_barge_in(
+            genai_client=None,
+            genai_model="test-model",
+            goal="Cancel order ORD-98765 immediately",
+            response_guide='Say "Wait, I need to cancel order ORD-98765 right now!"',
+            barge_in_style="auto",
+            barge_in_min_ms=600,
+            barge_in_max_ms=2000,
+            run_idx=run_idx,
+            turn_idx=1,
+        )
+        assert 600 <= out.barge_in_after_ms <= 2000
+        assert "ORD-98765" in out.barge_in_utterance
+        offline_utterances.add(out.barge_in_utterance)
+        offline_styles.append(out.barge_in_style)
+        offline_timings.add(out.barge_in_after_ms)
+
+    assert len(set(offline_styles)) == 5
+    assert len(offline_utterances) >= 4
+    assert len(offline_timings) >= 3
+
+    # 2. Model-driven generation with prompt verification & timing clamping
+    mock_genai = MagicMock()
+    captured_prompts: list[str] = []
+
+    def _fake_generate(
+        prompt: str,
+        model_name: str,
+        response_mime_type: str,
+        response_schema: typing.Any,
+    ) -> BargeInGenerationOutput:
+        captured_prompts.append(prompt)
+        idx = len(captured_prompts)
+        return BargeInGenerationOutput(
+            barge_in_utterance=f"Hold everything, cancel order ORD-98765 variant {idx}!",
+            barge_in_after_ms=300
+            if idx == 1
+            else 2500,  # out of bounds to test clamping
+            barge_in_style="urgent_pivot" if idx == 1 else "impatient_cutoff",
+            should_barge_in=True,
+            justification="Urgent order cancellation",
+        )
+
+    mock_genai.generate.side_effect = _fake_generate
+
+    history: list[str] = []
+    out1 = generate_model_barge_in(
+        genai_client=mock_genai,
+        genai_model="gemini-3.5-flash-lite",
+        goal="Cancel order ORD-98765",
+        response_guide="Interrupt to cancel order ORD-98765",
+        barge_in_style=["urgent_pivot", "impatient_cutoff"],
+        barge_in_min_ms=700,
+        barge_in_max_ms=1800,
+        previous_barge_in_utterances=history,
+        run_idx=0,
+        turn_idx=1,
+    )
+    history.append(out1.barge_in_utterance)
+    out2 = generate_model_barge_in(
+        genai_client=mock_genai,
+        genai_model="gemini-3.5-flash-lite",
+        goal="Cancel order ORD-98765",
+        response_guide="Interrupt to cancel order ORD-98765",
+        barge_in_style=["urgent_pivot", "impatient_cutoff"],
+        barge_in_min_ms=700,
+        barge_in_max_ms=1800,
+        previous_barge_in_utterances=history,
+        run_idx=1,
+        turn_idx=1,
+    )
+
+    assert out1.barge_in_after_ms == 700  # clamped to min_ms
+    assert out2.barge_in_after_ms == 1800  # clamped to max_ms
+    assert out1.barge_in_utterance != out2.barge_in_utterance
+    assert "urgent_pivot" in captured_prompts[0]
+    assert "impatient_cutoff" in captured_prompts[1]
+    assert out1.barge_in_utterance in captured_prompts[1]
+
+
+def test_llm_user_conversation_multi_step_llm_goal_to_model_barge_in() -> None:
+    sim = SimulationEvals(app_name="projects/p/locations/us/apps/a")
+    test_case = {
+        "name": "multi_step_goal_then_model_barge_in",
+        "steps": [
+            {
+                "goal": "Inquire about general store return policies",
+                "success_criteria": "Agent begins explaining the store return policies",
+                "response_guide": "Ask the agent to explain return policies.",
+                "max_turns": 6,
+            },
+            {
+                "goal": "Barge in with an urgent order cancellation request",
+                "success_criteria": "Agent ceases policy explanation and cancels order 98765",
+                "response_guide": "Interrupt to cancel order 98765 right now.",
+                "max_turns": 8,
+                "barge_in": {
+                    "style": "urgent_pivot",
+                    "after_ms": [800, 1600],
+                },
+            },
+        ],
+    }
+
+    def _mock_generate(
+        prompt: str,
+        model_name: str,
+        response_mime_type: str,
+        response_schema: typing.Any,
+    ) -> typing.Any:
+        if response_schema is BargeInGenerationOutput:
+            return BargeInGenerationOutput(
+                barge_in_utterance="Wait, hold on—I need to cancel order 98765 right away!",
+                barge_in_after_ms=1150,
+                barge_in_style="urgent_pivot",
+                should_barge_in=True,
+                justification="Caller urgently pivots to cancelling order 98765.",
+            )
+        # Standard LLMUserConversation.Output for Step 0 initiation
+        return LLMUserConversation.Output(
+            next_user_utterance="Can you explain your return and refund policies?",
+            step_progresses=[
+                StepProgress(
+                    step=Step(
+                        goal="Inquire about general store return policies",
+                        success_criteria="Agent begins explaining the store return policies",
+                        response_guide="Ask the agent to explain return policies.",
+                        max_turns=6,
+                    ),
+                    status=StepStatus.IN_PROGRESS,
+                    justification="User is initiating this goal by describing the problem.",
+                ),
+                StepProgress(
+                    step=Step(
+                        goal="Barge in with an urgent order cancellation request",
+                        success_criteria="Agent ceases policy explanation and cancels order 98765",
+                        response_guide="Interrupt to cancel order 98765 right now.",
+                        max_turns=8,
+                    ),
+                    status=StepStatus.NOT_STARTED,
+                    justification="",
+                ),
+            ],
+        )
+
+    sim.genai_client.generate = MagicMock(side_effect=_mock_generate)
+
+    mock_interactive_session = MagicMock()
+    welcome_resp = ScrapiRunSessionResponse(
+        original_response=types.RunSessionResponse(
+            outputs=[
+                types.SessionOutput(
+                    text="Welcome to Cymbal Support! How can I help?"
+                )
+            ]
+        )
+    )
+    interrupted_resp = ScrapiRunSessionResponse(
+        original_response=types.RunSessionResponse(
+            outputs=[
+                types.SessionOutput(
+                    text="Our return policy allows returns within 30 days of purchase with a receipt."
+                )
+            ]
+        ),
+        barge_in_metadata=BargeInMetadata(
+            barge_in_attempted=True,
+            barge_in_after_ms=1150,
+            interrupted=True,
+            barge_in_signal_received=True,
+            barge_in_ignored=False,
+            barge_in_window_missed=False,
+            played_audio_duration_ms=1150.0,
+            total_audio_duration_ms=3500.0,
+            estimated_heard_text="Our return policy allows",
+            barge_in_style="urgent_pivot",
+            barge_in_mode="pre_turn",
+            model_generated=True,
+        ),
+    )
+    post_barge_resp = ScrapiRunSessionResponse(
+        original_response=types.RunSessionResponse(
+            outputs=[
+                types.SessionOutput(
+                    text="I have cancelled order 98765 for you right away."
+                )
+            ]
+        )
+    )
+
+    mock_interactive_session.send_turn.return_value = welcome_resp
+    mock_interactive_session.send_turn_with_barge_in.return_value = (
+        interrupted_resp,
+        post_barge_resp,
+    )
+    sim.sessions_client.create_interactive_session = MagicMock(
+        return_value=mock_interactive_session
+    )
+
+    with patch(
+        "cxas_scrapi.evals.simulation_evals.evaluate_expectations",
+        return_value=[],
+    ):
+        conv = sim.simulate_conversation(
+            test_case=test_case,
+            modality="audio",
+            console_logging=False,
+        )
+
+    # Turn 0 (welcome) must be sent via send_turn, NOT send_turn_with_barge_in
+    mock_interactive_session.send_turn.assert_called_once_with(
+        "event: welcome", {}
+    )
+    # Turn 1 (Step 0 utterance) must be paired with Step 1's model-generated barge-in
+    mock_interactive_session.send_turn_with_barge_in.assert_called_once()
+    call_kwargs = (
+        mock_interactive_session.send_turn_with_barge_in.call_args.kwargs
+    )
+    assert (
+        call_kwargs["text"]
+        == "Can you explain your return and refund policies?"
+    )
+    assert (
+        call_kwargs["barge_in_text"]
+        == "Wait, hold on—I need to cancel order 98765 right away!"
+    )
+    assert call_kwargs["barge_in_after_ms"] == 1150
+    assert call_kwargs["barge_in_style"] == "urgent_pivot"
+    assert call_kwargs["model_generated"] is True
+
+    # Both Step 0 and Step 1 must be marked COMPLETED
+    assert all(p.status == StepStatus.COMPLETED for p in conv.steps_progress)
+    assert any(
+        "User: [Barge-In] Wait, hold on—I need to cancel order 98765 right away!"
+        in t
+        for t in conv.detailed_trace
+    )
+
+
+def test_simulation_evals_reactive_barge_in_defers_then_interrupts() -> None:
+    sim = SimulationEvals(app_name="projects/p/locations/us/apps/a")
+    test_case = {
+        "name": "reactive_barge_in_defer_and_trigger",
+        "steps": [
+            {
+                "goal": "Ask about roaming plans and answer verification if asked",
+                "success_criteria": "Agent starts explaining roaming plans",
+                "response_guide": "Ask about roaming plans. If asked for ZIP, say 94043.",
+                "max_turns": 6,
+            },
+            {
+                "goal": "Reactively barge in to report locked SIM on account 445566",
+                "success_criteria": "Agent switches to unlocking SIM on account 445566",
+                "response_guide": "Interrupt roaming explanation to report locked SIM on account 445566.",
+                "max_turns": 8,
+                "barge_in": {
+                    "mode": "reactive",
+                    "style": "urgent_pivot",
+                    "after_ms": [700, 1700],
+                },
+            },
+        ],
+    }
+
+    llm_turn_calls = 0
+    barge_in_calls: list[str] = []
+
+    def _mock_generate(
+        prompt: str,
+        model_name: str,
+        response_mime_type: str,
+        response_schema: typing.Any,
+    ) -> typing.Any:
+        nonlocal llm_turn_calls
+        if response_schema is BargeInGenerationOutput:
+            barge_in_calls.append(prompt)
+            if "What is your billing ZIP code?" in prompt:
+                # Agent asked a short prerequisite question -> defer barge-in!
+                return BargeInGenerationOutput(
+                    barge_in_utterance="",
+                    barge_in_after_ms=900,
+                    barge_in_style="urgent_pivot",
+                    should_barge_in=False,
+                    justification="Agent asked prerequisite ZIP question; deferring barge-in.",
+                )
+            return BargeInGenerationOutput(
+                barge_in_utterance="Hold on, forget roaming—my SIM on account 445566 is PUK-locked!",
+                barge_in_after_ms=950,
+                barge_in_style="urgent_pivot",
+                should_barge_in=True,
+                justification="Agent is now explaining roaming plans; interrupting reactively.",
+            )
+
+        llm_turn_calls += 1
+        utterance = (
+            "What international roaming plans do you have?"
+            if llm_turn_calls == 1
+            else "My ZIP code is 94043."
+        )
+        return LLMUserConversation.Output(
+            next_user_utterance=utterance,
+            step_progresses=[
+                StepProgress(
+                    step=Step(**test_case["steps"][0]),
+                    status=StepStatus.IN_PROGRESS,
+                    justification="Working on step 0.",
+                ),
+                StepProgress(
+                    step=Step(**test_case["steps"][1]),
+                    status=StepStatus.NOT_STARTED,
+                    justification="",
+                ),
+            ],
+        )
+
+    sim.genai_client.generate = MagicMock(side_effect=_mock_generate)
+
+    mock_interactive_session = MagicMock()
+    welcome_resp = ScrapiRunSessionResponse(
+        original_response=types.RunSessionResponse(
+            outputs=[types.SessionOutput(text="Hello, how can I help you?")]
+        )
+    )
+    zip_question_resp = ScrapiRunSessionResponse(
+        original_response=types.RunSessionResponse(
+            outputs=[
+                types.SessionOutput(
+                    text="Sure! Before I check roaming plans, what is your billing ZIP code?"
+                )
+            ]
+        )
+    )
+    roaming_interrupted_resp = ScrapiRunSessionResponse(
+        original_response=types.RunSessionResponse(
+            outputs=[
+                types.SessionOutput(
+                    text="Thank you. We offer three international roaming passes starting at ten dollars..."
+                )
+            ]
+        ),
+        barge_in_metadata=BargeInMetadata(
+            barge_in_attempted=True,
+            barge_in_after_ms=950,
+            interrupted=True,
+            barge_in_signal_received=True,
+            barge_in_ignored=False,
+            barge_in_window_missed=False,
+            played_audio_duration_ms=950.0,
+            total_audio_duration_ms=3200.0,
+            estimated_heard_text="Thank you. We offer three",
+            barge_in_style="urgent_pivot",
+            barge_in_mode="reactive",
+            model_generated=True,
+        ),
+    )
+    sim_unlocked_resp = ScrapiRunSessionResponse(
+        original_response=types.RunSessionResponse(
+            outputs=[
+                types.SessionOutput(
+                    text="I can help unlock your SIM card on account 445566 right now."
+                )
+            ]
+        )
+    )
+
+    mock_interactive_session.send_turn.return_value = welcome_resp
+
+    barge_send_count = 0
+
+    def _fake_send_turn_with_barge_in(
+        **kwargs: typing.Any,
+    ) -> tuple[typing.Any, typing.Any]:
+        nonlocal barge_send_count
+        barge_send_count += 1
+        cb = kwargs.get("barge_in_callback")
+        assert cb is not None
+        if barge_send_count == 1:
+            res = cb("What is your billing ZIP code?")
+            assert res["should_barge_in"] is False
+            return zip_question_resp, None
+        res = cb(
+            "Thank you. We offer three international roaming passes starting at ten dollars..."
+        )
+        assert res["should_barge_in"] is True
+        assert "445566" in res["barge_in_text"]
+        assert res["barge_in_after_ms"] == 950
+        return roaming_interrupted_resp, sim_unlocked_resp
+
+    mock_interactive_session.send_turn_with_barge_in.side_effect = (
+        _fake_send_turn_with_barge_in
+    )
+    sim.sessions_client.create_interactive_session = MagicMock(
+        return_value=mock_interactive_session
+    )
+
+    with patch(
+        "cxas_scrapi.evals.simulation_evals.evaluate_expectations",
+        return_value=[],
+    ):
+        conv = sim.simulate_conversation(
+            test_case=test_case,
+            modality="audio",
+            console_logging=False,
+        )
+
+    assert barge_send_count == 2
+    assert len(barge_in_calls) == 2
+    assert all(p.status == StepStatus.COMPLETED for p in conv.steps_progress)
+    assert any("User: My ZIP code is 94043." in t for t in conv.detailed_trace)
+    assert any(
+        "User: [Barge-In] Hold on, forget roaming—my SIM on account 445566 is PUK-locked!"
+        in t
+        for t in conv.detailed_trace
+    )
+
+
+def test_bidi_session_handler_reactive_barge_in_callback_and_defer() -> None:
+    # 1. Test reactive callback deferring barge-in (should_barge_in=False)
+    resp_q_defer: queue.Queue = queue.Queue()
+    handler_defer = BidiSessionHandler(
+        location="us",
+        token="token",
+        config={"session": "sessions/s1"},
+        input_queue=queue.Queue(),
+        response_queue=resp_q_defer,
+        skip_playback_wait=True,
+    )
+    handler_defer.current_turn_outputs = [
+        types.SessionOutput(text="Can I get your account PIN first?")
+    ]
+    handler_defer.agent_turn_manager.mark_turn_completed()
+
+    seen_live_texts: list[str] = []
+
+    def _defer_cb(live_text: str) -> dict[str, typing.Any]:
+        seen_live_texts.append(live_text)
+        return {"should_barge_in": False, "model_generated": True}
+
+    with patch.object(handler_defer, "_stream_input_payload"):
+        handler_defer._send_barge_in_pair(
+            {
+                "turn": [{"text": "Hi"}],
+                "barge_in_next": None,
+                "barge_in_after_ms": 500,
+                "barge_in_callback": _defer_cb,
+                "barge_in_mode": "reactive",
+                "model_generated": True,
+            },
+            idx=0,
+        )
+
+    assert seen_live_texts == ["Can I get your account PIN first?"]
+    r_n = resp_q_defer.get_nowait()
+    r_n1 = resp_q_defer.get_nowait()
+    assert isinstance(r_n, ScrapiRunSessionResponse)
+    assert r_n.barge_in_metadata is not None
+    assert r_n.barge_in_metadata.barge_in_attempted is False
+    assert r_n.barge_in_metadata.barge_in_mode == "reactive"
+    assert r_n.barge_in_metadata.model_generated is True
+    assert r_n1 is None
+    assert handler_defer.current_agent_turn_idx == 1
+
+    # 2. Test reactive callback triggering barge-in (should_barge_in=True)
+    resp_q_trig: queue.Queue = queue.Queue()
+    handler_trig = BidiSessionHandler(
+        location="us",
+        token="token",
+        config={"session": "sessions/s2"},
+        input_queue=queue.Queue(),
+        response_queue=resp_q_trig,
+        skip_playback_wait=True,
+    )
+    handler_trig.current_turn_outputs = [
+        types.SessionOutput(
+            text="Here is our complete 12-part policy breakdown..."
+        )
+    ]
+    handler_trig.agent_turn_manager.mark_interrupted(barge_in=True)
+    handler_trig.agent_turn_manager.mark_turn_completed()
+    handler_trig.next_turn_outputs = [
+        types.SessionOutput(
+            text="Got it, skipping to cancellation.", turn_completed=True
+        )
+    ]
+    handler_trig.next_turn_completed_flag = True
+
+    streamed_payloads: list[typing.Any] = []
+
+    def _trig_cb(live_text: str) -> dict[str, typing.Any]:
+        return {
+            "should_barge_in": True,
+            "barge_in_next": [{"text": "Skip the breakdown, cancel now!"}],
+            "barge_in_after_ms": 650,
+            "barge_in_style": "impatient_cutoff",
+            "model_generated": True,
+        }
+
+    with patch.object(
+        handler_trig,
+        "_stream_input_payload",
+        side_effect=lambda payload, *a, **kw: streamed_payloads.append(payload),
+    ):
+        handler_trig._send_barge_in_pair(
+            {
+                "turn": [{"text": "Tell me about the policy"}],
+                "barge_in_next": None,
+                "barge_in_after_ms": 800,
+                "barge_in_callback": _trig_cb,
+                "barge_in_mode": "reactive",
+                "model_generated": True,
+            },
+            idx=0,
+        )
+
+    assert len(streamed_payloads) == 2
+    assert streamed_payloads[1] == [{"text": "Skip the breakdown, cancel now!"}]
+    resp_0 = resp_q_trig.get_nowait()
+    resp_1 = resp_q_trig.get_nowait()
+    assert resp_0.barge_in_metadata is not None
+    assert resp_0.barge_in_metadata.barge_in_after_ms == 650
+    assert resp_0.barge_in_metadata.barge_in_style == "impatient_cutoff"
+    assert resp_0.barge_in_metadata.barge_in_mode == "reactive"
+    assert resp_0.barge_in_metadata.model_generated is True
+    assert resp_1 is not None
+
+
+@patch("cxas_scrapi.evals.turn_evals.track", side_effect=lambda x, **kwargs: x)
+def test_turn_evals_model_generated_barge_in(mock_track: typing.Any) -> None:
+    evals = TurnEvals(app_name="projects/p/locations/us/apps/a")
+    evals.genai_client.generate = MagicMock(
+        return_value=BargeInGenerationOutput(
+            barge_in_utterance="Actually, cut the shipping overview—update address on ORD-5512!",
+            barge_in_after_ms=920,
+            barge_in_style="impatient_cutoff",
+            should_barge_in=True,
+            justification="Impatient cutoff preserving ORD-5512.",
+        )
+    )
+
+    mock_interactive_session = MagicMock()
+    resp_0 = ScrapiRunSessionResponse(
+        original_response=types.RunSessionResponse(
+            outputs=[
+                types.SessionOutput(
+                    text="We offer standard, expedited, and overnight shipping..."
+                )
+            ]
+        ),
+        barge_in_metadata=BargeInMetadata(
+            barge_in_attempted=True,
+            barge_in_after_ms=920,
+            interrupted=True,
+            barge_in_signal_received=True,
+            barge_in_ignored=False,
+            barge_in_window_missed=False,
+            played_audio_duration_ms=920.0,
+            total_audio_duration_ms=2500.0,
+            estimated_heard_text="We offer standard",
+            barge_in_style="impatient_cutoff",
+            barge_in_mode="pre_turn",
+            model_generated=True,
+        ),
+    )
+    resp_1 = ScrapiRunSessionResponse(
+        original_response=types.RunSessionResponse(
+            outputs=[
+                types.SessionOutput(
+                    text="Sure, I can update the delivery address for ORD-5512."
+                )
+            ]
+        )
+    )
+    mock_interactive_session.send_turn_with_barge_in.return_value = (
+        resp_0,
+        resp_1,
+    )
+    evals.sessions_client.create_interactive_session = MagicMock(
+        return_value=mock_interactive_session
+    )
+
+    case = TurnTestCase(
+        name="model_gen_turn_barge_in",
+        turns=[
+            TurnStep(
+                turn="1",
+                user="Can you list all shipping tiers?",
+                expectations=[
+                    TurnExpectation(
+                        type=TurnOperator.AGENT_INTERRUPTED, value=True
+                    )
+                ],
+            ),
+            TurnStep(
+                turn="2",
+                barge_in={
+                    "goal": "Interrupt to update shipping address on ORD-5512",
+                    "guide": "Cut in and ask to change address for ORD-5512",
+                    "style": ["urgent_pivot", "impatient_cutoff"],
+                    "after_ms": [700, 1800],
+                },
+                expectations=[
+                    TurnExpectation(
+                        type=TurnOperator.CONTAINS, value="ORD-5512"
+                    )
+                ],
+            ),
+        ],
+    )
+
+    df = evals.run_turn_tests([case])
+    assert len(df) == 2
+    assert all(df["status"] == "SUCCESS")
+    call_kwargs = (
+        mock_interactive_session.send_turn_with_barge_in.call_args.kwargs
+    )
+    assert (
+        call_kwargs["barge_in_text"]
+        == "Actually, cut the shipping overview—update address on ORD-5512!"
+    )
+    assert call_kwargs["barge_in_after_ms"] == 920
+    assert call_kwargs["barge_in_style"] == "impatient_cutoff"
+    assert call_kwargs["model_generated"] is True
+
+
+def test_barge_in_requires_local_execution_and_milestone_sanitization() -> None:
+    req_reactive, reason_reactive = SimulationEvals.requires_local_execution(
+        {
+            "name": "cymbal_reactive_barge_in",
+            "steps": [
+                {"goal": "Ask about plans"},
+                {
+                    "goal": "Interrupt reactively",
+                    "barge_in": {"mode": "reactive", "after_ms": "auto"},
+                },
+            ],
+        }
+    )
+    assert req_reactive is True
+    assert "barge_in" in reason_reactive
+
+    req_disabled, _ = SimulationEvals.requires_local_execution(
+        {
+            "name": "cymbal_disabled_barge_in",
+            "steps": [
+                {
+                    "goal": "Ask about plans without barge-in",
+                    "barge_in": {"enabled": False},
+                }
+            ],
+        }
+    )
+    assert req_disabled is False
+
+    milestone_yaml = EvalUtils.convert_sim_evals_to_milestone_yaml(
+        {
+            "evals": [
+                {
+                    "name": "cymbal_sanitized_barge_in_sim",
+                    "steps": [
+                        {
+                            "goal": "Ask about roaming",
+                            "success_criteria": "Agent explains roaming",
+                        },
+                        {
+                            "goal": "Interrupt to unlock SIM",
+                            "success_criteria": "Agent unlocks SIM",
+                            "barge_in": {
+                                "mode": "reactive",
+                                "style": "urgent_pivot",
+                                "after_ms": [600, 1800],
+                            },
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+    assert "barge_in:" not in milestone_yaml
+    assert "cymbal_sanitized_barge_in_sim" in milestone_yaml
