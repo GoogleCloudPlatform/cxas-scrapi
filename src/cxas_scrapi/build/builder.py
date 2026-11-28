@@ -45,6 +45,7 @@ from cxas_scrapi.build.manifests import (
     ContentBlockCatalog,
     EnvManifest,
     Manifests,
+    ModelPins,
     ProfileIdentity,
     load_manifests,
     validate_app_overlay_mapping,
@@ -2055,6 +2056,144 @@ def _write_deployment_manifest(
     return slug
 
 
+_CONFIG_SUFFIXES = (".json", ".yaml", ".yml")
+
+
+def _read_config_strict(path: Path) -> Any:
+    try:
+        text = path.read_text("utf-8")
+        if path.suffix.lower() in (".yaml", ".yml"):
+            return yaml.load(text, Loader=UniqueKeyYaml12SafeLoader)
+        return json.loads(text)
+    except (json.JSONDecodeError, yaml.YAMLError, OSError) as exc:
+        raise BuildError(f"{path}: invalid config: {exc}") from exc
+
+
+def _write_config(path: Path, data: dict[str, Any]) -> None:
+    if path.suffix.lower() in (".yaml", ".yml"):
+        path.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+    else:
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _find_app_config(out_dir: Path) -> Path | None:
+    for suffix in _CONFIG_SUFFIXES:
+        candidate = out_dir / f"app{suffix}"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _iter_resource_configs(out_dir: Path, subdir: str) -> list[Path]:
+    base = out_dir / subdir
+    if not base.is_dir():
+        return []
+    found: list[Path] = []
+    for res_dir in sorted(base.iterdir()):
+        if not res_dir.is_dir():
+            continue
+        for suffix in _CONFIG_SUFFIXES:
+            candidate = res_dir / f"{res_dir.name}{suffix}"
+            if candidate.is_file():
+                found.append(candidate)
+                break
+    return found
+
+
+def _set_model(holder: dict[str, Any], model: str) -> None:
+    settings = holder.get("modelSettings")
+    if not isinstance(settings, dict):
+        settings = {}
+    settings["model"] = model
+    holder["modelSettings"] = settings
+
+
+def _apply_model_pins(out_dir: Path, pins: ModelPins | None) -> None:
+    """Pins the 3 model slots CES applies (agent, guardrail, data_store)."""
+    if pins is None:
+        return
+
+    def _rewrite(path: Path, fn: Any) -> None:
+        data = _read_config_strict(path)
+        if isinstance(data, dict) and fn(data):
+            _write_config(path, data)
+
+    if pins.agent:
+        app_cfg = _find_app_config(out_dir)
+        if app_cfg is not None:
+            _rewrite(app_cfg, lambda d: _set_model(d, pins.agent) or True)
+        for agent_cfg in _iter_resource_configs(out_dir, "agents"):
+            _rewrite(agent_cfg, lambda d: _set_model(d, pins.agent) or True)
+
+    if pins.guardrail:
+
+        def _pin_guardrail(d: dict[str, Any]) -> bool:
+            changed = False
+            if isinstance(d.get("llmPolicy"), dict):
+                _set_model(d["llmPolicy"], pins.guardrail)
+                changed = True
+            sec = d.get("llmPromptSecurity")
+            if isinstance(sec, dict) and isinstance(
+                sec.get("customPolicy"), dict
+            ):
+                _set_model(sec["customPolicy"], pins.guardrail)
+                changed = True
+            return changed
+
+        gr_base = out_dir / "guardrails"
+        if gr_base.is_dir():
+            for gr_dir in sorted(gr_base.iterdir()):
+                if not gr_dir.is_dir():
+                    continue
+                for path in sorted(gr_dir.iterdir()):
+                    if (
+                        path.is_file()
+                        and path.suffix.lower() in _CONFIG_SUFFIXES
+                    ):
+                        _rewrite(path, _pin_guardrail)
+
+    if pins.data_store:
+
+        def _pin_data_store(d: dict[str, Any]) -> bool:
+            ds = d.get("dataStoreTool")
+            if not isinstance(ds, dict):
+                return False
+            modality_configs = ds.get("modalityConfigs")
+            if not isinstance(modality_configs, list):
+                return False
+            changed = False
+            for cfg in modality_configs:
+                if not isinstance(cfg, dict):
+                    continue
+                for key in ("rewriterConfig", "summarizationConfig"):
+                    sub = cfg.get(key)
+                    if (
+                        isinstance(sub, dict)
+                        and sub.get("disabled") is not True
+                    ):
+                        _set_model(sub, pins.data_store)
+                        changed = True
+            return changed
+
+        for tool_cfg in _iter_resource_configs(out_dir, "tools"):
+            _rewrite(tool_cfg, _pin_data_store)
+
+
+def _apply_lock_policy(out_dir: Path, locked: bool | None) -> None:
+    """Declares the governed lock in app config (applied by ``cxas push``)."""
+    app_cfg = _find_app_config(out_dir)
+    if locked is None or app_cfg is None:
+        return
+    data = _read_config_strict(app_cfg)
+    if not isinstance(data, dict):
+        raise BuildError(f"{app_cfg}: expected mapping at top level")
+    data["locked"] = bool(locked)
+    _write_config(app_cfg, data)
+
+
 def _build_in_staging(
     core_dir: Path,
     staging_dir: Path,
@@ -2116,6 +2255,8 @@ def _build_in_staging(
         core_app_snapshots,
         root_agent_sources,
     )
+    _apply_model_pins(staging_dir, env_manifest.models)
+    _apply_lock_policy(staging_dir, env_manifest.locked)
     _validate_final_app_configs(
         core_dir,
         staging_dir,

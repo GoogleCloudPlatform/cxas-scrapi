@@ -59,6 +59,8 @@ tts_voices:
   en:
     voice: en-US-Standard-A
     speaking_rate: 1.0
+forbidden_tokens:
+  - LegacyProfile
 ```
 
 ### `profiles/profile_1/channel_policy.yaml`
@@ -90,6 +92,11 @@ config overrides (`app:`). Template values may use `{profile}`,
 
 ```yaml
 environment: prod
+locked: true
+models:
+  agent: gemini-3.5-flash
+  guardrail: gemini-3.5-flash-lite
+  data_store: gemini-3.5-flash-lite
 templates:
   gcp_project: example-prod-{profile_slug}-{env}
   api: https://api.example.com/{env}/{service}
@@ -103,6 +110,16 @@ app:
   audioProcessingConfig:
     inactivityTimeout: 300s
 ```
+
+- **`models:`** (optional) pins explicit GA model IDs across the three slots
+  CES applies (`agent` for `app.json` and agent configs, `guardrail` for LLM
+  policy and prompt-security judges, and `data_store` for enabled data-store
+  rewriter/summarizer configs).
+- **`locked: true`** (optional) declares governed lock policy in built
+  `app.json`. When pushing a locked bundle (or pushing to an already-locked
+  CES app), `cxas push` unlocks the target if needed, imports with
+  `locked=false`, creates an optional version, and applies `locked=true` via
+  `UpdateApp` (restoring the lock if import fails).
 
 `cxas build` always validates the final `app.{json,yaml,yml}` config against the
 CES `App` proto schema (`V001`), attributing errors to `core/app.*` or
@@ -182,6 +199,16 @@ cxas package \
   --env-file envs/prod_environment.json \
   --zip dist/profile_1_web.zip
 ```
+
+Lint a built profile/channel app with polymorphic rules `P001`–`P005`:
+
+```bash
+cxas lint \
+  --app-dir dist/profile_1/web \
+  --manifests-dir manifests/
+```
+
+Pass `--profile` and `--channel` to override the metadata in `deployments/*.yaml`.
 
 ## Placeholders and Conditional Blocks
 

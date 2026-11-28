@@ -21,6 +21,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 from cxas_scrapi.core.python_bundler import (
     MAX_TOTAL_ARCHIVE_BYTES,
@@ -28,6 +29,9 @@ from cxas_scrapi.core.python_bundler import (
     bundle_shared_python,
     synthesize_python_env_files,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Standard CES app archive roots plus pythonEnvFiles.
 VALID_ARCHIVE_ROOTS: frozenset[str] = frozenset(
@@ -211,6 +215,7 @@ def package_app_archive(
     resolved_env_vars: list[str] | None = None,
     resolved_tool_env_vars: list[str] | None = None,
     source_app_dir: Path | None = None,
+    post_stage_hook: Callable[[Path], None] | None = None,
 ) -> Path:
     """Creates a deterministic ZIP archive from ``app_dir``.
 
@@ -261,6 +266,8 @@ def package_app_archive(
     with tempfile.TemporaryDirectory() as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         _stage_archive_dir(resolved_app_dir, temp_dir, resolved_env_file)
+        if post_stage_hook is not None:
+            post_stage_hook(temp_dir)
         if (
             resolve_env
             or resolved_env_vars is not None

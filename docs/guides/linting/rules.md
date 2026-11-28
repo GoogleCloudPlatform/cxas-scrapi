@@ -602,3 +602,67 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* A tool writes more than `max_flat_variables` (default 2) declared non-OBJECT variables.
 
     *Fix:* Move them into one OBJECT variable, declared with `properties` and a `default`, and write the whole object from that tool. Tune the threshold with `options: V106: max_flat_variables: N`, or exclude names with `ignore: [...]`.
+
+=== "P — Profile-Based Build"
+
+    Rules in the `P` category validate apps built by `cxas build`. `P001` and `P004` use build profile context (resolved automatically from `deployments/*.yaml` plus `--manifests-dir`, or overridden with `--profile` and `--channel`). Without profile context those two rules are skipped cleanly.
+
+    | ID | Name | Default | Description |
+    |----|------|---------|-------------|
+    | P001 | `brand-token-leak` | Error | Built app contains a sister profile's `display_name` or a token from `forbidden_tokens` |
+    | P002 | `agent-tool-count-cap` | Warning | Agent references more than `max_tools` tools (default 20) |
+    | P003 | `unresolved-build-tags` | Error | Built app contains unresolved `@@...@@` placeholders or `{@start/end...}` conditional tags |
+    | P004 | `pruned-resources-absent` | Error | Channel-disabled agents or tools are still present or referenced in the built app |
+    | P005 | `pinned-ga-models` | Error | Explicit model slot uses an alias (`default`, `latest`, `auto`) or a deprecated `gemini-1.x` / `2.0` / `2.5` model |
+
+    ---
+
+    **P001 — brand-token-leak**
+
+    Prevents cross-profile text leaks in profile-based builds by scanning built text files (`.txt`, `.json`, `.yaml`, `.yml`, `.py`) for every sister profile's `display_name` and any token listed in the target profile's `forbidden_tokens`.
+
+    *Triggers:* A word-bounded match for a sister profile's `display_name` or an explicit `forbidden_tokens` entry.
+
+    *Fix:* Replace hardcoded profile text in `core/` with `@@profile.*@@` tokens or move profile-specific copy into the appropriate profile manifest.
+
+    ---
+
+    **P002 — agent-tool-count-cap**
+
+    Large tool lists degrade tool-selection accuracy and latency. Flags any agent whose `tools` list exceeds `max_tools`.
+
+    *Triggers:* `len(agent["tools"]) > max_tools` (default: `20`).
+
+    *Fix:* Split responsibilities across sub-agents or group related tools into toolsets.
+
+    *Configurable:* Set `options.P002.max_tools` in `cxaslint.yaml`.
+
+    ---
+
+    **P003 — unresolved-build-tags**
+
+    Catches unrendered build placeholders or conditional directives left behind in built output.
+
+    *Triggers:* Any `@@...@@` token, unclosed `@@profile.*`/`@@env.*`/`@@routing.*`/`@@build.*` token, or `{@start/end(Channel|Profile|AgentEnabled|ToolEnabled)_...}` directive.
+
+    *Fix:* Verify the placeholder key exists in the profile, policy, or environment manifest and rebuild with `cxas build`.
+
+    ---
+
+    **P004 — pruned-resources-absent**
+
+    Verifies that agents and tools listed in `disabled_agents` / `disabled_tools` in `channel_policy.yaml` are completely removed from disk, `app.json`, `environment.json`, agent JSON configs, and `.txt` instructions. CES platform system tools (`end_session`, `customize_response`) are exempt from custom-tool pruning checks.
+
+    *Triggers:* A disabled agent or tool directory still exists, or is referenced in `app.json`, `environment.json`, an agent config, or an instruction file.
+
+    *Fix:* Rebuild with `cxas build`, remove the stale reference from `core/`, or guard it with `{@startAgentEnabled_*}` / `{@startToolEnabled_*}`.
+
+    ---
+
+    **P005 — pinned-ga-models**
+
+    Ensures explicit model fields across the three CES-applied slots (`app.json` & agent `modelSettings`, LLM guardrail `llmPolicy` / `llmPromptSecurity.customPolicy`, and enabled data-store `rewriterConfig` / `summarizationConfig`) are pinned to concrete, non-deprecated GA models (such as `gemini-3.5-flash` or `gemini-3.5-flash-lite`).
+
+    *Triggers:* An explicit `modelSettings.model` value is an alias (`default`, `latest`, `auto`, or contains `latest`) or matches a deprecated `gemini-1.x`, `gemini-2.0`, or `gemini-2.5` model.
+
+    *Fix:* Pin explicit GA models in `envs/<environment>.yaml` under `models:` (`agent`, `guardrail`, `data_store`) and rebuild with `cxas build`.

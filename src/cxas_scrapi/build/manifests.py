@@ -114,6 +114,7 @@ class ProfileIdentity(_StrictModel):
     urls: dict[str, str] = Field(default_factory=dict)
     tts_voices: dict[str, TtsVoice] = Field(default_factory=dict)
     languages: list[str] = Field(default_factory=list)
+    forbidden_tokens: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _default_languages_from_tts(self) -> ProfileIdentity:
@@ -209,6 +210,29 @@ def validate_app_overlay_mapping(
             )
 
 
+class ModelPins(_StrictModel):
+    """Model slots CES applies, pinned per environment.
+
+    ``agent`` -> ``app.json`` and every agent ``modelSettings.model``;
+    ``guardrail`` -> LLM policy / prompt-security guardrail judge model;
+    ``data_store`` -> data-store tool rewriter and summarizer models.
+    """
+
+    agent: str | None = None
+    guardrail: str | None = None
+    data_store: str | None = None
+
+    @field_validator("agent", "guardrail", "data_store")
+    @classmethod
+    def _non_blank_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("model pin must not be blank")
+        return stripped
+
+
 class EnvManifest(_StrictModel):
     """Environment template manifest (``envs/<environment>.yaml``).
 
@@ -227,6 +251,8 @@ class EnvManifest(_StrictModel):
     templates: dict[str, str] = Field(default_factory=dict)
     overrides: dict[str, ManifestValue] = Field(default_factory=dict)
     app: dict[str, ManifestValue] | None = None
+    locked: bool | None = None
+    models: ModelPins | None = None
 
     @model_validator(mode="before")
     @classmethod
