@@ -2825,6 +2825,15 @@ def get_parser() -> argparse.ArgumentParser:
             "match (discards edits made inside the bundle block)."
         ),
     )
+    parser_pull.add_argument(
+        "--sync-deployments",
+        action="store_true",
+        default=False,
+        help=(
+            "Also export live CES Deployment configs to "
+            "deployments/<deployment_id>.yaml."
+        ),
+    )
     _add_project_location_args(parser_pull, required=False)
     parser_pull.set_defaults(func=app_pull)
 
@@ -2919,6 +2928,15 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Resource IDs to force from local bundle during pre-push drift "
             "check."
+        ),
+    )
+    parser_push.add_argument(
+        "--sync-deployments",
+        action="store_true",
+        default=False,
+        help=(
+            "Also sync deployments/*.yaml configs via the CES Deployments API "
+            "(skips cxas build channel-metadata files)."
         ),
     )
     parser_push.set_defaults(func=app_push)
@@ -3097,18 +3115,33 @@ def get_parser() -> argparse.ArgumentParser:
     # Parser for 'init'
     parser_init = subparsers.add_parser(
         "init",
-        help="Initialize a project with CXAS agent development skills "
-        "(.agents, .claude, .gemini, AGENTS.md, etc.).",
+        help="Initialize a project with CXAS agent development skills or a "
+        "starter template.",
     )
     parser_init.add_argument(
         "--target-dir",
         default=".",
-        help="Directory to install skills into (default: current directory).",
+        help="Directory to initialize into (default: current directory).",
+    )
+    parser_init.add_argument(
+        "--template",
+        choices=["default", "multibrand"],
+        default="default",
+        help=(
+            "Starter template to scaffold ('default' installs skills; "
+            "'multibrand' scaffolds a multi-brand core/ + manifests/ starter)."
+        ),
     )
     parser_init.add_argument(
         "--force",
         action="store_true",
         help="Overwrite existing files without prompting.",
+    )
+    parser_init.add_argument(
+        "--no-input",
+        action="store_true",
+        default=False,
+        help="Fail instead of prompting when destination files already exist.",
     )
     parser_init.set_defaults(func=app_init)
 

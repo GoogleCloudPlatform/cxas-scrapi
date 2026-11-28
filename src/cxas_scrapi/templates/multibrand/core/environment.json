@@ -1,0 +1,9 @@
+{
+  "tools": {
+    "lookup_faq": {
+      "openApiTool": {
+        "url": "@@env.api:faq@@"
+      }
+    }
+  }
+}

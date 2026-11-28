@@ -422,11 +422,12 @@ canonical SHA-256 lockfiles (`<app>.lock.json`) next to built bundles and run
   offline checks or `--force-ours <resource_id>` to intentionally override a
   specific resource.
 
-## Console-to-Git Backport (`cxas backport --target brand`)
+## Console-to-Git Backport (`cxas backport --target brand|core`)
 
 To promote approved Console UI edits back into Git-tracked
-`manifests/brands/<brand_id>/overrides.yaml` with automated rebuild, lint, and
-round-trip SHA-256 verification:
+`manifests/profiles/<profile_id>/overrides.yaml` (`--target brand`) or directly into
+shared `core/` (`--target core`) with automated rebuild, lint, and round-trip
+SHA-256 verification:
 
 ```bash
 cxas backport \
@@ -442,15 +443,37 @@ cxas backport \
   --pr-body-out pr_body.md
 ```
 
+Promote shared prompt, tool, guardrail, or Python callback edits into `core/`
+(preserving inactive `{@startChannel_*}` / `{@startProfile_*}` /
+`{@startAgentEnabled_*}` / `{@startToolEnabled_*}` conditional blocks, lifting
+only tokens defined across every brand, and cleaning superseded brand overrides):
+
+```bash
+cxas backport \
+  --core-dir core/ \
+  --manifests-dir manifests/ \
+  --live-dir live_export/ \
+  --dist dist/ \
+  --brand brand_1 \
+  --channel WEB \
+  --env prod \
+  --target core \
+  --dry-run
+```
+
 Key options:
-- **`--scope channel` (default)** vs. **`--scope brand`**: Scopes backported
+- **`--target brand` (default)** vs. **`--target core`**: Writes deltas to
+  `manifests/profiles/<profile_id>/overrides.yaml` or promotes shared edits into
+  `core/` (`global_instruction.txt`, `agents/`, `tools/`, `guardrails/`, and
+  Python callbacks/tools).
+- **`--scope channel` (default)** vs. **`--scope brand`**: Scopes `--target brand`
   deltas to the edited channel (`channels.<CHANNEL>`) with a strict
   zero-blast-radius proof across all sibling bundles, or promotes them across
   all channels of that brand while proving zero sister-brand mutations.
 - **`--dry-run`**: Runs the full delta computation, reverse tokenization,
-  rebuild, lint, and SHA-256 round-trip proof, then restores all files cleanly
-  so `manifests/`, `dist/`, `.lock.json`, and Git branches remain untouched on
-  disk.
+  rebuild, lint, and SHA-256 round-trip proof against staged temporary copies
+  so `core/`, `manifests/`, `dist/`, `.lock.json`, and Git branches remain
+  untouched on disk.
 - **`--force-live <resource_id>`**: Accepts live Console edits on specific
   resources that have a 3-way conflict against concurrent Git changes.
 - **`--pr-body-out <path>`**: Writes a review-ready Pull Request Markdown body
@@ -458,3 +481,44 @@ Key options:
 - **`--git-branch <name>`**: Creates and checks out a new local branch after
   verification passes (requires a clean tracked working tree and cannot be
   combined with `--dry-run`).
+
+## Syncing Deployments (`--sync-deployments`)
+
+CES `ExportApp` and `ImportApp` ZIP archives intentionally omit `Deployment`
+resources (`deployments/` is never packed into `ImportApp` ZIPs). Pass
+`--sync-deployments` on `cxas pull` or `cxas push` to synchronize live CES
+deployments via the Deployments API alongside the app bundle:
+
+```bash
+cxas pull my-ces-app --target-dir ./pulled --sync-deployments
+cxas push --app-dir ./pulled/my-ces-app --to my-ces-app --sync-deployments
+```
+
+- On `cxas pull --sync-deployments`, live deployments are written to
+  `deployments/<deployment_id>.yaml` with volatile fields (`name`, `createTime`,
+  `updateTime`, `etag`) stripped, without removing existing `cxas build`
+  channel-metadata YAMLs.
+- On `cxas push --sync-deployments`, local `deployments/*.yaml` files are synced
+  via `create_deployment` / `update_deployment` while `cxas build`
+  channel-metadata YAMLs (containing `profileId` without `deploymentId`,
+  `appVersion`, or `experimentConfig`) are automatically skipped.
+
+## Starter Onboarding (`cxas init --template multibrand`)
+
+Scaffold a ready-to-build, lint-clean two-brand (`brand_alpha`, `brand_beta`)
+starter workspace containing `core/`, `manifests/`, and `README.md`:
+
+```bash
+cxas init --template multibrand --target-dir ./my-multibrand-app
+cxas build \
+  --core-dir ./my-multibrand-app/core \
+  --manifests-dir ./my-multibrand-app/manifests \
+  --env dev \
+  --out ./my-multibrand-app/dist \
+  --all \
+  --write-locks
+cxas lint --app-dir ./my-multibrand-app/dist/brand_alpha/digital_app
+```
+
+Pass `--force` to overwrite existing files or `--no-input` in CI environments to
+fail cleanly rather than prompting interactively.

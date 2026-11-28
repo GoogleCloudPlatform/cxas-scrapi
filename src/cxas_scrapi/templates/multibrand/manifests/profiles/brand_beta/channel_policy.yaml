@@ -1,0 +1,14 @@
+profile_id: brand_beta
+supported_countries:
+  - US
+api_routing:
+  support_portal: https://portal.beta-direct.example.com
+channels:
+  DIGITAL_APP:
+    supported_modalities:
+      - TEXT
+    deeplink_widgets: true
+  VOICE_TELEPHONY:
+    supported_modalities:
+      - AUDIO
+    deeplink_widgets: false

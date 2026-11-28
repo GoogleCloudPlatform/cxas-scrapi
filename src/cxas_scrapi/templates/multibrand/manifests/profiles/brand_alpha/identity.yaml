@@ -1,0 +1,13 @@
+profile_id: brand_alpha
+display_name: Alpha Financial
+assistant_title: Alpha Support Assistant
+legal_entity: Alpha Financial Corp.
+tone_guidelines: Clear, reassuring, and concise.
+lexicon:
+  account: Alpha Checking Account
+urls:
+  support: https://support.alpha-financial.example.com
+tts_voices:
+  en-US:
+    voice: en-US-Neural2-F
+    speaking_rate: 1.0

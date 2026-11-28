@@ -1,0 +1,13 @@
+{
+  "displayName": "root_agent",
+  "description": "Primary customer support assistant for @@profile.display_name@@.",
+  "instruction": "agents/root_agent/instruction.txt",
+  "tools": [
+    "end_session",
+    "lookup_faq"
+  ],
+  "modelSettings": {
+    "model": "gemini-3.0-flash",
+    "temperature": 0.2
+  }
+}
