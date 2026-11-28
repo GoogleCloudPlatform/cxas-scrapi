@@ -37,12 +37,15 @@ import yaml
 from pydantic import BaseModel, Field
 
 from cxas_scrapi.build.drift import write_lockfile
+from cxas_scrapi.build.errors import BuildError
 from cxas_scrapi.build.manifests import (
     APP_CONFIG_FILENAMES,
     CHANNEL_PROFILE_TYPES,
+    COMPOSITION_MODES,
     FIELD_ENV_APP,
     ChannelCapabilities,
     ChannelPolicy,
+    CompositionMode,
     ContentBlockCatalog,
     EnvManifest,
     Manifests,
@@ -50,6 +53,10 @@ from cxas_scrapi.build.manifests import (
     ProfileIdentity,
     load_manifests,
     validate_app_overlay_mapping,
+)
+from cxas_scrapi.build.overrides import (
+    apply_brand_overrides,
+    pruned_reference_warnings,
 )
 from cxas_scrapi.core.packaging import package_app_archive
 from cxas_scrapi.core.python_bundler import (
@@ -106,10 +113,25 @@ _ILLEGAL_COND_ERROR_MARKERS = (
     "Unbalanced",
     "Unknown conditional",
 )
-
-
-class BuildError(Exception):
-    """Raised when building a profile/channel app fails."""
+_CES_TOP_LEVEL_ENTRIES = frozenset(
+    {
+        "app.json",
+        "app.yaml",
+        "app.yml",
+        "global_instruction.txt",
+        "environment.json",
+        "agents",
+        "tools",
+        "toolsets",
+        "guardrails",
+        "examples",
+        "evaluations",
+        "evaluationDatasets",
+        "evaluationExpectations",
+        "python_lib",
+        "pythonEnvFiles",
+    }
+)
 
 
 class BuildReport(BaseModel):
@@ -121,6 +143,7 @@ class BuildReport(BaseModel):
     out_dir: Path
     zip_path: Path | None = None
     lockfile_path: Path | None = None
+    composition_mode: CompositionMode = "canonical_overlay"
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -1098,6 +1121,126 @@ def _validate_build_paths(
             )
 
 
+def _paths_overlap(path_a: Path, path_b: Path) -> bool:
+    return (
+        path_a == path_b or path_a in path_b.parents or path_b in path_a.parents
+    )
+
+
+def _find_safe_subdir(
+    candidates: list[tuple[Path, tuple[str, ...]]], *, label: str
+) -> Path | None:
+    """Resolve the first existing directory candidate, rejecting symlinks."""
+    for base, parts in candidates:
+        curr = base
+        found = True
+        for part in parts:
+            curr = curr / part
+            if curr.is_symlink():
+                raise BuildError(
+                    f"Symlinks are not permitted in {label}: {curr}"
+                )
+            if not curr.exists():
+                found = False
+                break
+        if found:
+            if not curr.is_dir():
+                raise BuildError(
+                    f"Expected directory for {label}, got file: {curr}"
+                )
+            resolved_base = base.resolve()
+            resolved_curr = curr.resolve()
+            if (
+                resolved_curr != resolved_base
+                and resolved_base not in resolved_curr.parents
+            ):
+                raise BuildError(
+                    f"Path escapes root ({resolved_base}) for {label}: {curr}"
+                )
+            return resolved_curr
+    return None
+
+
+def _overlay_non_destructive(src_dir: Path, dst_dir: Path) -> None:
+    """Copy ``src_dir`` into ``dst_dir`` without overwriting existing files."""
+    ignore = shutil.ignore_patterns(*_STAGE_IGNORE_PATTERNS)
+    for root, dirs, files in os.walk(src_dir, followlinks=False):
+        ignored = ignore(root, dirs + files)
+        dirs[:] = sorted(d for d in dirs if d not in ignored)
+        rel_root = Path(root).relative_to(src_dir)
+        target_root = dst_dir / rel_root
+        target_root.mkdir(parents=True, exist_ok=True)
+        for fname in sorted(f for f in files if f not in ignored):
+            dst_file = target_root / fname
+            if dst_file.exists():
+                continue
+            shutil.copy2(Path(root) / fname, dst_file)
+
+
+def _stage_brand_native(
+    *,
+    core_dir: Path,
+    manifests_path: Path,
+    profile_id: str,
+    out_dir: Path,
+    staging_dir: Path,
+    has_env_overrides: bool,
+) -> None:
+    """Stage profile-owned domains as base and overlay shared traits."""
+    domains_dir = _find_safe_subdir(
+        [
+            (core_dir, ("profiles", profile_id, "domains")),
+            (manifests_path, ("profiles", profile_id, "domains")),
+            (manifests_path.parent, ("profiles", profile_id, "domains")),
+        ],
+        label=f"profiles/{profile_id}/domains",
+    )
+    traits_dir = _find_safe_subdir(
+        [
+            (core_dir, ("traits",)),
+            (manifests_path.parent, ("traits",)),
+            (manifests_path, ("traits",)),
+        ],
+        label="traits",
+    )
+    if domains_dir is None and traits_dir is None:
+        raise BuildError(
+            f"composition_mode='brand_native' for profile '{profile_id}' "
+            f"requires 'profiles/{profile_id}/domains/' or 'traits/' (checked "
+            f"under '{core_dir}' and '{manifests_path}')."
+        )
+
+    for src_label, src_dir in (
+        (f"profiles/{profile_id}/domains", domains_dir),
+        ("traits", traits_dir),
+    ):
+        if src_dir is not None:
+            if _paths_overlap(out_dir, src_dir):
+                raise BuildError(
+                    f"Output directory '{out_dir}' must not overlap with "
+                    f"{src_label} directory '{src_dir}'."
+                )
+            _reject_symlinks(src_dir, src_label)
+
+    # Profile-owned domain files form the base layer (profile always wins).
+    if domains_dir is not None:
+        _overlay_non_destructive(domains_dir, staging_dir)
+
+    # Shared traits overlay non-destructively (flat CES tree or named packs).
+    if traits_dir is not None:
+        direct_names = {p.name for p in traits_dir.iterdir()}
+        if direct_names & _CES_TOP_LEVEL_ENTRIES:
+            _overlay_non_destructive(traits_dir, staging_dir)
+        else:
+            for pack_dir in sorted(
+                p for p in traits_dir.iterdir() if p.is_dir()
+            ):
+                _overlay_non_destructive(pack_dir, staging_dir)
+
+    if has_env_overrides and not (staging_dir / "environment.json").exists():
+        (staging_dir / "environment.json").write_text("{}\n", "utf-8")
+
+
 def _stage_core_dir(
     core_dir: Path, staging_dir: Path, *, has_env_overrides: bool
 ) -> None:
@@ -1590,23 +1733,6 @@ def _wrap_path_error(path: Path, fn: Callable[[], _T]) -> _T:
         raise BuildError(f"{path}: {exc}") from exc
 
 
-def _collect_pruned_mentions(
-    text: str, rel_path: Path, renderer: _BuildRenderer
-) -> list[str]:
-    checks = (
-        ("AGENT", "agent", renderer.disabled_agents),
-        ("TOOL", "tool", renderer.disabled_tools),
-    )
-    warnings: list[str] = []
-    for tag_name, resource_label, disabled in checks:
-        warnings.extend(
-            f"{rel_path} mentions pruned {resource_label} {name}"
-            for name in sorted(disabled)
-            if re.search(rf"\{{@{tag_name}:\s*{re.escape(name)}\s*\}}", text)
-        )
-    return warnings
-
-
 def _prune_env_json(data: ConfigMap, renderer: _BuildRenderer) -> None:
     _prune_mapping_key(
         data, "agents", renderer.disabled_agents, "agents", allow_dict=True
@@ -1661,7 +1787,7 @@ def _render_text_file(
     out_dir: Path,
     manifests: Manifests,
     renderer: _BuildRenderer,
-) -> list[str]:
+) -> None:
     try:
         text = path.read_text("utf-8")
     except UnicodeDecodeError as exc:
@@ -1677,11 +1803,9 @@ def _render_text_file(
         path, lambda: renderer.process_conditional_blocks(text)
     )
     rel_path = path.relative_to(out_dir)
-    file_warnings = _collect_pruned_mentions(text, rel_path, renderer)
     text = _wrap_path_error(path, lambda: renderer.substitute_tokens(text))
     path.write_text(text, "utf-8")
     validate_modalities(text, rel_path)
-    return file_warnings
 
 
 def _parse_yaml_with_conditionals(
@@ -1816,7 +1940,7 @@ def _render_single_file(
     app_layers: Sequence[AppLayer] = (),
     core_app_snapshots: dict[str, ConfigMap] | None = None,
     root_agent_sources: dict[str, tuple[str, bool]] | None = None,
-) -> list[str]:
+) -> None:
     suffix = path.suffix
     if suffix == ".json":
         _render_json_file(
@@ -1831,7 +1955,7 @@ def _render_single_file(
             root_agent_sources,
         )
     elif suffix == ".txt":
-        return _render_text_file(path, out_dir, manifests, renderer)
+        _render_text_file(path, out_dir, manifests, renderer)
     elif suffix in (".yaml", ".yml"):
         _render_yaml_file(
             path,
@@ -1845,7 +1969,6 @@ def _render_single_file(
         )
     elif suffix == ".py":
         _render_python_file(path, renderer)
-    return []
 
 
 def _render_staged_tree(
@@ -1858,27 +1981,23 @@ def _render_staged_tree(
     app_layers: Sequence[AppLayer] = (),
     core_app_snapshots: dict[str, ConfigMap] | None = None,
     root_agent_sources: dict[str, tuple[str, bool]] | None = None,
-) -> list[str]:
-    warnings: list[str] = []
+) -> None:
     for root, dirs, files in os.walk(out_dir):
         dirs.sort()
         root_path = Path(root)
         for fname in sorted(files):
-            warnings.extend(
-                _render_single_file(
-                    root_path / fname,
-                    out_dir,
-                    manifests,
-                    renderer,
-                    profile,
-                    channel_caps,
-                    env_overrides,
-                    app_layers,
-                    core_app_snapshots,
-                    root_agent_sources,
-                )
+            _render_single_file(
+                root_path / fname,
+                out_dir,
+                manifests,
+                renderer,
+                profile,
+                channel_caps,
+                env_overrides,
+                app_layers,
+                core_app_snapshots,
+                root_agent_sources,
             )
-    return warnings
 
 
 def _read_app_config_for_validation(app_cfg_path: Path) -> JsonValue:
@@ -2198,6 +2317,8 @@ def _apply_lock_policy(out_dir: Path, locked: bool | None) -> None:
 
 def _build_in_staging(
     core_dir: Path,
+    manifests_path: Path,
+    out_dir: Path,
     staging_dir: Path,
     manifests: Manifests,
     profile: ProfileIdentity,
@@ -2206,13 +2327,38 @@ def _build_in_staging(
     channel: str,
     environment: str,
     channel_caps: ChannelCapabilities,
+    resolved_mode: CompositionMode,
     *,
     package_zip: bool,
     native_python_env: bool = False,
 ) -> tuple[list[str], str]:
-    _stage_core_dir(
-        core_dir, staging_dir, has_env_overrides=bool(env_manifest.overrides)
+    if resolved_mode == "brand_native":
+        _stage_brand_native(
+            core_dir=core_dir,
+            manifests_path=manifests_path,
+            profile_id=profile.profile_id,
+            out_dir=out_dir,
+            staging_dir=staging_dir,
+            has_env_overrides=bool(env_manifest.overrides),
+        )
+    else:
+        _stage_core_dir(
+            core_dir,
+            staging_dir,
+            has_env_overrides=bool(env_manifest.overrides),
+        )
+
+    known_agents = (
+        {p.name for p in (staging_dir / "agents").iterdir() if p.is_dir()}
+        if (staging_dir / "agents").is_dir()
+        else set()
     )
+    known_tools = (
+        {p.name for p in (staging_dir / "tools").iterdir() if p.is_dir()}
+        if (staging_dir / "tools").is_dir()
+        else set()
+    )
+
     all_disabled_agents, all_disabled_tools = _prune_all_resources(
         staging_dir,
         profile,
@@ -2246,7 +2392,7 @@ def _build_in_staging(
     )
     core_app_snapshots: dict[str, ConfigMap] = {}
     root_agent_sources: dict[str, tuple[str, bool]] = {}
-    warnings = _render_staged_tree(
+    _render_staged_tree(
         staging_dir,
         manifests,
         renderer,
@@ -2259,6 +2405,26 @@ def _build_in_staging(
     )
     _apply_model_pins(staging_dir, env_manifest.models)
     _apply_lock_policy(staging_dir, env_manifest.locked)
+
+    profile_ov = manifests.profile_overrides(profile.profile_id)
+    if profile_ov is not None:
+        rendered_identity_block = renderer.render_string(
+            _build_identity_block(manifests, profile.profile_id)
+        )
+        apply_brand_overrides(
+            out_dir=staging_dir,
+            brand_id=profile.profile_id,
+            channel=channel,
+            permitted_channels=set(policy.channels.keys()),
+            ov=profile_ov,
+            render_fn=renderer.render_string,
+            global_identity_prefix=rendered_identity_block,
+            global_identity_block=rendered_identity_block,
+            known_agents=known_agents,
+            known_tools=known_tools,
+            validate_modalities_fn=validate_modalities,
+        )
+
     _validate_final_app_configs(
         core_dir,
         staging_dir,
@@ -2271,6 +2437,9 @@ def _build_in_staging(
         disabled_agents=all_disabled_agents,
         surviving_agents=surviving_agents,
         root_agent_sources=root_agent_sources,
+    )
+    warnings = pruned_reference_warnings(
+        staging_dir, all_disabled_agents, all_disabled_tools
     )
     slug = _write_deployment_manifest(
         staging_dir, profile, policy, channel, environment, channel_caps
@@ -2315,11 +2484,23 @@ def _build_app_from_manifests(
     package_zip: bool = False,
     native_python_env: bool = False,
     write_lock: bool = False,
+    composition_mode: CompositionMode | None = None,
 ) -> BuildReport:
     _validate_build_paths(core_dir, manifests_path, out_dir)
     profile = manifests.profile(profile_id)
     policy = manifests.policy(profile_id)
     env_manifest = manifests.env(environment)
+
+    resolved_mode: CompositionMode = (
+        composition_mode
+        if composition_mode is not None
+        else profile.composition_mode
+    )
+    if resolved_mode not in COMPOSITION_MODES:
+        raise BuildError(
+            f"Unknown composition_mode '{resolved_mode}'; expected one of "
+            f"{sorted(COMPOSITION_MODES)}."
+        )
 
     try:
         channel_caps = policy.channels[channel]
@@ -2335,6 +2516,8 @@ def _build_app_from_manifests(
     try:
         warnings, slug = _build_in_staging(
             core_dir,
+            manifests_path,
+            out_dir,
             staging_dir,
             manifests,
             profile,
@@ -2343,6 +2526,7 @@ def _build_app_from_manifests(
             channel,
             environment,
             channel_caps,
+            resolved_mode,
             package_zip=package_zip,
             native_python_env=native_python_env,
         )
@@ -2361,6 +2545,7 @@ def _build_app_from_manifests(
         out_dir=out_dir,
         zip_path=zip_path,
         lockfile_path=lockfile_path,
+        composition_mode=resolved_mode,
         warnings=warnings,
     )
 
@@ -2376,6 +2561,7 @@ def build_app(
     package_zip: bool = False,
     native_python_env: bool = False,
     write_lock: bool = False,
+    composition_mode: CompositionMode | None = None,
 ) -> BuildReport:
     """Build one CES app for ``(profile_id, channel, environment)``."""
     core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
@@ -2395,6 +2581,7 @@ def build_app(
         package_zip=package_zip,
         native_python_env=native_python_env,
         write_lock=write_lock,
+        composition_mode=composition_mode,
     )
 
 
@@ -2407,6 +2594,7 @@ def build_all(
     package_zip: bool = False,
     native_python_env: bool = False,
     write_locks: bool = False,
+    composition_mode: CompositionMode | None = None,
 ) -> list[BuildReport]:
     """Build every ``(profile_id, channel)`` pair declared in manifests."""
     core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
@@ -2414,6 +2602,14 @@ def build_all(
         raise BuildError(
             f"Core directory '{core_path}' does not exist or is not a "
             "directory."
+        )
+    if (
+        composition_mode is not None
+        and composition_mode not in COMPOSITION_MODES
+    ):
+        raise BuildError(
+            f"Unknown composition_mode '{composition_mode}'; expected one of "
+            f"{sorted(COMPOSITION_MODES)}."
         )
 
     out_root_path = _validate_output_target(Path(out_root), "output root")
@@ -2443,6 +2639,7 @@ def build_all(
                     package_zip=package_zip,
                     native_python_env=native_python_env,
                     write_lock=write_locks,
+                    composition_mode=composition_mode,
                 )
             )
     return reports
