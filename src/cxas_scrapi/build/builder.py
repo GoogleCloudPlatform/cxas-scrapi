@@ -50,6 +50,11 @@ from cxas_scrapi.build.manifests import (
     validate_app_overlay_mapping,
 )
 from cxas_scrapi.core.packaging import package_app_archive
+from cxas_scrapi.core.python_bundler import (
+    PythonBundlerError,
+    bundle_shared_python,
+    synthesize_python_env_files,
+)
 from cxas_scrapi.utils.yaml_utils import (
     UniqueKeyYaml12SafeLoader,
     Yaml12SafeLoader,
@@ -1654,7 +1659,10 @@ def _render_text_file(
     manifests: Manifests,
     renderer: _BuildRenderer,
 ) -> list[str]:
-    text = path.read_text("utf-8")
+    try:
+        text = path.read_text("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BuildError(f"{path}: file is not valid UTF-8: {exc}") from exc
     if path.name == "global_instruction.txt":
         identity_block = _build_identity_block(manifests, renderer.profile_id)
         if "@@profile.identity_block@@" in text:
@@ -1782,7 +1790,10 @@ def _render_yaml_file(
 
 
 def _render_python_file(path: Path, renderer: _BuildRenderer) -> None:
-    text = path.read_text("utf-8")
+    try:
+        text = path.read_text("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BuildError(f"{path}: file is not valid UTF-8: {exc}") from exc
     if "@@" not in text and "{@start" not in text and "{@end" not in text:
         return
     rendered = _wrap_path_error(
@@ -2056,6 +2067,7 @@ def _build_in_staging(
     channel_caps: ChannelCapabilities,
     *,
     package_zip: bool,
+    native_python_env: bool = False,
 ) -> tuple[list[str], str]:
     _stage_core_dir(
         core_dir, staging_dir, has_env_overrides=bool(env_manifest.overrides)
@@ -2120,6 +2132,17 @@ def _build_in_staging(
     slug = _write_deployment_manifest(
         staging_dir, profile, policy, channel, environment, channel_caps
     )
+    if (staging_dir / "python_lib").is_dir() or (
+        staging_dir / "pythonEnvFiles" / "content" / "python_lib"
+    ).is_dir():
+        try:
+            synthesize_python_env_files(staging_dir)
+            bundle_shared_python(
+                staging_dir, native_python_env=native_python_env
+            )
+        except PythonBundlerError as exc:
+            raise BuildError(f"Failed to bundle shared Python: {exc}") from exc
+
     (staging_dir / _BUILD_MARKER_FILE).write_text(
         "cxas-build\n", encoding="utf-8"
     )
@@ -2127,9 +2150,12 @@ def _build_in_staging(
         staged_zip = staging_dir / f"{profile.profile_id}_{slug}.zip"
         try:
             package_app_archive(
-                staging_dir, staged_zip, source_app_dir=core_dir
+                staging_dir,
+                staged_zip,
+                native_python_env=native_python_env,
+                source_app_dir=core_dir,
             )
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, PythonBundlerError) as exc:
             raise BuildError(f"Failed to package {staged_zip}: {exc}") from exc
     return warnings, slug
 
@@ -2144,6 +2170,7 @@ def _build_app_from_manifests(
     out_dir: Path,
     *,
     package_zip: bool = False,
+    native_python_env: bool = False,
 ) -> BuildReport:
     _validate_build_paths(core_dir, manifests_path, out_dir)
     profile = manifests.profile(profile_id)
@@ -2173,6 +2200,7 @@ def _build_app_from_manifests(
             environment,
             channel_caps,
             package_zip=package_zip,
+            native_python_env=native_python_env,
         )
         _swap_staging_dir(staging_dir, out_dir)
     except BaseException:
@@ -2200,6 +2228,7 @@ def build_app(
     out_dir: str | Path,
     *,
     package_zip: bool = False,
+    native_python_env: bool = False,
 ) -> BuildReport:
     """Build one CES app for ``(profile_id, channel, environment)``."""
     core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
@@ -2217,6 +2246,7 @@ def build_app(
         environment,
         out_path,
         package_zip=package_zip,
+        native_python_env=native_python_env,
     )
 
 
@@ -2227,6 +2257,7 @@ def build_all(
     environment: str,
     *,
     package_zip: bool = False,
+    native_python_env: bool = False,
 ) -> list[BuildReport]:
     """Build every ``(profile_id, channel)`` pair declared in manifests."""
     core_path, manifests_path = _resolve_input_dirs(core_dir, manifests_dir)
@@ -2261,6 +2292,7 @@ def build_all(
                     environment,
                     channel_out_dir,
                     package_zip=package_zip,
+                    native_python_env=native_python_env,
                 )
             )
     return reports

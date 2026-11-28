@@ -29,6 +29,7 @@ from cxas_scrapi.build.builder import (
 )
 from cxas_scrapi.build.manifests import ManifestError
 from cxas_scrapi.core.packaging import package_app_archive
+from cxas_scrapi.core.python_bundler import PythonBundlerError
 
 if TYPE_CHECKING:
     import argparse
@@ -47,6 +48,7 @@ def _run_all_builds(args: argparse.Namespace) -> None:
         out_root=args.out,
         environment=args.env,
         package_zip=args.zip,
+        native_python_env=getattr(args, "native_python_env", False),
     )
     if args.json:
         print(json.dumps([r.model_dump(mode="json") for r in reports]))
@@ -72,6 +74,7 @@ def _run_single_build(args: argparse.Namespace) -> None:
         environment=args.env,
         out_dir=args.out,
         package_zip=args.zip,
+        native_python_env=getattr(args, "native_python_env", False),
     )
     if args.json:
         print(report.model_dump_json())
@@ -86,7 +89,7 @@ def app_build(args: argparse.Namespace) -> None:
             _run_all_builds(args)
         else:
             _run_single_build(args)
-    except (BuildError, ManifestError) as exc:
+    except (BuildError, ManifestError, PythonBundlerError) as exc:
         print(f"Build Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -103,9 +106,14 @@ def app_package(args: argparse.Namespace) -> None:
     )
 
     try:
-        out = package_app_archive(raw_app_dir, zip_path, raw_env_file)
+        out = package_app_archive(
+            raw_app_dir,
+            zip_path,
+            raw_env_file,
+            native_python_env=getattr(args, "native_python_env", False),
+        )
         print(f"Packaged app to {out}")
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, PythonBundlerError) as exc:
         print(f"Package Error: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -137,6 +145,11 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser_build.add_argument(
         "--json", action="store_true", help="Emit JSON build report(s)."
     )
+    parser_build.add_argument(
+        "--native-python-env",
+        action="store_true",
+        help="Synthesize pythonEnvFiles.yaml without mutating python_code.py.",
+    )
     parser_build.set_defaults(func=app_build)
 
     parser_package = subparsers.add_parser(
@@ -148,5 +161,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     parser_package.add_argument("--zip", help="Output ZIP file path.")
     parser_package.add_argument(
         "--env-file", help="Custom environment.json file."
+    )
+    parser_package.add_argument(
+        "--native-python-env",
+        action="store_true",
+        help="Synthesize pythonEnvFiles.yaml without mutating python_code.py.",
     )
     parser_package.set_defaults(func=app_package)

@@ -14,14 +14,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import io
 import logging
+import os
+import shutil
+import tempfile
 import typing
+import zipfile
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from google.cloud.ces_v1beta import AgentServiceClient, types
 from google.protobuf import field_mask_pb2
 
 from cxas_scrapi.core.common import Common
+from cxas_scrapi.core.packaging import package_app_archive
+from cxas_scrapi.core.python_bundler import strip_shared_bundles
+
+
+def validate_zip_entry_name(filename: str) -> None:
+    """Reject ZIP archive entries attempting POSIX or Windows path traversal."""
+    if "\\" in filename or filename.startswith("/") or "\x00" in filename:
+        raise ValueError(
+            f"Path traversal detected in archive entry: {filename}"
+        )
+    posix = PurePosixPath(filename)
+    if posix.is_absolute() or any(
+        part == ".." or (len(part) >= 2 and part[1] == ":")
+        for part in posix.parts
+    ):
+        raise ValueError(
+            f"Path traversal detected in archive entry: {filename}"
+        )
 
 
 class Apps(Common):
@@ -216,6 +240,7 @@ class Apps(Common):
         app_content: bytes | None = None,
         gcs_uri: str | None = None,
         local_path: str | None = None,
+        native_python_env: bool = False,
     ) -> Any:
         """Imports an app as a brand new app.
 
@@ -226,7 +251,10 @@ class Apps(Common):
             display_name: The display name for the new app.
             app_content: Optional. The raw bytes of the zip archive of the app.
             gcs_uri: Optional. The Google Cloud Storage URI to export to.
-            local_path: Optional. The local path to the zip archive of the app.
+            local_path: Optional. The local path to the zip archive or app
+                directory.
+            native_python_env: Optional. Synthesize pythonEnvFiles without
+                mutating python_code.py when local_path is a directory.
         """
         # Validate that exactly one source is provided
         sources_provided = sum(
@@ -248,8 +276,19 @@ class Apps(Common):
         }
 
         if local_path:
-            with open(local_path, "rb") as f:
-                request_kwargs["app_content"] = f.read()
+            if os.path.isdir(local_path):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    temp_zip = Path(tmp_dir) / "app.zip"
+                    package_app_archive(
+                        Path(local_path),
+                        temp_zip,
+                        native_python_env=native_python_env,
+                        wrapper_dir="agent",
+                    )
+                    request_kwargs["app_content"] = temp_zip.read_bytes()
+            else:
+                with open(local_path, "rb") as f:
+                    request_kwargs["app_content"] = f.read()
         elif app_content:
             request_kwargs["app_content"] = app_content
         elif gcs_uri:
@@ -265,6 +304,7 @@ class Apps(Common):
         gcs_uri: str | None = None,
         local_path: str | None = None,
         conflict_strategy: str | None = None,
+        native_python_env: bool = False,
     ) -> Any:
         # Wait for long-running operation to complete.
         """Imports an app, overwriting an existing one.
@@ -276,9 +316,12 @@ class Apps(Common):
             app_name: Target App full resource name to explicitly overwrite.
             app_content: Optional. The raw bytes of the zip archive of the app.
             gcs_uri: Optional. The Google Cloud Storage URI to export to.
-            local_path: Optional. The local path to the zip archive of the app.
+            local_path: Optional. The local path to the zip archive or app
+                directory.
             conflict_strategy: Optional. The conflict resolution strategy to
                 use ('REPLACE' or 'OVERWRITE').
+            native_python_env: Optional. Synthesize pythonEnvFiles without
+                mutating python_code.py when local_path is a directory.
         """
         # Validate that exactly one source is provided
         sources_provided = sum(
@@ -308,8 +351,19 @@ class Apps(Common):
         }
 
         if local_path:
-            with open(local_path, "rb") as f:
-                request_kwargs["app_content"] = f.read()
+            if os.path.isdir(local_path):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    temp_zip = Path(tmp_dir) / "app.zip"
+                    package_app_archive(
+                        Path(local_path),
+                        temp_zip,
+                        native_python_env=native_python_env,
+                        wrapper_dir="agent",
+                    )
+                    request_kwargs["app_content"] = temp_zip.read_bytes()
+            else:
+                with open(local_path, "rb") as f:
+                    request_kwargs["app_content"] = f.read()
         elif app_content:
             request_kwargs["app_content"] = app_content
         elif gcs_uri:
@@ -341,3 +395,59 @@ class Apps(Common):
 
         request = types.ImportAppRequest(**request_kwargs)
         return self.client.import_app(request=request)
+
+    def extract_exported_app(
+        self,
+        app_content: bytes,
+        target_dir: str | Path,
+        *,
+        force_strip_bundles: bool = False,
+    ) -> Path:
+        """Extract exported app zip bytes and strip bundled Python markers."""
+        target_path = Path(target_dir).resolve()
+        top_dir = ""
+        with zipfile.ZipFile(io.BytesIO(app_content)) as z:
+            members = z.namelist()
+            for info in z.infolist():
+                validate_zip_entry_name(info.filename)
+                member_dest = (target_path / info.filename).resolve()
+                if (
+                    member_dest != target_path
+                    and target_path not in member_dest.parents
+                ):
+                    raise ValueError(
+                        "Path traversal detected in archive entry: "
+                        f"{info.filename}"
+                    )
+            if members:
+                first = members[0].split("/")[0]
+                if (
+                    first
+                    and any("/" in m for m in members)
+                    and all(
+                        m == first or m.startswith(first + "/") for m in members
+                    )
+                ):
+                    top_dir = first
+
+            with tempfile.TemporaryDirectory() as stage_dir:
+                stage_path = Path(stage_dir)
+                z.extractall(stage_path)
+                staged_root = stage_path / top_dir if top_dir else stage_path
+                existing_root = (
+                    target_path / top_dir if top_dir else target_path
+                )
+                has_local_lib = (existing_root / "python_lib").is_dir() or (
+                    existing_root / "pythonEnvFiles" / "content" / "python_lib"
+                ).is_dir()
+                strip_shared_bundles(
+                    staged_root,
+                    local_source_dir=(
+                        existing_root if has_local_lib else staged_root
+                    ),
+                    force=force_strip_bundles,
+                )
+                target_path.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(stage_path, target_path, dirs_exist_ok=True)
+
+        return target_path / top_dir if top_dir else target_path

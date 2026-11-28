@@ -225,3 +225,42 @@ Each built app directory includes:
   `entryAgent` (this is local build metadata—excluded from packaged ZIPs—and
   **not** a live CES Deployment resource)
 - Optional `<profile_id>_<channel-slug>.zip` when `--zip` is passed
+
+## Shared Python Bundler
+
+`cxas push`, `cxas package`, and `cxas build` automatically bundle shared Python
+modules from a `python_lib/` directory into callback entrypoints
+(`agents/*/*_callbacks*/**/python_code.py`) and Python tool entrypoints
+(`tools/*/python_function/python_code.py`).
+
+Bundling uses AST-based topological tree-shaking inside
+`# === BEGIN CXAS_SHARED_BUNDLE (sha256:<digest>) ===` /
+`# === END CXAS_SHARED_BUNDLE ===` markers. For each entrypoint, the bundler
+computes the transitive dependency closure from `python_lib/`, validates syntax,
+enforces a `64 KiB` per-file bundle budget (`32 MiB` total archive budget), and
+emits a deterministic marker block.
+
+On `cxas pull`, `strip_shared_bundles` removes these marker blocks cleanly while
+preserving edits made *outside* the marker block. If the marker block itself was
+modified in the Cloud Console (digest mismatch, unexpected statements, or drift
+against local `python_lib/`), `cxas pull` raises `BundleDigestMismatchError` to
+prevent silent data loss unless `--force` is passed.
+
+In parallel, `pythonEnvFiles/pythonEnvFiles.yaml` and
+`pythonEnvFiles/content/python_lib/*.py` are synthesized from `python_lib/`.
+Passing `--native-python-env` on `cxas push`, `cxas package`, or `cxas build`
+bypasses AST marker injection and leaves `python_code.py` entrypoints untouched
+for native `PythonEnvFile` imports.
+
+## Interim Runtime Helpers (`cxas_scrapi.runtime`)
+
+Optional interim helpers are provided under `cxas_scrapi.runtime` for `LlmAgent`
+apps. They are not required for profile identity (`cxas build`) and are
+incompatible with Guided Agents:
+
+| Helper | Purpose (`LlmAgent` only) | Python-Free Alternative Today | Platform Sunset Trigger |
+|--------|---------------------------|-------------------------------|-------------------------|
+| `escape_search_filter_literal` / `build_scoped_datastore_filter` | Escapes `\` and `"` to build scoped multi-tenant search filters | Use declarative search components | Declarative search integration |
+| `get_verbatim_content_block` / `resolve_content_block_or_handoff` | Resolves localized static copy, failing closed to handoff | Use `cxas build` content macros | Native content blocks integration |
+| `adapt_presentation` | Inspects `channel_class` to adapt rich payloads vs. plain audio text | Use declarative channel routing | Declarative channels integration |
+| `check_disabled_agent` | Inspects `disabled_agents` context and emits a short-circuit return | Build-time manifest exclusions (`cxas build`) | Native agent routing policies |
