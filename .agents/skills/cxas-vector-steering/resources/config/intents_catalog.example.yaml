@@ -1,0 +1,54 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+
+version: "1.0"
+
+intents:
+  order_status:
+    description: "Tracking an active order or shipment, checking estimated delivery dates, carrier tracking numbers, or current fulfillment progress."
+
+  cancel_order:
+    description: "Cancelling an entire order or stopping all items in an unshipped purchase before fulfillment."
+
+  modify_order:
+    description: "Updating an existing order, such as changing item quantities, removing a single line item, or updating shipping speed or delivery address."
+
+  report_damaged_item:
+    description: "Reporting that a delivered item arrived broken, defective, shattered, or physically damaged in transit."
+
+  report_missing_item:
+    description: "Reporting that an item is missing from a delivered package or that a shipment marked delivered never arrived."
+
+  start_return:
+    description: "Initiating a new product return or exchange, requesting a return shipping label, or asking how to send an item back."
+
+  return_policy:
+    description: "Asking about general return window rules, eligibility conditions, refund timelines, or exchange policies without starting a return."
+
+  check_credit_balance:
+    description: "Checking the current statement balance, available credit limit, or minimum payment due on a credit account or credit card."
+
+  check_gift_card_balance:
+    description: "Checking the remaining monetary balance or available funds on a prepaid gift card or store voucher."
+
+  billing_dispute:
+    description: "Questioning an unexpected statement charge, duplicate billing entry, fee calculation, or refund discrepancy (excludes stolen cards or identity theft)."
+
+  report_fraud:
+    description: "Reporting unauthorized account activity, identity theft, compromised credentials, or a lost or stolen payment card."
+
+  vip_concierge_support:
+    description: "Accessing dedicated executive concierge benefits, priority callback scheduling, or enterprise tier account management."
+    allowed_tenants:
+      - "enterprise"
+      - "vip"
+
+  live_agent:
+    description: "Explicitly requesting transfer to a human customer support representative, live advisor, or supervisor."
+    suppress_in_agents:
+      - "intent_collection"

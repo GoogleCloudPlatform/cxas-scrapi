@@ -1,0 +1,115 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+
+# ==============================================================================
+# Vector Steering Universal Configuration (CXAS SCRAPI Skill Starter)
+# Run `scripts/bootstrap_from_scrapi.py` or copy this file to `vector_steering/vector_steering.yaml`.
+# ==============================================================================
+version: "1.0"
+
+project:
+  name: "cymbal-conversational-assistant"
+  description: "Two-Tower Hybrid Vector Intent Routing Engine for CX Agent Studio"
+
+embedding:
+  # Model selection guide:
+  #   - text-embedding-005              : Recommended for new English-only agents
+  #   - text-embedding-004              : Proven English baseline matching 0.75 / 0.08 defaults
+  #   - text-multilingual-embedding-002 : Mandatory for multilingual / bilingual callers (100+ languages)
+  #   - gemini-embedding-001            : High-nuance multi-clause triage (use dimensions: 768 or 1536)
+  model: "text-embedding-005"
+  dimensions: 768
+  # Keep SEMANTIC_SIMILARITY symmetric across indexing and runtime queries
+  task_type: "SEMANTIC_SIMILARITY"
+  normalize_l2: true
+  batch_size: 200
+
+thresholds:
+  similarity_threshold: 0.75
+  disambiguation_delta: 0.08
+  secondary_match_floor_offset: 0.15
+  single_mode_min_confidence: 0.60
+  top_k_neighbors: 5
+  max_candidates: 3
+
+dataset:
+  corpus_csv: ".agents/skills/cxas-vector-steering/resources/sample_data/sample_training_phrases.csv"
+  intents_catalog: ".agents/skills/cxas-vector-steering/resources/config/intents_catalog.example.yaml"
+  embeddings_jsonl: "vector_steering/symmetric_embeddings.json"
+  min_word_count: 2
+  min_phrases_per_intent: 5
+  entity_mask_patterns: []
+
+agent_integration:
+  intent_variable: "Intent"
+  tenant_variable: "tenant_id"
+  toolset_name: "vector_intent_router"
+  operation_id: "classify_intent"
+  classifier_tool_name: "intent_classifier"
+  update_intent_tool_name: "update_intent"
+  agent_transfer_flag_variable: "isAgentTransfer"
+  agent_transfer_reason_variable: "agentTransferReason"
+
+environments:
+  dev:
+    env_name: "DEV"
+    project_id: "cymbal-gcp-dev"
+    quota_project_id: "cymbal-gcp-dev"
+    location: "us-central1"
+    bucket_name: "cymbal-gcp-dev-vector-steering"
+    gcs_prefix: "vector_steering"
+    index_display_name: "vector-steering-intent-index-dev"
+    index_id: ""
+    index_resource_name: ""
+    endpoint_display_name: "vector-steering-intent-endpoint-dev"
+    index_endpoint_id: ""
+    deployed_index_id: "vector_steering_index_deployed"
+    index_algorithm: "BRUTE_FORCE"
+    distance_measure_type: "COSINE_DISTANCE"
+    index_update_method: "BATCH_UPDATE"
+    approximate_neighbors_count: 100
+    leaf_node_embedding_count: 500
+    leaf_nodes_to_search_percent: 15
+    shard_size: "SHARD_SIZE_SMALL"
+    machine_type: "e2-standard-2"
+    min_replicas: 1
+    max_replicas: 1
+    cloud_function_name: "vector-steering-classifier"
+    cloud_function_url: "$env_var"
+    ingress_settings: "all"
+    service_account: ""
+    agent_invoker_service_account: ""
+
+  prod:
+    env_name: "PROD"
+    project_id: "cymbal-gcp-prod"
+    quota_project_id: "cymbal-gcp-prod"
+    location: "us-central1"
+    bucket_name: "cymbal-gcp-prod-vector-steering"
+    gcs_prefix: "vector_steering"
+    index_display_name: "vector-steering-intent-index-prod"
+    index_id: ""
+    index_resource_name: ""
+    endpoint_display_name: "vector-steering-intent-endpoint-prod"
+    index_endpoint_id: ""
+    deployed_index_id: "vector_steering_index_deployed"
+    index_algorithm: "TREE_AH"
+    distance_measure_type: "DOT_PRODUCT_DISTANCE"
+    index_update_method: "BATCH_UPDATE"
+    approximate_neighbors_count: 150
+    leaf_node_embedding_count: 1000
+    leaf_nodes_to_search_percent: 10
+    shard_size: "SHARD_SIZE_MEDIUM"
+    machine_type: "n1-standard-16"
+    min_replicas: 2
+    max_replicas: 6
+    cloud_function_name: "vector-steering-classifier"
+    cloud_function_url: "$env_var"
+    ingress_settings: "internal-and-gclb"
+    service_account: ""
+    agent_invoker_service_account: ""
